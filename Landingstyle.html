@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Nomerio | Professional Signal Delivery &amp; Analytics</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3b82f6",
+                        "background-light": "#f8fafc",
+                        "background-dark": "#020617",
+                        navy: {
+                            900: "#020617",
+                            950: "#010409",
+                        }
+                    },
+                    fontFamily: {
+                        display: ["Inter", "system-ui", "sans-serif"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "12px",
+                        'pill': '9999px',
+                        'xl': '24px',
+                    },
+                },
+            },
+        };
+    </script>
+<style>
+        body {
+            font-family: 'Inter', sans-serif;
+            scroll-behavior: smooth;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-dark {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .gradient-primary {
+            background: linear-gradient(135deg, #3b82f6 0%, #a855f7 100%);
+        }
+        .gradient-glow {
+            background: radial-gradient(circle at center, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+        }
+        .bento-card {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .bento-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .nav-float {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            width: fit-content;
+        }
+        .tracking-tight-custom {
+            letter-spacing: -0.02em;
+        }
+        .tracking-wide-custom {
+            letter-spacing: 0.15em;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 overflow-x-hidden">
+<div class="fixed top-0 left-1/2 -translate-x-1/2 w-full h-full pointer-events-none z-0">
+<div class="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-indigo-500/10 blur-[120px] rounded-full"></div>
+<div class="absolute bottom-[10%] right-[-5%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full"></div>
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_center,_transparent_0%,_#020617_100%)]"></div>
+</div>
+<nav class="nav-float glass-dark px-6 py-3 rounded-pill flex items-center space-x-8 shadow-2xl">
+<div class="flex items-center space-x-2">
+<div class="w-8 h-8 gradient-primary rounded-lg flex items-center justify-center">
+<span class="text-white font-bold">N</span>
+</div>
+<span class="font-bold text-lg tracking-tight-custom">nomerio.</span>
+</div>
+<div class="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-400">
+<a class="hover:text-white transition-colors" href="#">Features</a>
+<a class="hover:text-white transition-colors" href="#">Solutions</a>
+<a class="hover:text-white transition-colors" href="#">Who It's For</a>
+</div>
+<div class="flex items-center space-x-4">
+<button class="text-sm font-medium text-slate-300 hover:text-white transition-colors">Sign In</button>
+<button class="bg-white text-black px-5 py-2 rounded-pill text-sm font-semibold hover:bg-slate-200 transition-all">Get Started</button>
+</div>
+</nav>
+<main class="relative z-10 pt-48">
+<section class="max-w-7xl mx-auto px-6 text-center mb-32">
+<div class="inline-flex items-center space-x-2 px-4 py-1.5 glass rounded-pill mb-8 border border-white/10">
+<span class="material-icons-round text-blue-400 text-sm">auto_awesome</span>
+<span class="text-xs font-semibold tracking-wide-custom uppercase text-blue-400">Institutional-Grade Trading Infrastructure</span>
+</div>
+<h1 class="text-6xl md:text-8xl font-bold mb-8 tracking-tight-custom leading-[1.1]">
+                Professional Signal <br/>
+<span class="gradient-text">Delivery &amp; Analytics</span>
+</h1>
+<p class="max-w-2xl mx-auto text-xl text-slate-400 leading-relaxed mb-12">
+                A comprehensive platform for live signals, trade journaling, and performance analytics. Built for traders seeking systematic workflow excellence.
+            </p>
+<div class="flex flex-col md:flex-row items-center justify-center gap-6">
+<button class="gradient-primary text-white px-8 py-4 rounded-pill font-bold flex items-center space-x-2 shadow-[0_0_40px_-10px_rgba(59,130,246,0.5)] hover:scale-105 transition-transform">
+<span>Get Started Free</span>
+<span class="material-icons-round">arrow_forward</span>
+</button>
+<button class="glass px-8 py-4 rounded-pill font-bold hover:bg-white/5 transition-all">
+                    View Demo
+                </button>
+</div>
+<div class="mt-24 grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto">
+<div class="text-center">
+<div class="text-3xl font-bold mb-1">100%</div>
+<div class="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Secure</div>
+</div>
+<div class="text-center">
+<div class="text-3xl font-bold mb-1">24/7</div>
+<div class="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Real-Time</div>
+</div>
+<div class="text-center">
+<div class="text-3xl font-bold mb-1">Multi</div>
+<div class="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Asset Support</div>
+</div>
+<div class="text-center">
+<div class="text-3xl font-bold mb-1">Pro</div>
+<div class="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Analytics</div>
+</div>
+</div>
+</section>
+<section class="max-w-6xl mx-auto px-6 mb-48">
+<div class="relative glass rounded-3xl p-1 overflow-hidden group">
+<div class="absolute inset-0 bg-gradient-to-br from-blue-600/20 to-purple-600/20 opacity-50"></div>
+<img alt="High-tech abstract glass background" class="w-full h-[600px] object-cover rounded-[22px] opacity-80 mix-blend-overlay" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDiMKDKMx4-BmO_NHmyw_XWu8kWfO1V_3hQ4aHHJtsQ2vNC7k2uuAEQkP7l_RHbKrc1aSMzCC6tPV7pnKZXKwyjuAS7roTN4NAGV2ICjKgSOc4TV71ARAONfz9zQ6BpvQTVpI8ppsIyYJSRq5v1d9ZTbtkQgblKyHpTuytnq39V3jBlSqW8H5ukvXUNLbSZbNYhBtj-RPxqlEpioB9fzz82zOu6yycJfw9o8VrGqTRelReBAC5wPzDqgDLOS9n2aGa2YVoABWE9vuyY"/>
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl px-6">
+<div class="glass p-6 rounded-2xl border-white/20 shadow-2xl backdrop-blur-3xl">
+<span class="material-icons-round text-blue-400 mb-4">analytics</span>
+<h4 class="font-bold mb-1">Signal Management</h4>
+<p class="text-xs text-slate-400">Real-time delivery infrastructure</p>
+</div>
+<div class="glass p-6 rounded-2xl border-white/20 shadow-2xl backdrop-blur-3xl transform md:-translate-y-8">
+<span class="material-icons-round text-purple-400 mb-4">insights</span>
+<h4 class="font-bold mb-1">Performance Analytics</h4>
+<p class="text-xs text-slate-400">Detailed equity curve insights</p>
+</div>
+<div class="glass p-6 rounded-2xl border-white/20 shadow-2xl backdrop-blur-3xl">
+<span class="material-icons-round text-emerald-400 mb-4">security</span>
+<h4 class="font-bold mb-1">Risk Management</h4>
+<p class="text-xs text-slate-400">Built-in systematic controls</p>
+</div>
+</div>
+</div>
+</section>
+<section class="max-w-7xl mx-auto px-6 mb-48 text-center">
+<div class="mb-16">
+<span class="text-[10px] font-bold tracking-widest text-blue-400 uppercase">Multi-Asset Support</span>
+<h2 class="text-4xl font-bold mt-4">One Platform. Every Market.</h2>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+<div class="glass p-12 rounded-3xl bento-card border-white/5">
+<span class="material-icons-round text-blue-500 text-4xl mb-6">show_chart</span>
+<h3 class="text-xl font-bold mb-2">Forex</h3>
+<p class="text-sm text-slate-500">Major &amp; Minor Pairs</p>
+</div>
+<div class="glass p-12 rounded-3xl bento-card border-white/5">
+<span class="material-icons-round text-yellow-500 text-4xl mb-6">diamond</span>
+<h3 class="text-xl font-bold mb-2">Metals</h3>
+<p class="text-sm text-slate-500">Gold, Silver &amp; More</p>
+</div>
+<div class="glass p-12 rounded-3xl bento-card border-white/5">
+<span class="material-icons-round text-orange-500 text-4xl mb-6">currency_bitcoin</span>
+<h3 class="text-xl font-bold mb-2">Crypto</h3>
+<p class="text-sm text-slate-500">BTC, ETH &amp; Altcoins</p>
+</div>
+<div class="glass p-12 rounded-3xl bento-card border-white/5">
+<span class="material-icons-round text-emerald-500 text-4xl mb-6">bar_chart</span>
+<h3 class="text-xl font-bold mb-2">Indices</h3>
+<p class="text-sm text-slate-500">Global Market Indices</p>
+</div>
+</div>
+</section>
+<section class="max-w-7xl mx-auto px-6 mb-48">
+<div class="text-center mb-24">
+<span class="text-[10px] font-bold tracking-widest text-purple-400 uppercase">Platform Capabilities</span>
+<h2 class="text-5xl font-bold mt-4 tracking-tight-custom">Complete Trading Workflow</h2>
+<p class="mt-6 text-slate-400">Everything you need to manage, track, and analyze your trading operations.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="md:col-span-2 glass rounded-3xl p-10 bento-card relative overflow-hidden group">
+<div class="relative z-10 h-full flex flex-col justify-between">
+<div>
+<span class="material-icons-round text-blue-400 mb-6 bg-blue-400/10 p-3 rounded-xl">notifications_active</span>
+<h3 class="text-2xl font-bold mb-4">Signal Delivery System</h3>
+<p class="text-slate-400 max-w-sm">Real-time signal distribution with precise entry, stop-loss, and take-profit levels across multiple asset classes.</p>
+</div>
+<div class="mt-12 flex items-center space-x-2 text-sm font-semibold text-blue-400 group-hover:translate-x-2 transition-transform">
+<span>Learn more</span>
+<span class="material-icons-round text-sm">arrow_forward</span>
+</div>
+</div>
+<img alt="Abstract tech background" class="absolute top-0 right-0 w-1/2 h-full object-cover opacity-10 mix-blend-screen" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDqyySxp3q9t4ITPn27GPv5IJVRpd7i3zeq3h6j62680ACaeuDmy9VgckPQ8TksYFDSK03du964BRwcGEQGBuALVJgNLM5fCjtL-SE1xwM0ZPGXNzCa0UulBmbCS0_tTdzqC26EgESx_WDNCyts2HFnn0Ik7EXxauPEAjqjayQoOibz8_4DMdBlKEpEUxqCWmG2Pn2agelbaIgb_wNDVDIZhbu_xBLF4akNoRcv9oCltMl6psa7ge3bsS7FY2cviA-WprJhcMY9l80q"/>
+</div>
+<div class="glass rounded-3xl p-10 bento-card group">
+<span class="material-icons-round text-purple-400 mb-6 bg-purple-400/10 p-3 rounded-xl">auto_graph</span>
+<h3 class="text-2xl font-bold mb-4">Trade Journal &amp; Analytics</h3>
+<p class="text-slate-400">Built-in position sizing, risk percentage controls, and drawdown monitoring.</p>
+</div>
+<div class="glass rounded-3xl p-10 bento-card group">
+<span class="material-icons-round text-emerald-400 mb-6 bg-emerald-400/10 p-3 rounded-xl">gpp_good</span>
+<h3 class="text-2xl font-bold mb-4">Risk Framework</h3>
+<p class="text-slate-400">Systematic risk management tools for elite-level control.</p>
+</div>
+<div class="md:col-span-2 glass rounded-3xl p-10 bento-card relative overflow-hidden group">
+<div class="relative z-10 flex flex-col justify-between h-full">
+<div>
+<span class="material-icons-round text-amber-400 mb-6 bg-amber-400/10 p-3 rounded-xl">account_tree</span>
+<h3 class="text-2xl font-bold mb-4">Copy Trading Ready</h3>
+<p class="text-slate-400 max-w-sm">Infrastructure designed to support signal distribution and subscription-based access for trading communities.</p>
+</div>
+<div class="mt-12 flex items-center space-x-2 text-sm font-semibold text-amber-400 group-hover:translate-x-2 transition-transform">
+<span>Explore Infrastructure</span>
+<span class="material-icons-round text-sm">arrow_forward</span>
+</div>
+</div>
+<div class="absolute -right-20 -bottom-20 w-80 h-80 bg-amber-500/10 blur-[100px] rounded-full"></div>
+</div>
+</div>
+</section>
+<section class="max-w-7xl mx-auto px-6 mb-48 py-24 glass rounded-[40px] border-white/5">
+<div class="text-center mb-20">
+<span class="text-[10px] font-bold tracking-widest text-blue-400 uppercase">Solutions</span>
+<h2 class="text-5xl font-bold mt-4 tracking-tight-custom">Core Platform Modules</h2>
+<p class="mt-6 text-slate-400">Integrated tools designed to work together for a seamless trading workflow.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-12 px-10">
+<div class="space-y-6">
+<div class="w-12 h-12 glass rounded-xl flex items-center justify-center font-bold text-blue-400 border-blue-400/30">1</div>
+<h3 class="text-2xl font-bold">Signal Management</h3>
+<p class="text-slate-400 text-sm">Streamlined signal creation, delivery, and tracking.</p>
+<ul class="space-y-4 pt-4">
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-blue-500 text-lg">check_circle</span>
+<span>Precise entry, stop-loss, and TP levels</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-blue-500 text-lg">check_circle</span>
+<span>Direction and asset categorization</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-blue-500 text-lg">check_circle</span>
+<span>Signal status tracking (active/closed)</span>
+</li>
+</ul>
+</div>
+<div class="space-y-6">
+<div class="w-12 h-12 glass rounded-xl flex items-center justify-center font-bold text-purple-400 border-purple-400/30">2</div>
+<h3 class="text-2xl font-bold">Analytics Dashboard</h3>
+<p class="text-slate-400 text-sm">Comprehensive performance visibility.</p>
+<ul class="space-y-4 pt-4">
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-purple-500 text-lg">check_circle</span>
+<span>Equity curve visualization</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-purple-500 text-lg">check_circle</span>
+<span>Win rate and profit factor metrics</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-purple-500 text-lg">check_circle</span>
+<span>Drawdown analysis and monitoring</span>
+</li>
+</ul>
+</div>
+<div class="space-y-6">
+<div class="w-12 h-12 glass rounded-xl flex items-center justify-center font-bold text-emerald-400 border-emerald-400/30">3</div>
+<h3 class="text-2xl font-bold">Risk Controls</h3>
+<p class="text-slate-400 text-sm">Systematic risk management tools.</p>
+<ul class="space-y-4 pt-4">
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-emerald-500 text-lg">check_circle</span>
+<span>Configurable risk percentage per trade</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-emerald-500 text-lg">check_circle</span>
+<span>Position sizing calculations</span>
+</li>
+<li class="flex items-center space-x-3 text-sm text-slate-300">
+<span class="material-icons-round text-emerald-500 text-lg">check_circle</span>
+<span>Account balance tracking</span>
+</li>
+</ul>
+</div>
+</div>
+</section>
+<section class="max-w-7xl mx-auto px-6 mb-48">
+<div class="text-center mb-24">
+<span class="text-[10px] font-bold tracking-widest text-blue-400 uppercase">Who It's For</span>
+<h2 class="text-5xl font-bold mt-4 tracking-tight-custom">Built for Every Workflow</h2>
+<p class="mt-6 text-slate-400">Whether you're an individual trader, signal provider, or part of a professional team.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<div class="glass p-12 rounded-3xl group border-white/5 hover:bg-white/5 transition-colors">
+<div class="flex items-start space-x-6">
+<div class="w-16 h-16 bg-blue-500/10 rounded-2xl flex items-center justify-center shrink-0">
+<span class="material-icons-round text-blue-500 text-3xl">person</span>
+</div>
+<div>
+<h3 class="text-2xl font-bold mb-4">Individual Traders</h3>
+<p class="text-slate-400 leading-relaxed">Track your trades, monitor performance, and receive signals with built-in risk management tools.</p>
+<div class="mt-6 flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Trade Journaling</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Performance Analytics</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Signal Notifications</span>
+</div>
+</div>
+</div>
+</div>
+<div class="glass p-12 rounded-3xl group border-white/5 hover:bg-white/5 transition-colors">
+<div class="flex items-start space-x-6">
+<div class="w-16 h-16 bg-purple-500/10 rounded-2xl flex items-center justify-center shrink-0">
+<span class="material-icons-round text-purple-500 text-3xl">hub</span>
+</div>
+<div>
+<h3 class="text-2xl font-bold mb-4">Signal Providers</h3>
+<p class="text-slate-400 leading-relaxed">Deliver signals to subscribers with transparent track records and professional performance documentation.</p>
+<div class="mt-6 flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Signal Distribution</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Subscriber Mgmt</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Track Record Verification</span>
+</div>
+</div>
+</div>
+</div>
+<div class="glass p-12 rounded-3xl group border-white/5 hover:bg-white/5 transition-colors">
+<div class="flex items-start space-x-6">
+<div class="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center shrink-0">
+<span class="material-icons-round text-emerald-500 text-3xl">groups</span>
+</div>
+<div>
+<h3 class="text-2xl font-bold mb-4">Trading Communities</h3>
+<p class="text-slate-400 leading-relaxed">Manage group-based signal delivery with centralized analytics and member access controls.</p>
+<div class="mt-6 flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Group Management</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Shared Analytics</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Community Tools</span>
+</div>
+</div>
+</div>
+</div>
+<div class="glass p-12 rounded-3xl group border-white/5 hover:bg-white/5 transition-colors">
+<div class="flex items-start space-x-6">
+<div class="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center shrink-0">
+<span class="material-icons-round text-amber-500 text-3xl">business</span>
+</div>
+<div>
+<h3 class="text-2xl font-bold mb-4">Professional Teams</h3>
+<p class="text-slate-400 leading-relaxed">Enterprise-ready infrastructure for trading desks requiring systematic workflow management.</p>
+<div class="mt-6 flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Team Collaboration</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Role-based Access</span>
+<span class="px-3 py-1 bg-white/5 rounded-pill text-[10px] uppercase font-bold text-slate-500">Compliance Ready</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="max-w-7xl mx-auto px-6 mb-32 relative">
+<div class="glass py-32 rounded-[60px] text-center relative overflow-hidden">
+<div class="absolute inset-0 gradient-glow opacity-50"></div>
+<div class="relative z-10 px-6">
+<span class="material-icons-round text-blue-500 mb-6">stars</span>
+<h2 class="text-5xl md:text-7xl font-bold mb-8 tracking-tight-custom leading-tight">
+                        Ready to Streamline Your <br/> Trading Workflow?
+                    </h2>
+<p class="max-w-2xl mx-auto text-xl text-slate-400 mb-12">
+                        Create an account to explore the platform. Subscription-based access unlocks the full suite of signal delivery and analytics features.
+                    </p>
+<div class="flex flex-col md:flex-row items-center justify-center gap-6">
+<button class="gradient-primary text-white px-10 py-5 rounded-pill font-bold flex items-center space-x-2 shadow-2xl hover:scale-105 transition-all">
+<span>Get Started Free</span>
+<span class="material-icons-round">arrow_forward</span>
+</button>
+<button class="glass px-10 py-5 rounded-pill font-bold hover:bg-white/5 transition-all">
+                            Sign In
+                        </button>
+</div>
+</div>
+</div>
+</section>
+</main>
+<footer class="max-w-7xl mx-auto px-6 py-12 border-t border-white/5">
+<div class="flex flex-col md:flex-row justify-between items-center text-slate-500 text-xs">
+<div class="flex items-center space-x-4 mb-6 md:mb-0">
+<span class="font-bold text-slate-300">nomerio.</span>
+<span>© 2024 Nomerio Inc.</span>
+</div>
+<div class="flex items-center space-x-8 mb-6 md:mb-0">
+<a class="hover:text-white transition-colors" href="#">Twitter</a>
+<a class="hover:text-white transition-colors" href="#">LinkedIn</a>
+<a class="hover:text-white transition-colors" href="#">Telegram</a>
+<a class="hover:text-white transition-colors" href="#">Support</a>
+</div>
+<p class="max-w-xs text-center md:text-right">Trading involves substantial risk and is not suitable for every investor. Past performance is not indicative of future results.</p>
+</div>
+</footer>
+
+</body></html>
