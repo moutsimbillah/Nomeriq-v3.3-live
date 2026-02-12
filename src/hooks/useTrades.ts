@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { UserTrade, Signal } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserSubscriptionCategories } from './useSubscriptionPackages';
+import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
 
 interface TradeWithSignal extends UserTrade {
   signal: Signal;
@@ -21,6 +23,8 @@ export const useTrades = (options: UseTradesOptions = {}) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const { allowedCategories } = useUserSubscriptionCategories();
   
   // Use unique channel name to prevent conflicts between multiple hook instances
   const channelNameRef = useRef(`user_trades_${Math.random().toString(36).substring(7)}`);
@@ -29,7 +33,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
   const hasLoadedOnceRef = useRef(false);
 
   const fetchTrades = useCallback(async (isRealtimeUpdate = false) => {
-    if (!user) {
+    if (!userId) {
       setIsLoading(false);
       return;
     }
@@ -43,7 +47,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
       let countQuery = supabase
         .from('user_trades')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id);
+        .eq('user_id', userId);
 
       if (result) {
         countQuery = countQuery.eq('result', result);
@@ -60,7 +64,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
           *,
           signal:signals(*)
         `)
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -72,22 +76,30 @@ export const useTrades = (options: UseTradesOptions = {}) => {
 
       if (fetchError) throw fetchError;
       
-      setTrades((data as TradeWithSignal[]) || []);
+      const rawTrades = (data as TradeWithSignal[]) || [];
+      const filteredTrades =
+        allowedCategories.length > 0
+          ? rawTrades.filter((t) => allowedCategories.includes(t.signal?.category as any))
+          : rawTrades;
+
+      setTrades(filteredTrades);
       setError(null);
       hasLoadedOnceRef.current = true;
     } catch (err) {
       setError(err as Error);
-      console.error('Error fetching trades:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching trades:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user, result, limit, page]);
+  }, [userId, result, limit, page, allowedCategories]);
 
   useEffect(() => {
     fetchTrades(false);
 
     // Set up realtime subscription for trades with unique channel name
-    if (realtime && user) {
+    if (realtime && userId) {
       const channel = supabase
         .channel(channelNameRef.current)
         .on(
@@ -96,7 +108,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
             event: '*',
             schema: 'public',
             table: 'user_trades',
-            filter: `user_id=eq.${user.id}`,
+            filter: `user_id=eq.${userId}`,
           },
           () => {
             fetchTrades(true); // Pass true to indicate realtime update - no loading flicker
@@ -108,7 +120,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
         supabase.removeChannel(channel);
       };
     }
-  }, [fetchTrades, realtime, user]);
+  }, [fetchTrades, realtime, userId]);
 
   const totalPages = Math.ceil(totalCount / limit);
 
@@ -127,6 +139,7 @@ export const useTradeStats = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   
   // Use unique channel name for stats
   const channelNameRef = useRef(`user_trades_stats_${Math.random().toString(36).substring(7)}`);
@@ -135,7 +148,7 @@ export const useTradeStats = () => {
   const hasLoadedOnceRef = useRef(false);
 
   const fetchStats = useCallback(async (isRealtimeUpdate = false) => {
-    if (!user) {
+    if (!userId) {
       setIsLoading(false);
       return;
     }
@@ -149,7 +162,7 @@ export const useTradeStats = () => {
       const { data, error } = await supabase
         .from('user_trades')
         .select('result, pnl')
-        .eq('user_id', user.id);
+        .eq('user_id', userId);
 
       if (error) throw error;
 
@@ -173,17 +186,19 @@ export const useTradeStats = () => {
       });
       hasLoadedOnceRef.current = true;
     } catch (err) {
-      console.error('Error fetching trade stats:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching trade stats:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
     fetchStats(false);
 
     // Set up realtime subscription for stats updates with unique channel
-    if (user) {
+    if (userId) {
       const channel = supabase
         .channel(channelNameRef.current)
         .on(
@@ -192,7 +207,7 @@ export const useTradeStats = () => {
             event: '*',
             schema: 'public',
             table: 'user_trades',
-            filter: `user_id=eq.${user.id}`,
+            filter: `user_id=eq.${userId}`,
           },
           () => {
             fetchStats(true); // Pass true to indicate realtime update - no loading flicker
@@ -204,7 +219,7 @@ export const useTradeStats = () => {
         supabase.removeChannel(channel);
       };
     }
-  }, [fetchStats, user]);
+  }, [fetchStats, userId]);
 
   return { stats, isLoading, refetch: fetchStats };
 };

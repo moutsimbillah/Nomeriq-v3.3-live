@@ -12,7 +12,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
 import { Signal } from "@/types/database";
-import { sendTelegramSignal } from "@/lib/telegram";
+import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
+import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -23,7 +24,6 @@ const ProviderSignals = () => {
   const [editingSignalId, setEditingSignalId] = useState<string | null>(null);
   const [convertingSignalId, setConvertingSignalId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [lastError, setLastError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     pair: "",
     category: "",
@@ -37,7 +37,9 @@ const ProviderSignals = () => {
     analysisVideoUrl: "",
     analysisNotes: "",
     analysisImageUrl: "",
-    sendToTelegram: false
+    sendToTelegram: false,
+    sendUpdatesToTelegram: false,
+    sendClosedTradesToTelegram: false
   });
 
   const resetForm = () => {
@@ -54,8 +56,48 @@ const ProviderSignals = () => {
       analysisVideoUrl: "",
       analysisNotes: "",
       analysisImageUrl: "",
-      sendToTelegram: false
+      sendToTelegram: false,
+      sendUpdatesToTelegram: false,
+      sendClosedTradesToTelegram: false
     });
+  };
+
+  const validateDirectionalPriceSetup = (requireAll: boolean): string | null => {
+    const entry = formData.entry.trim() === "" ? null : Number(formData.entry);
+    const stopLoss = formData.stopLoss.trim() === "" ? null : Number(formData.stopLoss);
+    const takeProfit = formData.takeProfit.trim() === "" ? null : Number(formData.takeProfit);
+
+    if (requireAll && (entry === null || stopLoss === null || takeProfit === null)) {
+      return "Please fill in entry, stop loss, and take profit.";
+    }
+
+    if ((stopLoss !== null || takeProfit !== null) && entry === null) {
+      return "Entry price is required when stop loss or take profit is provided.";
+    }
+
+    if (entry !== null && !Number.isFinite(entry)) return "Invalid entry price.";
+    if (stopLoss !== null && !Number.isFinite(stopLoss)) return "Invalid stop loss price.";
+    if (takeProfit !== null && !Number.isFinite(takeProfit)) return "Invalid take profit price.";
+
+    if (entry !== null && stopLoss !== null) {
+      if (formData.direction === "BUY" && stopLoss >= entry) {
+        return "For BUY, stop loss must be strictly lower than entry price.";
+      }
+      if (formData.direction === "SELL" && stopLoss <= entry) {
+        return "For SELL, stop loss must be strictly higher than entry price.";
+      }
+    }
+
+    if (entry !== null && takeProfit !== null) {
+      if (formData.direction === "BUY" && takeProfit <= entry) {
+        return "For BUY, take profit must be strictly higher than entry price.";
+      }
+      if (formData.direction === "SELL" && takeProfit >= entry) {
+        return "For SELL, take profit must be strictly lower than entry price.";
+      }
+    }
+
+    return null;
   };
 
   const handleCreate = async () => {
@@ -63,8 +105,9 @@ const ProviderSignals = () => {
       toast.error("Please fill in pair and category");
       return;
     }
-    if (formData.signalType === "signal" && (!formData.entry || !formData.stopLoss || !formData.takeProfit)) {
-      toast.error("Please fill in entry, stop loss, and take profit for active signals");
+    const createPriceError = validateDirectionalPriceSetup(formData.signalType === "signal");
+    if (createPriceError) {
+      toast.error(createPriceError);
       return;
     }
 
@@ -84,7 +127,9 @@ const ProviderSignals = () => {
         created_by: user?.id,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       });
 
       if (error) throw error;
@@ -118,11 +163,7 @@ const ProviderSignals = () => {
       refetch();
     } catch (err: any) {
       console.error('Error creating signal:', err);
-      // Detailed error for debugging
-      const errorMessage = err?.message || err?.error_description || err?.details || JSON.stringify(err);
-
-      toast.error(`Error: ${errorMessage}`);
-      setLastError(errorMessage); // Set for UI display
+      toast.error("Failed to create signal. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -130,6 +171,12 @@ const ProviderSignals = () => {
 
   const handleEdit = async () => {
     if (!editingSignalId) return;
+
+    const editPriceError = validateDirectionalPriceSetup(formData.signalType === "signal");
+    if (editPriceError) {
+      toast.error(editPriceError);
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -145,7 +192,9 @@ const ProviderSignals = () => {
         notes: formData.notes || null,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       }).eq('id', editingSignalId).eq('created_by', user?.id); // Only update own signals
 
       if (error) throw error;
@@ -164,8 +213,9 @@ const ProviderSignals = () => {
   const handleConvertToSignal = async () => {
     if (!convertingSignalId) return;
 
-    if (!formData.entry || !formData.stopLoss || !formData.takeProfit) {
-      toast.error("Please fill in entry, stop loss, and take profit");
+    const convertPriceError = validateDirectionalPriceSetup(true);
+    if (convertPriceError) {
+      toast.error(convertPriceError);
       return;
     }
 
@@ -184,7 +234,9 @@ const ProviderSignals = () => {
         notes: formData.notes || null,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       }).eq('id', convertingSignalId).eq('created_by', user?.id);
 
       if (error) throw error;
@@ -238,12 +290,34 @@ const ProviderSignals = () => {
 
   const updateStatus = async (id: string, status: string) => {
     try {
+      const signal = signals.find((s) => s.id === id);
       const { error } = await supabase.from('signals').update({
         status,
         closed_at: status !== 'active' ? new Date().toISOString() : null
       }).eq('id', id).eq('created_by', user?.id);
 
       if (error) throw error;
+      if (
+        signal &&
+        signal.send_closed_trades_to_telegram &&
+        (status === "tp_hit" || status === "sl_hit" || status === "breakeven")
+      ) {
+        const closedStatus = status as "tp_hit" | "sl_hit" | "breakeven";
+        const res = await sendTelegramTradeClosed({
+          signal: {
+            pair: signal.pair,
+            category: signal.category,
+            direction: signal.direction,
+            entry_price: signal.entry_price,
+            stop_loss: signal.stop_loss,
+            take_profit: signal.take_profit,
+            status: closedStatus,
+          },
+        });
+        if (res.ok === false) {
+          toast.error(`Telegram close event failed: ${res.error}`);
+        }
+      }
       toast.success(`Signal marked as ${status.replace('_', ' ')}`);
       refetch();
     } catch (err) {
@@ -266,7 +340,9 @@ const ProviderSignals = () => {
       analysisVideoUrl: signal.analysis_video_url || "",
       analysisNotes: signal.analysis_notes || "",
       analysisImageUrl: signal.analysis_image_url || "",
-      sendToTelegram: false
+      sendToTelegram: false,
+      sendUpdatesToTelegram: signal.send_updates_to_telegram ?? false,
+      sendClosedTradesToTelegram: signal.send_closed_trades_to_telegram ?? false
     });
     setEditingSignalId(signal.id);
   };
@@ -285,7 +361,9 @@ const ProviderSignals = () => {
       analysisVideoUrl: signal.analysis_video_url || "",
       analysisNotes: signal.analysis_notes || "",
       analysisImageUrl: signal.analysis_image_url || "",
-      sendToTelegram: true  // Default to true when converting to active
+      sendToTelegram: true,  // Default to true when converting to active
+      sendUpdatesToTelegram: signal.send_updates_to_telegram ?? false,
+      sendClosedTradesToTelegram: signal.send_closed_trades_to_telegram ?? false
     });
     setConvertingSignalId(signal.id);
   };
@@ -327,6 +405,9 @@ const ProviderSignals = () => {
   };
 
   const providerName = profile?.first_name || 'Provider';
+  const visibleSignals = signals.filter(
+    (s) => s.signal_type === "upcoming" || s.status === "active"
+  );
 
   return (
     <AdminLayout title="My Signals">
@@ -382,31 +463,13 @@ const ProviderSignals = () => {
         </Dialog>
       </div>
 
-      {/* Error Debugging */}
-      {lastError && (
-        <div className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive">
-          <h3 className="font-bold">Error Details:</h3>
-          <pre className="mt-2 text-xs whitespace-pre-wrap overflow-auto max-h-[200px] p-2 bg-background/50 rounded">
-            {lastError}
-          </pre>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-2 border-destructive/30 hover:bg-destructive/10"
-            onClick={() => setLastError(null)}
-          >
-            Dismiss
-          </Button>
-        </div>
-      )}
-
       {/* Signals Table */}
       <div className="glass-card overflow-hidden shadow-none">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-        ) : signals.length === 0 ? (
+        ) : visibleSignals.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p className="font-medium">No signals yet</p>
@@ -423,11 +486,12 @@ const ProviderSignals = () => {
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Entry</th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">SL / TP</th>
                   <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Status</th>
+                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Updates</th>
                   <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {signals.map(signal => (
+                {visibleSignals.map(signal => (
                   <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
                     <td className="px-6 py-4">
                       <div>
@@ -463,6 +527,17 @@ const ProviderSignals = () => {
                         {getStatusDisplay(signal)}
                       </Badge>
                     </td>
+                    <td className="px-6 py-4 text-center">
+                      {signal.signal_type === "signal" ? (
+                        <SignalTakeProfitUpdatesDialog
+                          signal={signal}
+                          currentUserId={user?.id || ""}
+                          disabled={signal.status !== "active"}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-end gap-2">
                         {/* Convert to Signal button for upcoming trades */}
@@ -474,8 +549,8 @@ const ProviderSignals = () => {
                                 Activate
                               </Button>
                             </DialogTrigger>
-                            <DialogContent className="max-h-[90vh] p-0">
-                              <ScrollArea className="max-h-[85vh]">
+                            <DialogContent className="max-h-[90vh] overflow-hidden p-0">
+                              <ScrollArea className="h-[85vh]">
                                 <div className="p-6">
                                   <DialogHeader>
                                     <DialogTitle>Convert to Active Signal</DialogTitle>

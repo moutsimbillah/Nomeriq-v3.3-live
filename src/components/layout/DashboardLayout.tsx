@@ -18,11 +18,15 @@ import { Settings, Menu } from "lucide-react";
 interface DashboardLayoutProps {
   children: ReactNode;
   title?: string;
+  subtitle?: string;
+  action?: ReactNode;
 }
 
 export const DashboardLayout = ({
   children,
-  title
+  title,
+  subtitle,
+  action
 }: DashboardLayoutProps) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -98,10 +102,16 @@ export const DashboardLayout = ({
 
       {/* Page Content */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Page Title */}
-        {title && <div className="px-4 lg:px-8 pt-6 pb-2">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">{title}</h1>
-        </div>}
+        {/* Page Title & Subtitle */}
+        {(title || subtitle || action) && (
+          <div className="px-4 lg:px-8 pt-6 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              {title && <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">{title}</h1>}
+              {subtitle && <p className="text-muted-foreground mt-1 max-w-2xl">{subtitle}</p>}
+            </div>
+            {action && <div className="shrink-0">{action}</div>}
+          </div>
+        )}
 
         {/* Content - scrollable */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">

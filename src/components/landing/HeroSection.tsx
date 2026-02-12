@@ -1,29 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Shield } from "lucide-react";
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuthModal } from "@/contexts/AuthModalContext";
 
 export const HeroSection = () => {
-  const [activeSignals, setActiveSignals] = useState<number | null>(null);
   const { openModal } = useAuthModal();
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const { count } = await supabase
-          .from('signals')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'active');
-
-        if (count !== null) setActiveSignals(count);
-      } catch (error) {
-        console.error("Error fetching stats:", error);
-      }
-    };
-
-    fetchStats();
-  }, []);
 
   return (
     <section className="relative pt-48 pb-32 px-6 overflow-hidden bg-background">
@@ -76,13 +56,8 @@ export const HeroSection = () => {
             <div className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">Secure</div>
           </div>
           <div className="text-center bento-card p-4 rounded-2xl border border-transparent hover:border-border transition-colors">
-            {/* Show active signals count if available, otherwise 24/7 */}
-            <div className="text-3xl font-bold mb-1 text-foreground">
-              {activeSignals !== null ? activeSignals : "24/7"}
-            </div>
-            <div className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
-              {activeSignals !== null ? "Active Signals" : "Real-Time"}
-            </div>
+            <div className="text-3xl font-bold mb-1 text-foreground">24/7</div>
+            <div className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">Real-Time</div>
           </div>
           <div className="text-center bento-card p-4 rounded-2xl border border-transparent hover:border-border transition-colors">
             <div className="text-3xl font-bold mb-1 text-foreground">Multi</div>

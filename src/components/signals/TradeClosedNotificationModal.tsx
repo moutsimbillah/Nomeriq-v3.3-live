@@ -6,7 +6,7 @@ import { useBrand } from "@/contexts/BrandContext";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, Target, ShieldAlert, CheckCircle2, XCircle, MinusCircle, X, Bell, Percent, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
 
 type NotificationType = "trade_closed" | "new_signal" | "signal_active";
 type TradeClosedStatus = "tp_hit" | "sl_hit" | "breakeven";
@@ -32,24 +32,37 @@ interface TradeClosedNotificationModalProps {
 export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificationModalProps) => {
   const { user, subscription, isAdmin, isLoading: authLoading, profile } = useAuth();
   const { settings } = useBrand();
+  const { allowedCategories } = useUserSubscriptionCategories();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isVisible, setIsVisible] = useState(false);
+  const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const shownNotificationsRef = useRef<Set<string>>(new Set());
+  const lastSyncAtRef = useRef<string>(new Date().toISOString());
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wentOfflineRef = useRef(false);
+  const reloadingRef = useRef(false);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
+
+  const showOfflineWarning = useCallback(() => {
+    setIsOffline(true);
+    wentOfflineRef.current = true;
+  }, []);
 
   // Check if user is subscribed
-  const isSubscribed = subscription?.status === 'active' && 
+  const isSubscribed = subscription?.status === 'active' &&
     (!subscription.expires_at || new Date(subscription.expires_at) > new Date());
 
   // CRITICAL: Admins and Signal Providers should NOT receive trading notifications
   // Only active subscribed users should receive notifications
   // This prevents providers from receiving their own signals
   const canReceiveNotifications = !isAdmin && isSubscribed;
-  
+
   // Use refs for values that should be checked at callback time
   const canReceiveRef = useRef(canReceiveNotifications);
   const userIdRef = useRef(user?.id);
-  
+  const allowedCategoriesRef = useRef<string[]>(allowedCategories as string[]);
+
   useEffect(() => {
     canReceiveRef.current = canReceiveNotifications;
   }, [canReceiveNotifications]);
@@ -58,13 +71,41 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     userIdRef.current = user?.id;
   }, [user?.id]);
 
+  useEffect(() => {
+    allowedCategoriesRef.current = allowedCategories as string[];
+  }, [allowedCategories]);
+
+  const persistLastSync = useCallback((iso: string) => {
+    if (!userIdRef.current) return;
+    localStorage.setItem(`notifications:last-sync:${userIdRef.current}`, iso);
+  }, []);
+
+  const bumpLastSync = useCallback((isoLike?: string | null) => {
+    if (!isoLike) return;
+    const nextMs = new Date(isoLike).getTime();
+    if (!Number.isFinite(nextMs)) return;
+    const currentMs = new Date(lastSyncAtRef.current).getTime();
+    if (!Number.isFinite(currentMs) || nextMs > currentMs) {
+      lastSyncAtRef.current = new Date(nextMs).toISOString();
+      persistLastSync(lastSyncAtRef.current);
+    }
+  }, [persistLastSync]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const saved = localStorage.getItem(`notifications:last-sync:${user.id}`);
+    // Keep lookback window small if no saved state yet.
+    const fallback = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    lastSyncAtRef.current = saved || fallback;
+  }, [user?.id]);
+
   // Get risk percent from user profile or global settings
   const riskPercent = profile?.custom_risk_percent || settings?.global_risk_percent || 2;
 
   // Fetch user's trade for the signal
   const fetchUserTrade = async (signalId: string) => {
     if (!userIdRef.current) return null;
-    
+
     try {
       const { data, error } = await supabase
         .from('user_trades')
@@ -72,12 +113,12 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         .eq('signal_id', signalId)
         .eq('user_id', userIdRef.current)
         .maybeSingle();
-      
+
       if (error) {
         console.error('[NotificationModal] Error fetching user trade:', error);
         return null;
       }
-      
+
       return data as UserTrade | null;
     } catch (err) {
       console.error('[NotificationModal] Error fetching user trade:', err);
@@ -124,12 +165,149 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const addNotification = useCallback((notification: NotificationItem) => {
     setNotifications(prev => [...prev, notification]);
     setIsVisible(true);
-    
+
     // Play notification sound
     if (audioRef.current) {
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch(() => { });
     }
   }, []);
+
+  const processSignalInsert = useCallback((newSignal: Signal, source: "realtime" | "catchup" = "realtime") => {
+    if (!canReceiveRef.current) return;
+    bumpLastSync(newSignal.created_at || newSignal.updated_at);
+    if (
+      allowedCategoriesRef.current.length > 0 &&
+      !allowedCategoriesRef.current.includes(newSignal.category)
+    ) {
+      return;
+    }
+    if (newSignal.signal_type !== "signal") return;
+
+    const notificationKey = `new-signal-${newSignal.id}`;
+    if (shownNotificationsRef.current.has(notificationKey)) return;
+
+    if (source === "realtime") {
+      const signalTime = new Date(newSignal.created_at).getTime();
+      const now = Date.now();
+      if (now - signalTime > 300000) return;
+    }
+
+    shownNotificationsRef.current.add(notificationKey);
+    addNotification({
+      id: notificationKey,
+      signal: newSignal,
+      type: "new_signal",
+    });
+  }, [addNotification, bumpLastSync]);
+
+  const processSignalUpdate = useCallback(async (updatedSignal: Signal, oldSignal?: Partial<Signal> | null, source: "realtime" | "catchup" = "realtime") => {
+    if (!canReceiveRef.current) return;
+    bumpLastSync(updatedSignal.updated_at || updatedSignal.created_at);
+    if (
+      allowedCategoriesRef.current.length > 0 &&
+      !allowedCategoriesRef.current.includes(updatedSignal.category)
+    ) {
+      return;
+    }
+
+    const currentStatus = updatedSignal.status?.toLowerCase();
+    const previousStatus = oldSignal?.status?.toLowerCase();
+
+    const closedStatuses = ["tp_hit", "sl_hit", "breakeven"];
+    const isClosingTrade = closedStatuses.includes(currentStatus || "");
+    const wasNotClosed = !previousStatus || !closedStatuses.includes(previousStatus);
+
+    if (isClosingTrade && wasNotClosed) {
+      const closureKey = `trade-closed-${updatedSignal.id}-${currentStatus}`;
+      if (shownNotificationsRef.current.has(closureKey)) return;
+
+      const trade = await fetchUserTrade(updatedSignal.id);
+      shownNotificationsRef.current.add(closureKey);
+
+      addNotification({
+        id: closureKey,
+        signal: updatedSignal,
+        type: "trade_closed",
+        status: currentStatus as TradeClosedStatus,
+        userTrade: trade,
+      });
+      return;
+    }
+
+    const hasAllPrices =
+      updatedSignal.entry_price !== null &&
+      updatedSignal.entry_price !== undefined &&
+      updatedSignal.stop_loss !== null &&
+      updatedSignal.stop_loss !== undefined &&
+      updatedSignal.take_profit !== null &&
+      updatedSignal.take_profit !== undefined;
+
+    const isClosedLike =
+      closedStatuses.includes(updatedSignal.status as TradeClosedStatus) ||
+      ["closed", "cancelled"].includes(updatedSignal.status);
+
+    const becameSignalType =
+      oldSignal?.signal_type === "upcoming" && updatedSignal.signal_type === "signal";
+
+    const updatedAtMs = new Date(updatedSignal.updated_at).getTime();
+    const isRecentUpdate = Date.now() - updatedAtMs < 2 * 60 * 1000;
+    const fallbackLooksLikeConversion =
+      !oldSignal?.signal_type &&
+      updatedSignal.signal_type === "signal" &&
+      (source === "catchup" || isRecentUpdate);
+
+    const isSignalActivation =
+      !isClosedLike &&
+      hasAllPrices &&
+      (becameSignalType || fallbackLooksLikeConversion) &&
+      updatedSignal.signal_type === "signal";
+
+    if (isSignalActivation) {
+      const activationKey = `signal-active-${updatedSignal.id}`;
+      if (shownNotificationsRef.current.has(activationKey)) return;
+      shownNotificationsRef.current.add(activationKey);
+      addNotification({
+        id: activationKey,
+        signal: updatedSignal,
+        type: "signal_active",
+      });
+    }
+  }, [addNotification, bumpLastSync]);
+
+  const fetchMissedNotifications = useCallback(async (emitNotifications = false) => {
+    if (!userIdRef.current || !canReceiveRef.current) return;
+    const since = lastSyncAtRef.current;
+    try {
+      const { data, error } = await supabase
+        .from("signals")
+        .select("*")
+        .or(`created_at.gt.${since},updated_at.gt.${since}`)
+        .order("updated_at", { ascending: true })
+        .limit(200);
+
+      if (error) {
+        console.error("[NotificationModal] Error fetching missed notifications:", error);
+        return;
+      }
+
+      for (const signal of data || []) {
+        const sig = signal as Signal;
+        const createdAtMs = new Date(sig.created_at).getTime();
+        const sinceMs = new Date(since).getTime();
+
+        if (emitNotifications) {
+          if (Number.isFinite(createdAtMs) && createdAtMs > sinceMs) {
+            processSignalInsert(sig, "catchup");
+          }
+          await processSignalUpdate(sig, null, "catchup");
+        } else {
+          bumpLastSync(sig.updated_at || sig.created_at);
+        }
+      }
+    } catch (err) {
+      console.error("[NotificationModal] Error during missed notifications fetch:", err);
+    }
+  }, [processSignalInsert, processSignalUpdate, bumpLastSync]);
 
   // Remove single notification
   const removeNotification = useCallback((id: string) => {
@@ -152,164 +330,104 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   }, [onClose]);
 
   useEffect(() => {
-    // Wait for auth to fully load before setting up listener
     if (authLoading || !user) return;
-    
-    console.log('[NotificationModal] Setting up realtime listener, userId:', user.id);
 
-    const channelName = `unified-notification-modal-${user.id}`;
-    
+    const channelName = `unified-notification-modal-${user.id}-${reconnectNonce}`;
     const channel = supabase
       .channel(channelName)
       .on(
-        'postgres_changes',
+        "postgres_changes",
         {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'signals',
+          event: "INSERT",
+          schema: "public",
+          table: "signals",
         },
         (payload) => {
-          // Check permission at callback time using ref
-          if (!canReceiveRef.current) return;
-          
-          const newSignal = payload.new as Signal;
-          
-          // Only show for actual signals (not upcoming)
-          if (newSignal.signal_type !== 'signal') return;
-          
-          // Skip if already shown
-          const notificationKey = `new-signal-${newSignal.id}`;
-          if (shownNotificationsRef.current.has(notificationKey)) return;
-          
-          // Check if signal is recent (within 5 minutes)
-          const signalTime = new Date(newSignal.created_at).getTime();
-          const now = Date.now();
-          if (now - signalTime > 300000) return;
-          
-          console.log('[NotificationModal] New signal received:', newSignal.pair, newSignal.direction);
-
-          shownNotificationsRef.current.add(notificationKey);
-          
-          addNotification({
-            id: notificationKey,
-            signal: newSignal,
-            type: 'new_signal'
-          });
+          processSignalInsert(payload.new as Signal);
         }
       )
       .on(
-        'postgres_changes',
+        "postgres_changes",
         {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'signals',
+          event: "UPDATE",
+          schema: "public",
+          table: "signals",
         },
         async (payload) => {
-          // Check permission at callback time using ref
-          if (!canReceiveRef.current) return;
-          
-          const updatedSignal = payload.new as Signal;
-          const oldSignal = payload.old as Partial<Signal> | null;
-          
-          // Normalize status to lowercase for comparison
-          const currentStatus = updatedSignal.status?.toLowerCase();
-          const previousStatus = oldSignal?.status?.toLowerCase();
-          
-          // Check for trade closure (TP hit, SL hit, Breakeven)
-          const closedStatuses = ['tp_hit', 'sl_hit', 'breakeven'];
-          const isClosingTrade = closedStatuses.includes(currentStatus || '');
-          const wasNotClosed = !previousStatus || !closedStatuses.includes(previousStatus);
-          
-          console.log('[NotificationModal] Signal update detected:', {
-            pair: updatedSignal.pair,
-            currentStatus,
-            previousStatus,
-            isClosingTrade,
-            wasNotClosed
-          });
-          
-          if (isClosingTrade && wasNotClosed) {
-            const closureKey = `trade-closed-${updatedSignal.id}-${currentStatus}`;
-            if (shownNotificationsRef.current.has(closureKey)) return;
-            
-            // Do not enforce a tight time window here.
-            // Some status updates (especially breakeven) may not update closed_at reliably,
-            // and updated_at can lag depending on how the backend writes the row.
-            // Realtime events are already "new" by definition, and we dedupe via shownNotificationsRef.
-            
-            console.log('[NotificationModal] Trade closed notification triggered:', updatedSignal.pair, currentStatus);
-
-            // Fetch user's trade for this signal
-            const trade = await fetchUserTrade(updatedSignal.id);
-            
-            shownNotificationsRef.current.add(closureKey);
-            
-            // Map back to proper TradeClosedStatus type
-            const statusType = currentStatus as TradeClosedStatus;
-            
-            addNotification({
-              id: closureKey,
-              signal: updatedSignal,
-              type: 'trade_closed',
-              status: statusType,
-              userTrade: trade
-            });
-            return;
-          }
-          
-          // Check for upcoming -> active signal conversion
-          const hasAllPrices =
-            updatedSignal.entry_price !== null &&
-            updatedSignal.entry_price !== undefined &&
-            updatedSignal.stop_loss !== null &&
-            updatedSignal.stop_loss !== undefined &&
-            updatedSignal.take_profit !== null &&
-            updatedSignal.take_profit !== undefined;
-
-          const isClosedLike = closedStatuses.includes(updatedSignal.status as TradeClosedStatus) ||
-            ['closed', 'cancelled'].includes(updatedSignal.status);
-
-          const becameSignalType =
-            oldSignal?.signal_type === 'upcoming' && updatedSignal.signal_type === 'signal';
-
-          // Fallback for cases where old row isn't present
-          const updatedAtMs = new Date(updatedSignal.updated_at).getTime();
-          const isRecentUpdate = Date.now() - updatedAtMs < 2 * 60 * 1000;
-          const fallbackLooksLikeConversion =
-            !oldSignal?.signal_type && updatedSignal.signal_type === 'signal' && isRecentUpdate;
-
-          const isSignalActivation =
-            !isClosedLike &&
-            hasAllPrices &&
-            (becameSignalType || fallbackLooksLikeConversion) &&
-            updatedSignal.signal_type === 'signal';
-
-          if (isSignalActivation) {
-            const activationKey = `signal-active-${updatedSignal.id}`;
-            if (shownNotificationsRef.current.has(activationKey)) return;
-            
-            console.log('[NotificationModal] Upcoming->Signal conversion detected:', updatedSignal.pair);
-
-            shownNotificationsRef.current.add(activationKey);
-            
-            addNotification({
-              id: activationKey,
-              signal: updatedSignal,
-              type: 'signal_active'
-            });
-          }
+          await processSignalUpdate(payload.new as Signal, payload.old as Partial<Signal> | null, "realtime");
         }
       )
-      .subscribe((status) => {
-        console.log('[NotificationModal] Realtime subscription status:', status);
+      .subscribe(async (status) => {
+        console.log("[NotificationModal] Realtime subscription status:", status);
+        if (status === "SUBSCRIBED") {
+          if (wentOfflineRef.current && !reloadingRef.current) {
+            reloadingRef.current = true;
+            setTimeout(() => window.location.reload(), 900);
+            return;
+          }
+          await fetchMissedNotifications(false);
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          showOfflineWarning();
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+          }
+          reconnectTimeoutRef.current = setTimeout(() => {
+            setReconnectNonce((n) => n + 1);
+          }, 1200);
+        }
       });
 
     return () => {
-      console.log('[NotificationModal] Cleaning up realtime channel');
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, authLoading, addNotification]);
+  }, [user?.id, authLoading, reconnectNonce, processSignalInsert, processSignalUpdate, fetchMissedNotifications, showOfflineWarning]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      if (wentOfflineRef.current && !reloadingRef.current) {
+        reloadingRef.current = true;
+        setTimeout(() => window.location.reload(), 900);
+        return;
+      }
+      fetchMissedNotifications(false);
+      setReconnectNonce((n) => n + 1);
+    };
+    const handleOffline = () => {
+      showOfflineWarning();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchMissedNotifications(false);
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [fetchMissedNotifications, showOfflineWarning]);
+
+  // Dedicated instant listener so warning appears immediately on browser disconnect.
+  useEffect(() => {
+    const onImmediateOffline = () => {
+      showOfflineWarning();
+    };
+
+    window.addEventListener("offline", onImmediateOffline);
+    return () => {
+      window.removeEventListener("offline", onImmediateOffline);
+    };
+  }, [showOfflineWarning]);
 
   const getStatusConfig = (status: TradeClosedStatus) => {
     switch (status) {
@@ -361,7 +479,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const getNotificationTitle = () => {
     const count = notifications.length;
     const types = new Set(notifications.map(n => n.type));
-    
+
     if (types.size === 1) {
       const type = notifications[0].type;
       if (type === 'trade_closed') return `${count} Trade${count > 1 ? 's' : ''} Closed`;
@@ -377,82 +495,82 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     const isBuy = signal.direction === 'BUY';
 
     return (
-      <div 
+      <div
         key={notification.id}
-        className="rounded-2xl border border-border/50 bg-card shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+        className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
       >
         {/* Header */}
-        <div className={cn("px-5 py-4 relative", isBuy ? "bg-success/10" : "bg-destructive/10")}>
+        <div className="px-5 py-4 border-b border-[#1e293b] relative">
           <button
             onClick={() => removeNotification(notification.id)}
-            className="absolute top-3 right-3 p-1 rounded-full hover:bg-background/20 transition-colors"
+            className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
           >
-            <X className="w-4 h-4 text-muted-foreground" />
+            <X className="w-4 h-4 text-slate-400" />
           </button>
 
           <div className="flex items-center gap-3">
-            <span className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold",
-              isBuy ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+            <div className={cn(
+              "w-10 h-10 rounded-full flex items-center justify-center",
+              isBuy ? "bg-[#00c07f]/20" : "bg-[#ef4444]/20"
             )}>
-              {isBuy ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+              <CheckCircle2 className={cn("w-5 h-5", isBuy ? "text-[#00c07f]" : "text-[#ef4444]")} />
+            </div>
+            <div>
+              <h3 className={cn("text-base font-bold", isBuy ? "text-[#00c07f]" : "text-[#ef4444]")}>
+                {isBuy ? 'Buy Signal' : 'Sell Signal'}
+              </h3>
+              <p className="text-xs font-medium text-slate-400">Trade Signal Received</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Pair Info */}
+        <div className="px-5 py-3 flex items-center justify-between bg-black/20">
+          <div className="flex items-center gap-2">
+            <span className={cn(
+              "px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white",
+              isBuy ? "bg-[#00c07f]" : "bg-[#ef4444]"
+            )}>
               {signal.direction}
             </span>
-            <h3 className="text-xl font-bold">{signal.pair}</h3>
-            <span className="px-2.5 py-0.5 rounded-full bg-muted text-xs font-medium text-muted-foreground">
-              {signal.category}
-            </span>
+            <span className="text-lg font-bold text-white">{signal.pair}</span>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">New Signal Alert</p>
+          <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{signal.category}</span>
         </div>
 
-        {/* Price Details */}
-        <div className="p-5 space-y-4">
-          {/* Risk Per Trade */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-warning/10 border border-warning/20">
-            <div className="flex items-center gap-2">
-              <Percent className="w-4 h-4 text-warning" />
-              <span className="text-sm text-muted-foreground">Risk Per Trade</span>
+        {/* Prices */}
+        <div className="px-5 py-5 space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl p-3 text-center border border-white/5 bg-white/5">
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Entry</p>
+              <p className="font-mono font-bold text-base text-white">{signal.entry_price ?? '-'}</p>
             </div>
-            <span className="font-bold text-warning">{riskPercent}%</span>
+
+            <div className="rounded-xl p-3 text-center border border-[#ef4444]/20 bg-[#ef4444]/10">
+              <p className="text-[10px] text-[#ef4444] uppercase tracking-widest mb-1 flex items-center justify-center gap-1">SL</p>
+              <p className="font-mono font-bold text-base text-[#ef4444]">{signal.stop_loss ?? '-'}</p>
+            </div>
+
+            <div className="rounded-xl p-3 text-center border border-[#00c07f]/20 bg-[#00c07f]/10">
+              <p className="text-[10px] text-[#00c07f] uppercase tracking-widest mb-1 flex items-center justify-center gap-1">TP</p>
+              <p className="font-mono font-bold text-base text-[#00c07f]">{signal.take_profit ?? '-'}</p>
+            </div>
           </div>
 
-          {/* Entry Price */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-primary/10 border border-primary/20">
-            <div className="flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-primary" />
-              <span className="text-sm text-muted-foreground">Entry Price</span>
-            </div>
-            <span className="font-mono font-bold text-lg">{signal.entry_price ?? '-'}</span>
-          </div>
-
-          {/* SL & TP Grid */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20">
-              <div className="flex items-center gap-2 mb-1">
-                <ShieldAlert className="w-3.5 h-3.5 text-destructive" />
-                <span className="text-xs text-muted-foreground">Stop Loss</span>
-              </div>
-              <span className="font-mono font-bold text-destructive">{signal.stop_loss ?? '-'}</span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-success/10 border border-success/20">
-              <div className="flex items-center gap-2 mb-1">
-                <Target className="w-3.5 h-3.5 text-success" />
-                <span className="text-xs text-muted-foreground">Take Profit</span>
-              </div>
-              <span className="font-mono font-bold text-success">{signal.take_profit ?? '-'}</span>
-            </div>
+          <div className="bg-orange-500/10 rounded-xl p-3 border border-orange-500/20 text-center flex items-center justify-between px-4">
+            <span className="text-xs text-slate-400 font-medium">Risk Per Trade</span>
+            <span className="text-lg font-bold text-orange-400">{riskPercent}%</span>
           </div>
         </div>
 
-        {/* Footer Button */}
+        {/* Button */}
         <div className="px-5 pb-5">
-          <Button 
+          <Button
             onClick={() => removeNotification(notification.id)}
-            className="w-full"
-            variant="gradient"
-            size="default"
+            className={cn(
+              "w-full h-12 font-bold text-white shadow-lg transition-all border-0",
+              isBuy ? "bg-[#00c07f] hover:bg-[#00a06b]" : "bg-[#ef4444] hover:bg-[#dc2626]"
+            )}
           >
             Got it
           </Button>
@@ -467,26 +585,26 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     const isBuy = signal.direction === 'BUY';
 
     return (
-      <div 
+      <div
         key={notification.id}
-        className="rounded-2xl border border-border/50 bg-card shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+        className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
       >
         {/* Header */}
-        <div className="px-5 py-4 relative bg-primary/10">
+        <div className="px-5 py-4 border-b border-[#1e293b] relative">
           <button
             onClick={() => removeNotification(notification.id)}
-            className="absolute top-3 right-3 p-1 rounded-full hover:bg-background/20 transition-colors"
+            className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
           >
-            <X className="w-4 h-4 text-muted-foreground" />
+            <X className="w-4 h-4 text-slate-400" />
           </button>
 
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-primary/20">
-              <Bell className="w-6 h-6 text-primary" />
+            <div className="p-2.5 rounded-full bg-blue-500/20">
+              <Bell className="w-5 h-5 text-blue-500" />
             </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-bold text-primary">Signal Now Active</h3>
-              <p className="text-xs text-muted-foreground">Upcoming trade is now live</p>
+            <div>
+              <h3 className="text-base font-bold text-blue-500">Signal Now Active</h3>
+              <p className="text-xs font-medium text-slate-400">Upcoming trade is now live</p>
             </div>
           </div>
         </div>
@@ -494,63 +612,47 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         {/* Trade Details */}
         <div className="p-4 space-y-3">
           {/* Pair and Direction */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-secondary/50 border border-border/30">
+          <div className="px-5 py-3 flex items-center justify-between bg-black/20 rounded-xl">
             <div className="flex items-center gap-2">
               <span className={cn(
-                "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold",
-                isBuy ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+                "px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white",
+                isBuy ? "bg-[#00c07f]" : "bg-[#ef4444]"
               )}>
-                {isBuy ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                 {signal.direction}
               </span>
-              <span className="text-lg font-bold">{signal.pair}</span>
+              <span className="text-lg font-bold text-white">{signal.pair}</span>
             </div>
-            <span className="px-2 py-0.5 rounded-full bg-muted text-[10px] font-medium text-muted-foreground capitalize">
-              {signal.category}
-            </span>
+            <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{signal.category}</span>
           </div>
 
           {/* Risk Per Trade */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-warning/10 border border-warning/20">
-            <div className="flex items-center gap-2">
-              <Percent className="w-4 h-4 text-warning" />
-              <span className="text-sm text-muted-foreground">Risk Per Trade</span>
-            </div>
-            <span className="font-bold text-warning">{riskPercent}%</span>
+          <div className="bg-orange-500/10 rounded-xl p-3 border border-orange-500/20 text-center flex items-center justify-between px-4">
+            <span className="text-xs text-slate-400 font-medium">Risk Per Trade</span>
+            <span className="text-lg font-bold text-orange-400">{riskPercent}%</span>
           </div>
 
           {/* Price Details Grid */}
           <div className="grid grid-cols-3 gap-2">
-            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-center">
-              <p className="text-[9px] text-muted-foreground uppercase mb-0.5">Entry</p>
-                <p className="font-mono font-bold text-xs">{signal.entry_price ?? "-"}</p>
+            <div className="rounded-xl p-3 text-center border border-white/5 bg-white/5">
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Entry</p>
+              <p className="font-mono font-bold text-base text-white">{signal.entry_price ?? '-'}</p>
             </div>
-
-            <div className="p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-center">
-              <div className="flex items-center justify-center gap-0.5 mb-0.5">
-                <ShieldAlert className="w-2.5 h-2.5 text-destructive" />
-                <p className="text-[9px] text-muted-foreground uppercase">SL</p>
-              </div>
-                <p className="font-mono font-bold text-xs text-destructive">{signal.stop_loss ?? "-"}</p>
+            <div className="rounded-xl p-3 text-center border border-[#ef4444]/20 bg-[#ef4444]/10">
+              <p className="text-[10px] text-[#ef4444] uppercase tracking-widest mb-1">SL</p>
+              <p className="font-mono font-bold text-base text-[#ef4444]">{signal.stop_loss ?? "-"}</p>
             </div>
-
-            <div className="p-2 rounded-lg bg-success/10 border border-success/20 text-center">
-              <div className="flex items-center justify-center gap-0.5 mb-0.5">
-                <Target className="w-2.5 h-2.5 text-success" />
-                <p className="text-[9px] text-muted-foreground uppercase">TP</p>
-              </div>
-                <p className="font-mono font-bold text-xs text-success">{signal.take_profit ?? "-"}</p>
+            <div className="rounded-xl p-3 text-center border border-[#00c07f]/20 bg-[#00c07f]/10">
+              <p className="text-[10px] text-[#00c07f] uppercase tracking-widest mb-1">TP</p>
+              <p className="font-mono font-bold text-base text-[#00c07f]">{signal.take_profit ?? "-"}</p>
             </div>
           </div>
         </div>
 
         {/* Footer Button */}
         <div className="px-4 pb-4">
-          <Button 
+          <Button
             onClick={() => removeNotification(notification.id)}
-            className="w-full"
-            variant="gradient"
-            size="default"
+            className="w-full h-12 font-bold text-white bg-blue-500 hover:bg-blue-600 shadow-lg border-0"
           >
             Got it
           </Button>
@@ -563,112 +665,107 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const renderTradeClosedNotification = (notification: NotificationItem) => {
     const { signal, status, userTrade } = notification;
     if (!status) return null;
-    
+
     const statusConfig = getStatusConfig(status);
     const StatusIcon = statusConfig.icon;
     const isBuy = signal.direction === 'BUY';
     const pnl = calculatePnL(signal, userTrade || null, status);
 
     return (
-      <div 
+      <div
         key={notification.id}
-        className="rounded-2xl border border-border/50 bg-card shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+        className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
       >
-        {/* Header with Status */}
-        <div className={cn("px-5 py-4 relative", statusConfig.bgClass)}>
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1e293b] relative">
           <button
             onClick={() => removeNotification(notification.id)}
-            className="absolute top-3 right-3 p-1 rounded-full hover:bg-background/20 transition-colors"
+            className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
           >
-            <X className="w-4 h-4 text-muted-foreground" />
+            <X className="w-4 h-4 text-slate-400" />
           </button>
 
           <div className="flex items-center gap-3">
-            <div className={cn("p-2.5 rounded-xl", statusConfig.iconBgClass)}>
-              <StatusIcon className={cn("w-6 h-6", statusConfig.textClass)} />
+            <div className={cn(
+              "w-10 h-10 rounded-full flex items-center justify-center",
+              status === 'tp_hit' ? "bg-[#00c07f]/20" : status === 'sl_hit' ? "bg-[#ef4444]/20" : "bg-orange-500/20"
+            )}>
+              <StatusIcon className={cn("w-5 h-5", status === 'tp_hit' ? "text-[#00c07f]" : status === 'sl_hit' ? "text-[#ef4444]" : "text-orange-500")} />
             </div>
-            
-            <div className="flex-1">
-              <h3 className={cn("text-lg font-bold", statusConfig.textClass)}>
+            <div>
+              <h3 className={cn("text-base font-bold", status === 'tp_hit' ? "text-[#00c07f]" : status === 'sl_hit' ? "text-[#ef4444]" : "text-orange-500")}>
                 {statusConfig.label}
               </h3>
-              <p className="text-xs text-muted-foreground">
-                {statusConfig.subtitle}
-              </p>
+              <p className="text-xs font-medium text-slate-400">{statusConfig.subtitle}</p>
             </div>
           </div>
         </div>
 
         {/* Trade Details */}
-        <div className="p-4 space-y-3">
-          {/* Pair and Direction */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-secondary/50 border border-border/30">
+        <div className="px-5 py-4 space-y-4">
+          {/* Pair Info */}
+          <div className="flex items-center justify-between bg-black/20 rounded-xl p-3">
             <div className="flex items-center gap-2">
               <span className={cn(
-                "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold",
-                isBuy ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
+                "px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white",
+                isBuy ? "bg-[#00c07f]" : "bg-[#ef4444]"
               )}>
-                {isBuy ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                 {signal.direction}
               </span>
-              <span className="text-lg font-bold">{signal.pair}</span>
+              <span className="text-lg font-bold text-white">{signal.pair}</span>
             </div>
-            <span className="px-2 py-0.5 rounded-full bg-muted text-[10px] font-medium text-muted-foreground capitalize">
-              {signal.category}
-            </span>
+            <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{signal.category}</span>
           </div>
 
-          {/* Price Details Grid */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-center">
-              <p className="text-[9px] text-muted-foreground uppercase mb-0.5">Entry</p>
-                <p className="font-mono font-bold text-xs">{signal.entry_price ?? "-"}</p>
+          {/* Price Grid */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl p-2 text-center border border-white/5 bg-white/5">
+              <p className="text-[9px] text-slate-400 uppercase tracking-widest mb-0.5">Entry</p>
+              <p className="font-mono font-bold text-xs text-white">{signal.entry_price ?? "-"}</p>
             </div>
-
-            <div className="p-2 rounded-lg bg-destructive/10 border border-destructive/20 text-center">
-              <div className="flex items-center justify-center gap-0.5 mb-0.5">
-                <ShieldAlert className="w-2.5 h-2.5 text-destructive" />
-                <p className="text-[9px] text-muted-foreground uppercase">SL</p>
-              </div>
-                <p className="font-mono font-bold text-xs text-destructive">{signal.stop_loss ?? "-"}</p>
+            <div className="rounded-xl p-2 text-center border border-[#ef4444]/20 bg-[#ef4444]/10">
+              <p className="text-[9px] text-[#ef4444] uppercase tracking-widest mb-0.5">SL</p>
+              <p className="font-mono font-bold text-xs text-[#ef4444]">{signal.stop_loss ?? "-"}</p>
             </div>
-
-            <div className="p-2 rounded-lg bg-success/10 border border-success/20 text-center">
-              <div className="flex items-center justify-center gap-0.5 mb-0.5">
-                <Target className="w-2.5 h-2.5 text-success" />
-                <p className="text-[9px] text-muted-foreground uppercase">TP</p>
-              </div>
-                <p className="font-mono font-bold text-xs text-success">{signal.take_profit ?? "-"}</p>
+            <div className="rounded-xl p-2 text-center border border-[#00c07f]/20 bg-[#00c07f]/10">
+              <p className="text-[9px] text-[#00c07f] uppercase tracking-widest mb-0.5">TP</p>
+              <p className="font-mono font-bold text-xs text-[#00c07f]">{signal.take_profit ?? "-"}</p>
             </div>
           </div>
 
           {/* P&L Result */}
           {status !== 'breakeven' && (
             <div className={cn(
-              "flex flex-col items-center justify-center p-3 rounded-xl border",
-              statusConfig.bgClass,
-              statusConfig.borderClass
+              "rounded-xl p-4 text-center border-2",
+              status === 'tp_hit'
+                ? "bg-[#00c07f]/10 border-[#00c07f]/30"
+                : "bg-[#ef4444]/10 border-[#ef4444]/30"
             )}>
-              <p className={cn("text-[10px] uppercase tracking-wide mb-0.5", statusConfig.textClass)}>
+              <p className={cn("text-xs uppercase tracking-widest mb-1 font-bold", status === 'tp_hit' ? "text-[#00c07f]" : "text-[#ef4444]")}>
                 {status === 'tp_hit' ? 'Profit' : 'Loss'}
               </p>
-              <span className={cn("text-xl font-bold font-mono", statusConfig.textClass)}>
+              <p className={cn("text-3xl font-black font-mono mb-1", status === 'tp_hit' ? "text-[#00c07f]" : "text-[#ef4444]")}>
                 {formatPnL(pnl.amount)}
-              </span>
-              <span className={cn("text-xs font-medium mt-0.5", statusConfig.textClass)}>
-                {formatPercent(pnl.percent)} of account
-              </span>
+              </p>
+              <p className={cn("text-sm font-bold opacity-80", status === 'tp_hit' ? "text-[#00c07f]" : "text-[#ef4444]")}>
+                {formatPercent(pnl.percent)}
+              </p>
             </div>
           )}
         </div>
 
         {/* Footer Button */}
-        <div className="px-4 pb-4">
-          <Button 
+        <div className="px-5 pb-5">
+          <Button
             onClick={() => removeNotification(notification.id)}
-            className="w-full"
-            variant="gradient"
-            size="default"
+            className={cn(
+              "w-full h-12 font-bold text-white shadow-lg transition-all border-0",
+              status === 'tp_hit'
+                ? "bg-[#00c07f] hover:bg-[#00a06b]"
+                : status === 'sl_hit'
+                  ? "bg-[#ef4444] hover:bg-[#dc2626]"
+                  : "bg-orange-500 hover:bg-orange-600"
+            )}
           >
             Got it
           </Button>
@@ -703,69 +800,91 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     };
   }, [isVisible]);
 
-  if (notifications.length === 0 || !isVisible) return null;
+  // Ensure audio element is always mounted so ref is available
+  // The logic below was previously returning null early, causing audioRef to be null when play() was called for the first notification
 
   return (
     <>
-      {/* Audio element for notification sound */}
+      {isOffline && (
+        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-destructive/40 bg-[#0b1121] p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-destructive mb-2">Realtime Connection Lost</h3>
+            <p className="text-sm text-slate-200 leading-relaxed">
+              Live signals and trade updates are paused due to connection loss. Do not take new trades until connection is restored.
+            </p>
+            <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              This page will auto-reload as soon as realtime connection returns.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Audio element for notification sound - Always rendered */}
       <audio
         ref={audioRef}
         src="/notification-sound.mp3"
         preload="auto"
       />
 
-      {/* Backdrop with blur */}
-      <div 
-        className={cn(
-          "fixed inset-0 z-50 bg-background/80 backdrop-blur-md transition-opacity duration-300",
-          isVisible ? "opacity-100" : "opacity-0"
-        )}
-        onClick={(e) => e.preventDefault()}
-      />
+      {/* Only render modal content when there are notifications and it is visible */}
+      {(notifications.length > 0 && isVisible) && (
+        <>
+          {/* Backdrop with blur */}
+          <div
+            className={cn(
+              "fixed inset-0 z-50 bg-background/80 backdrop-blur-md transition-opacity duration-300",
+              isVisible ? "opacity-100" : "opacity-0"
+            )}
+            onClick={(e) => e.preventDefault()}
+          />
 
-      {/* Modal Container */}
-      <div 
-        className={cn(
-          "fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-300",
-          isVisible ? "opacity-100" : "opacity-0"
-        )}
-      >
-        <div 
-          className={cn(
-            "w-full max-w-md transition-transform duration-300 flex flex-col",
-            isVisible ? "scale-100" : "scale-95"
-          )}
-          style={{ maxHeight: 'calc(100vh - 4rem)' }}
-        >
-          {/* Header with notification count */}
-          {notifications.length > 1 && (
-            <div className="flex items-center justify-between px-4 py-2 mb-2 flex-shrink-0 bg-card/90 backdrop-blur rounded-t-2xl">
-              <span className="text-sm font-medium text-muted-foreground">
-                {getNotificationTitle()}
-              </span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handleCloseAll}
-                className="text-xs"
-              >
-                Dismiss All
-              </Button>
-            </div>
-          )}
-
-          {/* Scrollable notifications container */}
-          <div 
-            className="flex-1 overflow-y-auto overscroll-contain"
-            style={{ maxHeight: notifications.length > 1 ? 'calc(100vh - 8rem)' : 'calc(100vh - 4rem)' }}
+          {/* Modal Container */}
+          <div
+            className={cn(
+              "fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-300",
+              isVisible ? "opacity-100" : "opacity-0"
+            )}
           >
-            <div className="space-y-4 px-1 pb-2">
-              {notifications.map((notification) => renderNotification(notification))}
+            <div
+              className={cn(
+                "w-full max-w-md transition-transform duration-300 flex flex-col",
+                isVisible ? "scale-100" : "scale-95"
+              )}
+              style={{ maxHeight: 'calc(100vh - 4rem)' }}
+            >
+              {/* Parent window */}
+              <div className="rounded-3xl border border-[#1e293b] bg-[#070f22]/95 shadow-[0_24px_80px_rgba(2,8,23,0.65)] backdrop-blur-xl p-3">
+                {/* Header with notification count */}
+                {notifications.length > 1 && (
+                  <div className="flex items-center justify-between px-3 py-2 mb-2 flex-shrink-0 border-b border-[#1e293b]">
+                    <span className="text-sm font-medium text-slate-300">
+                      {getNotificationTitle()}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCloseAll}
+                      className="text-xs text-slate-300 hover:text-white hover:bg-white/5"
+                    >
+                      Dismiss All
+                    </Button>
+                  </div>
+                )}
+
+                {/* Scrollable notifications container */}
+                <div
+                  className="flex-1 overflow-y-auto overscroll-contain"
+                  style={{ maxHeight: notifications.length > 1 ? 'calc(100vh - 9rem)' : 'calc(100vh - 5rem)' }}
+                >
+                  <div className="space-y-4 px-1 pb-1">
+                    {notifications.map((notification) => renderNotification(notification))}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-
-        </div>
-      </div>
+        </>
+      )}
     </>
   );
 };

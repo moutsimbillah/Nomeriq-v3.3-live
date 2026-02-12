@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { Payment, PaymentStatus } from '@/types/database';
+import { Payment, PaymentStatus, SubscriptionPackage } from '@/types/database';
 
 interface PaymentWithUser extends Payment {
   profile?: {
@@ -8,6 +8,7 @@ interface PaymentWithUser extends Payment {
     first_name: string | null;
     last_name: string | null;
   };
+  package?: SubscriptionPackage | null;
 }
 
 interface UsePaymentsOptions {
@@ -15,6 +16,11 @@ interface UsePaymentsOptions {
   limit?: number;
   page?: number;
   userId?: string; // Optional: filter by user for user-side view
+}
+
+interface SubmitPaymentOptions {
+  packageId?: string | null;
+  currency?: string;
 }
 
 export const usePayments = (options: UsePaymentsOptions = {}) => {
@@ -45,10 +51,10 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
       // Get payments
       const offset = (page - 1) * limit;
-      
+
       let query = supabase
         .from('payments')
-        .select('*')
+        .select('*, subscription_packages(*)')
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -63,10 +69,54 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
       if (paymentsError) throw paymentsError;
 
+      // Fallback package resolution for legacy rows where payments.package_id is null
+      // but subscriptions.payment_id links to a package.
+      const fallbackPackageByPaymentId = new Map<string, SubscriptionPackage>();
+      const unresolvedPaymentIds = (paymentsData || [])
+        .filter((payment) => {
+          const raw = (payment as any).subscription_packages;
+          const joinedPkg = raw != null ? (Array.isArray(raw) ? raw[0] : raw) : null;
+          return !joinedPkg;
+        })
+        .map((payment) => payment.id);
+
+      if (unresolvedPaymentIds.length > 0) {
+        const { data: subRows } = await supabase
+          .from('subscriptions')
+          .select('payment_id, package_id')
+          .in('payment_id', unresolvedPaymentIds)
+          .not('package_id', 'is', null);
+
+        const paymentToPackageId = new Map<string, string>();
+        for (const row of subRows || []) {
+          if (row.payment_id && row.package_id) {
+            paymentToPackageId.set(row.payment_id, row.package_id);
+          }
+        }
+
+        const packageIds = Array.from(new Set(Array.from(paymentToPackageId.values())));
+        if (packageIds.length > 0) {
+          const { data: pkgRows } = await supabase
+            .from('subscription_packages')
+            .select('*')
+            .in('id', packageIds);
+
+          const packageById = new Map<string, SubscriptionPackage>();
+          for (const pkg of pkgRows || []) {
+            packageById.set(pkg.id, pkg as SubscriptionPackage);
+          }
+
+          for (const [paymentId, packageId] of paymentToPackageId.entries()) {
+            const pkg = packageById.get(packageId);
+            if (pkg) fallbackPackageByPaymentId.set(paymentId, pkg);
+          }
+        }
+      }
+
       // Fetch user profiles for these payments (only for admin view)
       if (!userId && paymentsData && paymentsData.length > 0) {
         const userIds = paymentsData.map(p => p.user_id);
-        
+
         const { data: profilesData } = await supabase
           .from('profiles')
           .select('user_id, email, first_name, last_name')
@@ -76,21 +126,35 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
           (profilesData || []).map(p => [p.user_id, p])
         );
 
-        const paymentsWithUsers = paymentsData.map(payment => ({
-          ...payment,
-          status: payment.status as PaymentStatus,
-          profile: profilesMap.get(payment.user_id),
-        })) as PaymentWithUser[];
+        const paymentsWithUsers = paymentsData.map(payment => {
+          const raw = (payment as any).subscription_packages;
+          const pkg = raw != null
+            ? (Array.isArray(raw) ? raw[0] : raw) as SubscriptionPackage | null
+            : null;
+          return {
+            ...payment,
+            status: payment.status as PaymentStatus,
+            profile: profilesMap.get(payment.user_id),
+            package: pkg ?? fallbackPackageByPaymentId.get(payment.id) ?? null,
+          };
+        }) as PaymentWithUser[];
 
         setPayments(paymentsWithUsers);
       } else {
-        const paymentsWithStatus = (paymentsData || []).map(payment => ({
-          ...payment,
-          status: payment.status as PaymentStatus,
-        })) as PaymentWithUser[];
+        const paymentsWithStatus = (paymentsData || []).map(payment => {
+          const raw = (payment as any).subscription_packages;
+          const pkg = raw != null
+            ? (Array.isArray(raw) ? raw[0] : raw) as SubscriptionPackage | null
+            : null;
+          return {
+            ...payment,
+            status: payment.status as PaymentStatus,
+            package: pkg ?? fallbackPackageByPaymentId.get(payment.id) ?? null,
+          };
+        }) as PaymentWithUser[];
         setPayments(paymentsWithStatus);
       }
-      
+
       setError(null);
     } catch (err) {
       setError(err as Error);
@@ -106,7 +170,7 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
     // Create unique channel name to prevent conflicts
     const channelName = `payments-realtime-${userId || 'admin'}-${Math.random().toString(36).substring(7)}`;
-    
+
     const channel = supabase
       .channel(channelName)
       .on(
@@ -146,21 +210,38 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
     if (error) throw error;
 
-    // Get the payment to find user_id
+    // Get the payment (with linked package) to determine subscription details
     const payment = payments.find(p => p.id === paymentId);
     if (payment) {
-      // Activate subscription - use upsert to handle missing subscription records
-      const expiresAt = new Date();
-      expiresAt.setMonth(expiresAt.getMonth() + 1);
+      const now = new Date();
+      let expiresAt: string | null = null;
+
+      if (payment.package) {
+        if (payment.package.duration_type === 'lifetime') {
+          expiresAt = null;
+        } else {
+          const months = payment.package.duration_months || 1;
+          const expiry = new Date(now);
+          expiry.setMonth(expiry.getMonth() + months);
+          expiresAt = expiry.toISOString();
+        }
+      } else {
+        // Fallback: preserve previous 1‑month semantics if no package is linked
+        const expiry = new Date(now);
+        expiry.setMonth(expiry.getMonth() + 1);
+        expiresAt = expiry.toISOString();
+      }
 
       await supabase
         .from('subscriptions')
         .upsert({
           user_id: payment.user_id,
           status: 'active',
-          starts_at: new Date().toISOString(),
-          expires_at: expiresAt.toISOString(),
-          updated_at: new Date().toISOString(),
+          starts_at: now.toISOString(),
+          expires_at: expiresAt,
+          updated_at: now.toISOString(),
+          package_id: payment.package_id ?? null,
+          payment_id: payment.id,
         }, { onConflict: 'user_id' });
     }
 
@@ -180,14 +261,24 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
     // Real-time will handle the refresh
   };
 
-  const submitPayment = async (userId: string, txHash: string, amount: number) => {
+  const submitPayment = async (
+    userId: string,
+    txHash: string,
+    amount: number,
+    paymentMethod: string = 'usdt_trc20',
+    options: SubmitPaymentOptions = {}
+  ) => {
+    const { packageId = null, currency = 'USD' } = options;
     const { data, error } = await supabase
       .from('payments')
       .insert({
         user_id: userId,
         tx_hash: txHash,
         amount,
+        currency,
         status: 'pending',
+        payment_method: paymentMethod,
+        package_id: packageId,
       })
       .select()
       .single();
@@ -198,12 +289,12 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
   const totalPages = Math.ceil(totalCount / limit);
 
-  return { 
-    payments, 
-    isLoading, 
-    error, 
-    refetch: fetchPayments, 
-    verifyPayment, 
+  return {
+    payments,
+    isLoading,
+    error,
+    refetch: fetchPayments,
+    verifyPayment,
     rejectPayment,
     submitPayment,
     totalCount,

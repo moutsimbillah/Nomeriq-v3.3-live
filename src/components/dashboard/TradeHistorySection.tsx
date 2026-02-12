@@ -10,6 +10,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationLink, Paginati
 import { SignalAnalysisModal, useHasAnalysis } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { Signal } from "@/types/database";
+import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 
 const PAGE_SIZE = 10;
 
@@ -178,6 +179,9 @@ export const TradeHistorySection = () => {
                   <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Closed At
                   </th>
+                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Details
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
@@ -295,6 +299,11 @@ export const TradeHistorySection = () => {
                         <p className="text-xs text-muted-foreground">
                           {trade.closed_at ? format(new Date(trade.closed_at), "HH:mm") : ""}
                         </p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <TradeDetailsDialog trade={trade as any} />
                       </div>
                     </td>
                   </tr>

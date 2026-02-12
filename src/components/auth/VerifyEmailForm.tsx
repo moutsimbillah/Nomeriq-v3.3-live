@@ -219,7 +219,7 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
 
             <Button
                 variant="outline"
-                className="w-full h-12 font-medium"
+                className="w-full h-12 font-medium text-white"
                 onClick={handleResend}
                 disabled={isResending}
             >

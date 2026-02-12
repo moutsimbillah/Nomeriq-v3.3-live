@@ -143,6 +143,39 @@ export type Database = {
         }
         Relationships: []
       }
+      email_template_settings: {
+        Row: {
+          id: string
+          reset_body: string
+          reset_subject: string
+          sender_email: string
+          sender_name: string
+          updated_at: string
+          verification_body: string
+          verification_subject: string
+        }
+        Insert: {
+          id?: string
+          reset_body?: string
+          reset_subject?: string
+          sender_email?: string
+          sender_name?: string
+          updated_at?: string
+          verification_body?: string
+          verification_subject?: string
+        }
+        Update: {
+          id?: string
+          reset_body?: string
+          reset_subject?: string
+          sender_email?: string
+          sender_name?: string
+          updated_at?: string
+          verification_body?: string
+          verification_subject?: string
+        }
+        Relationships: []
+      }
       favorites: {
         Row: {
           created_at: string
@@ -325,6 +358,7 @@ export type Database = {
           account_balance: number | null
           avatar_url: string | null
           balance_set_at: string | null
+          starting_balance: number | null
           created_at: string
           custom_risk_percent: number | null
           email: string
@@ -332,6 +366,7 @@ export type Database = {
           id: string
           last_name: string | null
           phone: string | null
+          telegram_username: string | null
           updated_at: string
           user_id: string
           username: string | null
@@ -340,6 +375,7 @@ export type Database = {
           account_balance?: number | null
           avatar_url?: string | null
           balance_set_at?: string | null
+          starting_balance?: number | null
           created_at?: string
           custom_risk_percent?: number | null
           email: string
@@ -347,6 +383,7 @@ export type Database = {
           id?: string
           last_name?: string | null
           phone?: string | null
+          telegram_username?: string | null
           updated_at?: string
           user_id: string
           username?: string | null
@@ -355,6 +392,7 @@ export type Database = {
           account_balance?: number | null
           avatar_url?: string | null
           balance_set_at?: string | null
+          starting_balance?: number | null
           created_at?: string
           custom_risk_percent?: number | null
           email?: string
@@ -362,6 +400,7 @@ export type Database = {
           id?: string
           last_name?: string | null
           phone?: string | null
+          telegram_username?: string | null
           updated_at?: string
           user_id?: string
           username?: string | null
@@ -412,6 +451,8 @@ export type Database = {
           id: string
           notes: string | null
           pair: string
+          send_closed_trades_to_telegram: boolean
+          send_updates_to_telegram: boolean
           signal_type: string
           status: string
           stop_loss: number | null
@@ -433,6 +474,8 @@ export type Database = {
           id?: string
           notes?: string | null
           pair: string
+          send_closed_trades_to_telegram?: boolean
+          send_updates_to_telegram?: boolean
           signal_type?: string
           status?: string
           stop_loss?: number | null
@@ -454,6 +497,8 @@ export type Database = {
           id?: string
           notes?: string | null
           pair?: string
+          send_closed_trades_to_telegram?: boolean
+          send_updates_to_telegram?: boolean
           signal_type?: string
           status?: string
           stop_loss?: number | null
@@ -463,6 +508,47 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      signal_take_profit_updates: {
+        Row: {
+          close_percent: number
+          created_at: string
+          created_by: string
+          id: string
+          note: string | null
+          signal_id: string
+          tp_label: string
+          tp_price: number
+        }
+        Insert: {
+          close_percent: number
+          created_at?: string
+          created_by: string
+          id?: string
+          note?: string | null
+          signal_id: string
+          tp_label: string
+          tp_price: number
+        }
+        Update: {
+          close_percent?: number
+          created_at?: string
+          created_by?: string
+          id?: string
+          note?: string | null
+          signal_id?: string
+          tp_label?: string
+          tp_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_take_profit_updates_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       subscriptions: {
         Row: {
@@ -517,7 +603,11 @@ export type Database = {
           closed_at: string | null
           created_at: string
           id: string
+          initial_risk_amount: number
+          last_update_at: string | null
           pnl: number | null
+          realized_pnl: number
+          remaining_risk_amount: number
           result: string | null
           risk_amount: number
           risk_percent: number
@@ -528,7 +618,11 @@ export type Database = {
           closed_at?: string | null
           created_at?: string
           id?: string
+          initial_risk_amount?: number
+          last_update_at?: string | null
           pnl?: number | null
+          realized_pnl?: number
+          remaining_risk_amount?: number
           result?: string | null
           risk_amount: number
           risk_percent: number
@@ -539,7 +633,11 @@ export type Database = {
           closed_at?: string | null
           created_at?: string
           id?: string
+          initial_risk_amount?: number
+          last_update_at?: string | null
           pnl?: number | null
+          realized_pnl?: number
+          remaining_risk_amount?: number
           result?: string | null
           risk_amount?: number
           risk_percent?: number
@@ -552,6 +650,48 @@ export type Database = {
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_trade_take_profit_updates: {
+        Row: {
+          close_percent: number
+          created_at: string
+          id: string
+          realized_pnl: number
+          signal_update_id: string
+          user_trade_id: string
+        }
+        Insert: {
+          close_percent: number
+          created_at?: string
+          id?: string
+          realized_pnl: number
+          signal_update_id: string
+          user_trade_id: string
+        }
+        Update: {
+          close_percent?: number
+          created_at?: string
+          id?: string
+          realized_pnl?: number
+          signal_update_id?: string
+          user_trade_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_trade_take_profit_updates_signal_update_id_fkey"
+            columns: ["signal_update_id"]
+            isOneToOne: false
+            referencedRelation: "signal_take_profit_updates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_trade_take_profit_updates_user_trade_id_fkey"
+            columns: ["user_trade_id"]
+            isOneToOne: false
+            referencedRelation: "user_trades"
             referencedColumns: ["id"]
           },
         ]

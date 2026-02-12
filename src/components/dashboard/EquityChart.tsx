@@ -83,7 +83,7 @@ export const EquityChart = () => {
     if (isProvider && !roleLoading) {
       // Use the user's configured capital as the fixed starting point.
       // (This is what users expect when they set their starting balance.)
-      const fixedStarting = profile?.account_balance ?? 1000;
+      const fixedStarting = profile?.starting_balance ?? profile?.account_balance ?? 1000;
 
       // Providers ALWAYS use the global risk %.
       const riskPercent = settings?.global_risk_percent;
@@ -114,14 +114,18 @@ export const EquityChart = () => {
 
     // Regular user mode: Use actual profile balance and trade history
     const tradePnL = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const calcStartingBalance = currentBalance - tradePnL;
+    const persistedStarting = profile?.starting_balance;
+    const calcStartingBalance =
+      typeof persistedStarting === "number"
+        ? persistedStarting
+        : currentBalance - tradePnL;
 
     return {
       startingBalance: calcStartingBalance,
       totalPnL: tradePnL,
       effectiveCurrentBalance: currentBalance,
     };
-  }, [isProvider, roleLoading, signals, trades, currentBalance, settings?.global_risk_percent, profile?.account_balance]);
+  }, [isProvider, roleLoading, signals, trades, currentBalance, settings?.global_risk_percent, profile?.account_balance, profile?.starting_balance]);
 
   const chartData = useMemo(() => {
     const now = new Date();
@@ -235,7 +239,7 @@ export const EquityChart = () => {
   const accountHealth = useMemo(() => {
     if (isProvider && !roleLoading) {
       // Provider mode: Calculate health from signals using actual balance
-      const providerBalance = profile?.account_balance || 1000;
+      const providerBalance = startingBalance > 0 ? startingBalance : (profile?.starting_balance ?? profile?.account_balance ?? 1000);
       const RISK_PERCENT = globalRiskPercent / 100;
       
       const closedSignals = signals
@@ -245,6 +249,7 @@ export const EquityChart = () => {
       let peak = startingBalance > 0 ? startingBalance : providerBalance;
       let runningBalance = startingBalance > 0 ? startingBalance : providerBalance;
       let currentDrawdown = 0;
+      let maxDrawdown = 0;
       
       closedSignals.forEach(signal => {
         const riskAmount = runningBalance * RISK_PERCENT;
@@ -258,6 +263,7 @@ export const EquityChart = () => {
         
         if (runningBalance > peak) peak = runningBalance;
         currentDrawdown = peak > 0 ? ((peak - runningBalance) / peak) * 100 : 0;
+        if (currentDrawdown > maxDrawdown) maxDrawdown = currentDrawdown;
       });
       
       // Calculate consecutive losses from signals
@@ -299,6 +305,7 @@ export const EquityChart = () => {
         score: healthScore,
         status,
         currentDrawdown,
+        maxDrawdown,
         consecutiveLosses,
         riskExposurePercent,
         equitySlope,
@@ -373,6 +380,7 @@ export const EquityChart = () => {
         score: healthScore,
         status,
         currentDrawdown,
+        maxDrawdown,
         consecutiveLosses,
         riskExposurePercent,
         equitySlope,
@@ -381,7 +389,7 @@ export const EquityChart = () => {
   }, [trades, signals, effectiveCurrentBalance, startingBalance, isProvider, roleLoading, globalRiskPercent, profile?.account_balance]);
 
   return (
-    <div className="glass-card p-6 shadow-none">
+    <div className="glass-card p-6 shadow-none h-full flex flex-col">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
         <div className="flex items-center gap-3">
@@ -496,7 +504,7 @@ export const EquityChart = () => {
       </div>
 
       {/* Chart */}
-      <div className="h-[280px] lg:h-[320px] p-4 rounded-xl bg-secondary/20">
+      <div className="flex-1 min-h-[360px] lg:min-h-[430px] p-4 rounded-xl bg-secondary/20">
         {hasNoActivity ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
@@ -571,7 +579,7 @@ export const EquityChart = () => {
       </div>
 
       {/* Account Health Meter */}
-      <div className="mt-6 p-4 rounded-xl bg-secondary/30 border border-border/50">
+      <div className="mt-6 xl:mt-auto p-4 rounded-xl bg-secondary/30 border border-border/50">
         <div className="flex items-center gap-2 mb-4">
           {accountHealth.status === 'safe' && <Shield className="w-5 h-5 text-success" />}
           {accountHealth.status === 'warning' && <AlertTriangle className="w-5 h-5 text-warning" />}
@@ -624,7 +632,7 @@ export const EquityChart = () => {
         </div>
 
         {/* Health Factors */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="p-3 rounded-lg bg-secondary/50">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Current Drawdown</p>
             <p className={cn(
@@ -633,6 +641,16 @@ export const EquityChart = () => {
               accountHealth.currentDrawdown > 5 ? "text-warning" : "text-success"
             )}>
               {accountHealth.currentDrawdown.toFixed(1)}%
+            </p>
+          </div>
+          <div className="p-3 rounded-lg bg-secondary/50">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Max Drawdown</p>
+            <p className={cn(
+              "text-sm font-bold font-mono",
+              accountHealth.maxDrawdown > 15 ? "text-destructive" :
+              accountHealth.maxDrawdown > 5 ? "text-warning" : "text-success"
+            )}>
+              {accountHealth.maxDrawdown.toFixed(1)}%
             </p>
           </div>
           <div className="p-3 rounded-lg bg-secondary/50">

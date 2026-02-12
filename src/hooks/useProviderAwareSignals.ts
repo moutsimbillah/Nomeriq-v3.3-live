@@ -3,6 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Signal, SignalStatus } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAdminRole } from './useAdminRole';
+import { useUserSubscriptionCategories } from './useSubscriptionPackages';
+import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
 
 interface UseProviderAwareSignalsOptions {
   status?: SignalStatus | SignalStatus[];
@@ -22,7 +24,9 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { user, hasActiveSubscription, isAdmin } = useAuth();
+  const userId = user?.id ?? null;
   const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { allowedCategories } = useUserSubscriptionCategories();
 
   const channelNameRef = useRef(
     `provider_aware_signals_${Math.random().toString(36).slice(2)}`
@@ -38,52 +42,103 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
       // Only show the big loader on the very first load.
       if (!hasLoadedOnceRef.current) setIsLoading(true);
 
-      let query = supabase
-        .from('signals')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
+      const cacheKey = [
+        userId ?? 'anon',
+        isProvider ? 'provider' : 'user',
+        isAdmin ? 'admin' : 'member',
+        signalType,
+        Array.isArray(status) ? status.join(',') : status ?? 'all',
+        limit,
+        allowedCategories.join(','),
+      ].join(':');
+      const now = Date.now();
+      const cacheStore = ((globalThis as any).__provider_aware_signals_cache ??=
+        {}) as Record<
+        string,
+        { ts: number; data: Signal[]; inflight?: Promise<Signal[]> }
+      >;
+      const cached = cacheStore[cacheKey];
 
-      // If user is a provider, filter to only their signals
-      if (isProvider && user) {
-        query = query.eq('created_by', user.id);
+      if (cached && now - cached.ts < 1200) {
+        setSignals(cached.data);
+        setError(null);
+        hasLoadedOnceRef.current = true;
+        return;
+      }
+      if (cached?.inflight) {
+        const value = await cached.inflight;
+        setSignals(value);
+        setError(null);
+        hasLoadedOnceRef.current = true;
+        return;
       }
 
-      // Signal type filtering: upcoming signals are identified either by explicit signal_type
-      // OR by having an upcoming_status set (legacy/alternate data shape).
-      if (signalType !== 'all') {
-        if (signalType === 'upcoming') {
-          query = query.or('signal_type.eq.upcoming,upcoming_status.not.is.null');
-        } else {
-          // Regular active signals: exclude upcoming_status-based rows
-          query = query.or('signal_type.eq.signal,upcoming_status.is.null');
+      const inflight = (async () => {
+        let query = supabase
+          .from('signals')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        // If user is a provider, filter to only their signals
+        if (isProvider && userId) {
+          query = query.eq('created_by', userId);
         }
-      }
-
-      if (status) {
-        if (Array.isArray(status)) {
-          query = query.in('status', status);
-        } else {
-          query = query.eq('status', status);
+        // Regular users should only fetch categories they are subscribed to.
+        if (!isProvider && !isAdmin && allowedCategories.length > 0) {
+          query = query.in('category', allowedCategories);
         }
-      }
 
-      const { data, error: fetchError } = await query;
+        // Signal type filtering: upcoming signals are identified either by explicit signal_type
+        // OR by having an upcoming_status set (legacy/alternate data shape).
+        if (signalType !== 'all') {
+          if (signalType === 'upcoming') {
+            query = query.or('signal_type.eq.upcoming,upcoming_status.not.is.null');
+          } else {
+            // Regular active signals: exclude upcoming_status-based rows
+            query = query.or('signal_type.eq.signal,upcoming_status.is.null');
+          }
+        }
 
-      if (fetchError) throw fetchError;
+        if (status) {
+          if (Array.isArray(status)) {
+            query = query.in('status', status);
+          } else {
+            query = query.eq('status', status);
+          }
+        }
 
-      const newSignals = (data as unknown as Signal[]) || [];
+        const { data, error: fetchError } = await query;
+
+        if (fetchError) throw fetchError;
+
+        return (data as unknown as Signal[]) || [];
+      })();
+
+      cacheStore[cacheKey] = {
+        ts: cached?.ts ?? 0,
+        data: cached?.data ?? [],
+        inflight,
+      };
+
+      const newSignals = await inflight;
+      cacheStore[cacheKey] = {
+        ts: Date.now(),
+        data: newSignals,
+      };
 
       setSignals(newSignals);
       setError(null);
       hasLoadedOnceRef.current = true;
     } catch (err) {
       setError(err as Error);
-      console.error('Error fetching provider-aware signals:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching provider-aware signals:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [status, signalType, limit, isProvider, user, roleLoading]);
+  }, [status, signalType, limit, isProvider, isAdmin, allowedCategories, userId, roleLoading]);
 
   useEffect(() => {
     if (!hasActiveSubscription && !isAdmin) {

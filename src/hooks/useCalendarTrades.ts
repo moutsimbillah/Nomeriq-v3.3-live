@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserSubscriptionCategories } from './useSubscriptionPackages';
 import { startOfMonth, endOfMonth, format, parseISO, startOfWeek, getWeek, isSameMonth } from 'date-fns';
+import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
 
 interface DayData {
   date: Date;
@@ -43,6 +45,8 @@ const initialStats: CalendarStats = {
 
 export const useCalendarTrades = (currentMonth: Date) => {
   const { user, isAdmin } = useAuth();
+  const userId = user?.id ?? null;
+  const { allowedCategories } = useUserSubscriptionCategories();
   const [dayData, setDayData] = useState<Map<string, DayData>>(() => new Map());
   const [weekData, setWeekData] = useState<Map<number, WeekData>>(() => new Map());
   const [stats, setStats] = useState<CalendarStats>(initialStats);
@@ -53,7 +57,7 @@ export const useCalendarTrades = (currentMonth: Date) => {
   // Fetch admin role inline to avoid hook ordering issues
   useEffect(() => {
     const fetchAdminRole = async () => {
-      if (!user || !isAdmin) {
+      if (!userId || !isAdmin) {
         setIsProvider(false);
         setRoleLoading(false);
         return;
@@ -63,14 +67,16 @@ export const useCalendarTrades = (currentMonth: Date) => {
         const { data } = await supabase
           .from('admin_roles')
           .select('admin_role')
-          .eq('user_id', user.id)
+          .eq('user_id', userId)
           .eq('status', 'active')
           .maybeSingle();
         
         const role = data?.admin_role;
         setIsProvider(role === 'signal_provider_admin' || role === 'super_admin');
       } catch (err) {
-        console.error('Error fetching admin role:', err);
+        if (!shouldSuppressQueryErrorLog(err)) {
+          console.error('Error fetching admin role:', err);
+        }
         setIsProvider(false);
       } finally {
         setRoleLoading(false);
@@ -78,10 +84,10 @@ export const useCalendarTrades = (currentMonth: Date) => {
     };
 
     fetchAdminRole();
-  }, [user, isAdmin]);
+  }, [userId, isAdmin]);
 
   const fetchCalendarData = useCallback(async () => {
-    if (!user || roleLoading) {
+    if (!userId || roleLoading) {
       setIsLoading(false);
       return;
     }
@@ -102,7 +108,7 @@ export const useCalendarTrades = (currentMonth: Date) => {
             *,
             signal:signals!inner(created_by)
           `)
-          .eq('signal.created_by', user.id)
+          .eq('signal.created_by', userId)
           .gte('closed_at', monthStart.toISOString())
           .lte('closed_at', monthEnd.toISOString())
           .not('result', 'eq', 'pending');
@@ -115,15 +121,19 @@ export const useCalendarTrades = (currentMonth: Date) => {
           .from('user_trades')
           .select(`
             *,
-            signal:signals(created_by)
+            signal:signals(created_by, category)
           `)
-          .eq('user_id', user.id)
+          .eq('user_id', userId)
           .gte('closed_at', monthStart.toISOString())
           .lte('closed_at', monthEnd.toISOString())
           .not('result', 'eq', 'pending');
 
         if (error) throw error;
-        trades = data || [];
+        trades = (data || []).filter((trade: any) =>
+          allowedCategories.length > 0
+            ? allowedCategories.includes(trade.signal?.category || '')
+            : true
+        );
       }
       const dayMap = new Map<string, DayData>();
       const weekMap = new Map<number, WeekData>();
@@ -194,11 +204,13 @@ export const useCalendarTrades = (currentMonth: Date) => {
         worstDay,
       });
     } catch (err) {
-      console.error('Error fetching calendar data:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching calendar data:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user, currentMonth, isProvider, roleLoading]);
+  }, [userId, currentMonth, isProvider, roleLoading, allowedCategories]);
 
   useEffect(() => {
     if (!roleLoading) {

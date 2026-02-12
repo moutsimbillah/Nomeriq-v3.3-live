@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 import { Signal } from "@/types/database";
 import { Play, FileText, Image, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -54,11 +55,19 @@ export const SignalAnalysisModal = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span className="font-bold">{signal.pair}</span>
-            <span className="text-muted-foreground font-normal">Analysis</span>
-          </DialogTitle>
+        <DialogHeader className="pr-10">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <span className="font-bold">{signal.pair}</span>
+              <span className="text-muted-foreground font-normal">Analysis</span>
+            </DialogTitle>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="outline" className="font-mono">Pair: {signal.pair}</Badge>
+              <Badge variant="outline" className="font-mono">Entry: {signal.entry_price ?? "-"}</Badge>
+              <Badge variant="outline" className="font-mono">SL: {signal.stop_loss ?? "-"}</Badge>
+              <Badge variant="outline" className="font-mono">TP: {signal.take_profit ?? "-"}</Badge>
+            </div>
+          </div>
         </DialogHeader>
 
         <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">

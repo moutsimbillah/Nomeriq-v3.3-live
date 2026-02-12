@@ -19,6 +19,8 @@ export const useAuthModal = () => {
     return context;
 };
 
+export const useOptionalAuthModal = () => useContext(AuthModalContext);
+
 export const AuthModalProvider = ({ children }: { children: ReactNode }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [view, setView] = useState<AuthModalView>("login");

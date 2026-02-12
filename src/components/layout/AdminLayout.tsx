@@ -15,9 +15,11 @@ import { useNavigate } from "react-router-dom";
 interface AdminLayoutProps {
   children: ReactNode;
   title?: string;
+  subtitle?: string;
+  action?: ReactNode;
 }
 
-export const AdminLayout = ({ children, title }: AdminLayoutProps) => {
+export const AdminLayout = ({ children, title, subtitle, action }: AdminLayoutProps) => {
   const navigate = useNavigate();
 
   return (
@@ -87,15 +89,21 @@ export const AdminLayout = ({ children, title }: AdminLayoutProps) => {
         <AdminSidebar />
 
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Page Title */}
-          {title && (
+          {/* Page Title & Subtitle */}
+          {(title || subtitle || action) && (
             <div className="px-4 lg:px-8 pt-6 pb-2">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 rounded-md border border-primary/20">
-                  <ShieldCheck className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-semibold text-primary">Admin</span>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 rounded-md border border-primary/20">
+                      <ShieldCheck className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-semibold text-primary">Admin</span>
+                    </div>
+                    {title && <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">{title}</h1>}
+                  </div>
+                  {subtitle && <p className="text-muted-foreground">{subtitle}</p>}
                 </div>
-                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">{title}</h1>
+                {action && <div className="shrink-0">{action}</div>}
               </div>
             </div>
           )}

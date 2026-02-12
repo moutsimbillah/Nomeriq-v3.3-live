@@ -16,6 +16,9 @@ import {
   Palette,
   Send,
   ArrowLeft,
+  History,
+  FileText,
+  Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect, useMemo } from "react";
@@ -59,6 +62,18 @@ const navItems: NavItem[] = [
 
   // Global Trade Stats (Super Admin only - sees all providers)
   {
+    icon: Signal,
+    label: "Active Trades",
+    path: "/admin/active-trades",
+    allowedRoles: ['super_admin']
+  },
+  {
+    icon: History,
+    label: "Trade History",
+    path: "/admin/history",
+    allowedRoles: ['super_admin']
+  },
+  {
     icon: BarChart3,
     label: "Platform Stats",
     path: "/admin/trade-stats",
@@ -90,9 +105,33 @@ const navItems: NavItem[] = [
     allowedRoles: ['super_admin', 'payments_admin']
   },
   {
+    icon: CreditCard,
+    label: "Subscription Settings",
+    path: "/admin/subscription-settings",
+    allowedRoles: ['super_admin', 'payments_admin']
+  },
+  {
+    icon: Send,
+    label: "Telegram Integrations",
+    path: "/admin/telegram-integrations",
+    allowedRoles: ['super_admin']
+  },
+  {
     icon: Palette,
     label: "Branding",
     path: "/admin/branding",
+    allowedRoles: ['super_admin']
+  },
+  {
+    icon: FileText,
+    label: "Legal Pages",
+    path: "/admin/legal-pages",
+    allowedRoles: ['super_admin']
+  },
+  {
+    icon: Mail,
+    label: "Email Settings",
+    path: "/admin/email-settings",
     allowedRoles: ['super_admin']
   },
   {

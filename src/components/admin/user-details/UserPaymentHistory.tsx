@@ -1,7 +1,11 @@
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Receipt, ExternalLink, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Receipt, ExternalLink, CheckCircle, XCircle, Clock, Eye, Shield, TrendingUp, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { useGlobalSettings } from "@/hooks/useGlobalSettings";
 
 interface Payment {
   id: string;
@@ -12,6 +16,10 @@ interface Payment {
   created_at: string;
   verified_at: string | null;
   rejection_reason: string | null;
+  payment_method?: string | null;
+  user_bank_account_name?: string | null;
+  user_bank_account_number?: string | null;
+  user_bank_name?: string | null;
 }
 
 interface UserPaymentHistoryProps {
@@ -20,35 +28,15 @@ interface UserPaymentHistoryProps {
 }
 
 export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryProps) => {
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "verified":
-        return (
-          <Badge variant="outline" className="border-success/30 text-success bg-success/10">
-            <CheckCircle className="w-3 h-3 mr-1" />
-            Verified
-          </Badge>
-        );
-      case "rejected":
-        return (
-          <Badge variant="outline" className="border-destructive/30 text-destructive bg-destructive/10">
-            <XCircle className="w-3 h-3 mr-1" />
-            Rejected
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="outline" className="border-warning/30 text-warning bg-warning/10">
-            <Clock className="w-3 h-3 mr-1" />
-            Pending
-          </Badge>
-        );
-    }
-  };
+  const { settings } = useGlobalSettings();
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
-  const truncateTxHash = (hash: string) => {
-    if (hash.length <= 16) return hash;
-    return `${hash.slice(0, 8)}...${hash.slice(-8)}`;
+  const copyHash = (hash: string) => {
+    navigator.clipboard.writeText(hash);
+    setCopiedHash(hash);
+    setTimeout(() => setCopiedHash(null), 2000);
   };
 
   if (isLoading) {
@@ -68,69 +56,300 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
   }
 
   return (
-    <div className="glass-card p-6 shadow-none">
-      <h3 className="font-semibold mb-4 flex items-center gap-2">
-        <Receipt className="w-4 h-4 text-primary" />
-        Payment History ({payments.length})
-      </h3>
-      
-      {payments.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          <Receipt className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No payment records found</p>
+    <>
+      <div className="glass-card shadow-none overflow-hidden">
+        <div className="p-6 border-b border-border/50">
+          <h3 className="font-semibold flex items-center gap-2">
+            <Receipt className="w-4 h-4 text-primary" />
+            Payment History ({payments.length})
+          </h3>
         </div>
-      ) : (
-        <div className="space-y-2 max-h-[350px] overflow-y-auto">
-          {payments.map((payment) => (
-            <div 
-              key={payment.id} 
-              className={cn(
-                "p-3 rounded-lg bg-secondary/30 space-y-2",
-                payment.status === "rejected" && "border border-destructive/20"
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="font-bold text-lg">
-                    ${payment.amount.toFixed(2)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {payment.currency}
-                  </span>
+
+        {payments.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Receipt className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm">No payment records found</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border/50 bg-secondary/30">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Invoice ID
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Payment Method
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Date & Time
+                  </th>
+                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Amount
+                  </th>
+                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Status
+                  </th>
+                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {payments.map((payment) => (
+                  <tr key={payment.id} className="hover:bg-accent/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <code className="text-xs bg-secondary/50 px-2 py-1 rounded font-mono">
+                        {payment.id.slice(0, 8).toUpperCase()}
+                      </code>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm font-medium">
+                        {payment.payment_method === 'usdt_trc20' && 'USDT (TRC20)'}
+                        {payment.payment_method === 'bank_transfer' && 'Bank Transfer'}
+                        {payment.payment_method === 'stripe' && 'Card Payment'}
+                        {!payment.payment_method && 'USDT (TRC20)'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-sm">
+                        {format(new Date(payment.created_at), 'dd MMM yyyy, HH:mm')}
+                      </p>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="font-semibold">${payment.amount}</span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          payment.status === "pending" &&
+                          "border-warning/30 text-warning bg-warning/10",
+                          payment.status === "verified" &&
+                          "border-success/30 text-success bg-success/10",
+                          payment.status === "rejected" &&
+                          "border-destructive/30 text-destructive bg-destructive/10"
+                        )}
+                      >
+                        {payment.status === "pending" && <Clock className="w-3 h-3 mr-1" />}
+                        {payment.status === "verified" && <CheckCircle className="w-3 h-3 mr-1" />}
+                        {payment.status === "rejected" && <XCircle className="w-3 h-3 mr-1" />}
+                        {payment.status}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <button
+                        onClick={() => {
+                          setSelectedPayment(payment);
+                          setIsDetailsDialogOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
+                      >
+                        <Eye className="w-4 h-4" />
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Payment Details Dialog */}
+      <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold">Payment Details</DialogTitle>
+          </DialogHeader>
+          {selectedPayment && (
+            <div className="space-y-6">
+              {/* Header Info */}
+              <div className="grid grid-cols-2 gap-4 p-4 rounded-xl bg-secondary/30 border border-border/50">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Invoice ID</p>
+                  <code className="text-sm bg-background px-2 py-1 rounded font-mono">
+                    {selectedPayment.id}
+                  </code>
                 </div>
-                {getStatusBadge(payment.status)}
-              </div>
-              
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                  {format(new Date(payment.created_at), "MMM dd, yyyy HH:mm")}
-                </span>
-                <a 
-                  href={`https://tronscan.org/#/transaction/${payment.tx_hash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-primary hover:underline"
-                >
-                  {truncateTxHash(payment.tx_hash)}
-                  <ExternalLink className="w-3 h-3" />
-                </a>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Status</p>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-sm",
+                      selectedPayment.status === "pending" &&
+                      "border-warning/30 text-warning bg-warning/10",
+                      selectedPayment.status === "verified" &&
+                      "border-success/30 text-success bg-success/10",
+                      selectedPayment.status === "rejected" &&
+                      "border-destructive/30 text-destructive bg-destructive/10"
+                    )}
+                  >
+                    {selectedPayment.status === "pending" && <Clock className="w-3 h-3 mr-1" />}
+                    {selectedPayment.status === "verified" && <CheckCircle className="w-3 h-3 mr-1" />}
+                    {selectedPayment.status === "rejected" && <XCircle className="w-3 h-3 mr-1" />}
+                    {selectedPayment.status.toUpperCase()}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Payment Method</p>
+                  <p className="text-sm font-semibold">
+                    {selectedPayment.payment_method === 'usdt_trc20' && 'USDT (TRC20)'}
+                    {selectedPayment.payment_method === 'bank_transfer' && 'Bank Transfer'}
+                    {selectedPayment.payment_method === 'stripe' && 'Card Payment'}
+                    {!selectedPayment.payment_method && 'USDT (TRC20)'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Amount</p>
+                  <p className="text-xl font-bold text-primary">${selectedPayment.amount}</p>
+                </div>
               </div>
 
-              {payment.status === "verified" && payment.verified_at && (
-                <div className="text-xs text-success">
-                  Verified on {format(new Date(payment.verified_at), "MMM dd, yyyy HH:mm")}
+              {/* Payment Destination */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-primary" />
+                  Payment Sent To (Admin Account)
+                </h3>
+                <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
+                  {selectedPayment.payment_method === 'bank_transfer' ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Account Holder</p>
+                          <p className="text-sm font-medium">{settings?.bank_account_name || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Bank Name</p>
+                          <p className="text-sm font-medium">{settings?.bank_name || 'N/A'}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-xs text-muted-foreground mb-1">Account Number</p>
+                          <code className="text-sm bg-background px-2 py-1 rounded font-mono">
+                            {settings?.bank_account_number || 'N/A'}
+                          </code>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Wallet Address (TRC20)</p>
+                        <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
+                          {settings?.wallet_address || 'N/A'}
+                        </code>
+                      </div>
+                      <a
+                        href={`https://tronscan.org/#/transaction/${selectedPayment.tx_hash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-primary hover:underline text-sm"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View on TronScan
+                      </a>
+                    </>
+                  )}
                 </div>
-              )}
+              </div>
 
-              {payment.status === "rejected" && payment.rejection_reason && (
-                <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
-                  Reason: {payment.rejection_reason}
+              {/* User's Payment Information */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-success" />
+                  User's Payment Information
+                </h3>
+                <div className="p-4 rounded-xl bg-secondary/30 border border-border/50 space-y-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Transaction Hash / Reference</p>
+                    <div className="flex items-center gap-2">
+                      <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all flex-1">
+                        {selectedPayment.tx_hash}
+                      </code>
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => copyHash(selectedPayment.tx_hash)}>
+                        {copiedHash === selectedPayment.tx_hash ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Submitted On</p>
+                    <p className="text-sm font-medium">
+                      {format(new Date(selectedPayment.created_at), 'dd MMMM yyyy, HH:mm:ss')}
+                    </p>
+                  </div>
+                  {selectedPayment.payment_method === 'bank_transfer' && (
+                    <>
+                      <div className="pt-3 border-t border-border/50">
+                        <p className="text-sm font-semibold mb-3">User's Bank Details</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          {selectedPayment.user_bank_account_name && (
+                            <div>
+                              <p className="text-xs text-muted-foreground mb-1">Account Holder</p>
+                              <p className="text-sm">{selectedPayment.user_bank_account_name}</p>
+                            </div>
+                          )}
+                          {selectedPayment.user_bank_name && (
+                            <div>
+                              <p className="text-xs text-muted-foreground mb-1">Bank Name</p>
+                              <p className="text-sm">{selectedPayment.user_bank_name}</p>
+                            </div>
+                          )}
+                          {selectedPayment.user_bank_account_number && (
+                            <div className="col-span-2">
+                              <p className="text-xs text-muted-foreground mb-1">Account Number</p>
+                              <code className="text-sm bg-background px-2 py-1 rounded font-mono">
+                                {selectedPayment.user_bank_account_number}
+                              </code>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Verification Status */}
+              {(selectedPayment.verified_at || selectedPayment.rejection_reason) && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    {selectedPayment.status === 'verified' ? (
+                      <CheckCircle className="w-5 h-5 text-success" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-destructive" />
+                    )}
+                    Verification Details
+                  </h3>
+                  <div className={cn(
+                    "p-4 rounded-xl border",
+                    selectedPayment.status === 'verified'
+                      ? "bg-success/5 border-success/20"
+                      : "bg-destructive/5 border-destructive/20"
+                  )}>
+                    {selectedPayment.verified_at && (
+                      <div className="mb-2">
+                        <p className="text-xs text-muted-foreground mb-1">Verified At</p>
+                        <p className="text-sm font-medium text-success">
+                          {format(new Date(selectedPayment.verified_at), 'dd MMMM yyyy, HH:mm:ss')}
+                        </p>
+                      </div>
+                    )}
+                    {selectedPayment.rejection_reason && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Rejection Reason</p>
+                        <p className="text-sm text-destructive font-medium">{selectedPayment.rejection_reason}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };

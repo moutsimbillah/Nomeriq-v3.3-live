@@ -42,7 +42,7 @@ const Login = () => {
       const userMetadata = data.user?.user_metadata;
       const isCustomVerified = userMetadata?.custom_email_verified === true;
       if (data.user && !isCustomVerified) {
-        // User is not verified, sign them out and redirect to verification page
+        // User is not verified, sign them out and redirect to landing page
         await supabase.auth.signOut();
 
         // Send a new verification code
@@ -53,24 +53,20 @@ const Login = () => {
             }
           });
           toast({
-            title: "Verification Required",
-            description: "A new verification code has been sent to your email."
+            title: "Email Verification Required",
+            description: "Please check your email for a verification code. A new code has been sent."
           });
         } catch (err) {
           console.error("Error sending verification email:", err);
           toast({
-            title: "Verification Required",
-            description: "Please verify your email. We couldn't send a new code - try again on the verification page.",
+            title: "Email Verification Required",
+            description: "Please verify your email before logging in.",
             variant: "destructive"
           });
         }
 
-        // Redirect to verification page with email
-        navigate("/verify-email", {
-          state: {
-            email
-          }
-        });
+        // Redirect to landing page
+        navigate("/");
         setIsLoading(false);
         return;
       }
@@ -92,11 +88,11 @@ const Login = () => {
     }
   };
   return <AuthLayout alternateAction={{
-    text: "Don't have an account?",
+    text: "New here?",
     linkText: "Create Account",
     href: "/signup"
   }}>
-    <div className="glass p-8 sm:p-10">
+    <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-8 sm:p-10 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.6)]">
       {/* Header */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 mb-5">
@@ -134,7 +130,7 @@ const Login = () => {
           </div>
         </div>
 
-        <Button type="submit" className="w-full h-12 font-medium text-base" disabled={isLoading}>
+        <Button type="submit" className="w-full h-12 font-medium text-base text-white" disabled={isLoading}>
           {isLoading ? <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> : <>
             Sign In
             <ArrowRight className="w-4 h-4 ml-2" />
@@ -148,15 +144,16 @@ const Login = () => {
         <span>Secured with industry-standard encryption</span>
       </div>
 
-      {/* Footer */}
-      <div className="mt-8 pt-6 border-t border-border/50 text-center">
+      <div className="mt-6 pt-5 border-t border-border/50 text-center">
         <p className="text-sm text-muted-foreground">
           Don't have an account?{" "}
-          <Link to="/signup" className="text-primary hover:text-primary/80 font-medium transition-colors">
+          <Link to="/signup" className="text-primary hover:text-primary/80 transition-colors font-medium">
             Create account
           </Link>
         </p>
       </div>
+
+
     </div>
   </AuthLayout>;
 };

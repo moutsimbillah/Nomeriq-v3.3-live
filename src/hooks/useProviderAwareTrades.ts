@@ -3,6 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { UserTrade, Signal } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAdminRole } from './useAdminRole';
+import { useUserSubscriptionCategories } from './useSubscriptionPackages';
+import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
 
 interface TradeWithSignal extends UserTrade {
   signal: Signal;
@@ -13,6 +15,7 @@ interface UseProviderAwareTradesOptions {
   limit?: number;
   page?: number;
   realtime?: boolean;
+  adminGlobalView?: boolean;
 }
 
 /**
@@ -21,13 +24,15 @@ interface UseProviderAwareTradesOptions {
  * Regular users see only their own trades.
  */
 export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = {}) => {
-  const { result, limit = 20, page = 1, realtime = true } = options;
+  const { result, limit = 20, page = 1, realtime = true, adminGlobalView = false } = options;
   const [trades, setTrades] = useState<TradeWithSignal[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { allowedCategories } = useUserSubscriptionCategories();
 
   const channelNameRef = useRef(
     `provider_aware_trades_${Math.random().toString(36).substring(7)}`
@@ -37,7 +42,7 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
   const hasLoadedOnceRef = useRef(false);
 
   const fetchTrades = useCallback(async () => {
-    if (!user || roleLoading) {
+    if (!userId || roleLoading) {
       return;
     }
 
@@ -45,63 +50,146 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
       // Only show the big loader on the very first load.
       if (!hasLoadedOnceRef.current) setIsLoading(true);
 
-      let filteredTrades: TradeWithSignal[] = [];
+      const cacheKey = [
+        userId,
+        isProvider ? 'provider' : 'user',
+        adminGlobalView ? 'admin_global' : 'scoped',
+        result ?? 'all',
+      ].join(':');
+      const now = Date.now();
+      const cacheStore = ((globalThis as any).__provider_aware_trades_cache ??=
+        {}) as Record<
+        string,
+        {
+          ts: number;
+          data: TradeWithSignal[];
+          total: number;
+          inflight?: Promise<{ data: TradeWithSignal[]; total: number }>;
+        }
+      >;
+      const cached = cacheStore[cacheKey];
 
-      if (isProvider) {
-        // For providers: fetch ALL trades from signals they created (from all users)
-        const { data, error: fetchError } = await supabase
-          .from('user_trades')
-          .select(`
-            *,
-            signal:signals!inner(*)
-          `)
-          .eq('signal.created_by', user.id)
-          .order('created_at', { ascending: false });
+      if (cached && now - cached.ts < 1200) {
+        const offset = (page - 1) * limit;
+        const paginated = cached.data.slice(offset, offset + limit);
+        setTrades(paginated);
+        setTotalCount(cached.total);
+        setError(null);
+        hasLoadedOnceRef.current = true;
+        return;
+      }
+      if (cached?.inflight) {
+        const fromInflight = await cached.inflight;
+        const offset = (page - 1) * limit;
+        const paginated = fromInflight.data.slice(offset, offset + limit);
+        setTrades(paginated);
+        setTotalCount(fromInflight.total);
+        setError(null);
+        hasLoadedOnceRef.current = true;
+        return;
+      }
 
-        if (fetchError) throw fetchError;
-        filteredTrades = (data as TradeWithSignal[]) || [];
-      } else {
-        // For regular users: fetch only their own trades
-        let query = supabase
-          .from('user_trades')
-          .select(`
-            *,
-            signal:signals(*)
-          `)
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
+      const inflight = (async () => {
+        let filteredTrades: TradeWithSignal[] = [];
 
-        if (result) {
-          query = query.eq('result', result);
+        if (adminGlobalView) {
+          // For Super Admin global view: fetch ALL trades from ALL users/providers
+          let query = supabase
+            .from('user_trades')
+            .select(`
+              *,
+              signal:signals(*)
+            `)
+            .order('created_at', { ascending: false });
+
+          if (result) {
+            query = query.eq('result', result);
+          }
+
+          const { data, error: fetchError } = await query;
+          if (fetchError) throw fetchError;
+          filteredTrades = (data as TradeWithSignal[]) || [];
+        } else if (isProvider) {
+          // For providers: fetch ALL trades from signals they created (from all users)
+          const { data, error: fetchError } = await supabase
+            .from('user_trades')
+            .select(`
+              *,
+              signal:signals!inner(*)
+            `)
+            .eq('signal.created_by', userId)
+            .order('created_at', { ascending: false });
+
+          if (fetchError) throw fetchError;
+          filteredTrades = (data as TradeWithSignal[]) || [];
+        } else {
+          // For regular users: fetch only their own trades
+          let query = supabase
+            .from('user_trades')
+            .select(`
+              *,
+              signal:signals(*)
+            `)
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
+
+          if (result) {
+            query = query.eq('result', result);
+          }
+
+          const { data, error: fetchError } = await query;
+          if (fetchError) throw fetchError;
+          filteredTrades = (data as TradeWithSignal[]) || [];
         }
 
-        const { data, error: fetchError } = await query;
-        if (fetchError) throw fetchError;
-        filteredTrades = (data as TradeWithSignal[]) || [];
-      }
+        // Apply result filter for providers too
+        if (result && isProvider) {
+          filteredTrades = filteredTrades.filter((t) => t.result === result);
+        }
+        // Defense-in-depth: keep regular-user trades scoped to subscribed categories.
+        if (!isProvider && !adminGlobalView && allowedCategories.length > 0) {
+          filteredTrades = filteredTrades.filter((t) =>
+            allowedCategories.includes((t.signal?.category as string) || '')
+          );
+        }
 
-      // Apply result filter for providers too
-      if (result && isProvider) {
-        filteredTrades = filteredTrades.filter((t) => t.result === result);
-      }
+        return {
+          data: filteredTrades,
+          total: filteredTrades.length,
+        };
+      })();
+
+      cacheStore[cacheKey] = {
+        ts: cached?.ts ?? 0,
+        data: cached?.data ?? [],
+        total: cached?.total ?? 0,
+        inflight,
+      };
+
+      const resolved = await inflight;
+      cacheStore[cacheKey] = {
+        ts: Date.now(),
+        data: resolved.data,
+        total: resolved.total,
+      };
 
       // Apply pagination after filtering
-      const totalFiltered = filteredTrades.length;
-      setTotalCount(totalFiltered);
-
+      setTotalCount(resolved.total);
       const offset = (page - 1) * limit;
-      const paginatedTrades = filteredTrades.slice(offset, offset + limit);
+      const paginatedTrades = resolved.data.slice(offset, offset + limit);
 
       setTrades(paginatedTrades);
       setError(null);
       hasLoadedOnceRef.current = true;
     } catch (err) {
       setError(err as Error);
-      console.error('Error fetching provider-aware trades:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching provider-aware trades:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user, result, limit, page, isProvider, roleLoading]);
+  }, [userId, result, limit, page, isProvider, roleLoading, adminGlobalView, allowedCategories]);
 
   useEffect(() => {
     if (!roleLoading) {
@@ -110,7 +198,7 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
   }, [fetchTrades, roleLoading]);
 
   useEffect(() => {
-    if (realtime && user && !roleLoading) {
+    if (realtime && userId && !roleLoading) {
       const channel = supabase
         .channel(channelNameRef.current)
         .on(
@@ -130,18 +218,18 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
         supabase.removeChannel(channel);
       };
     }
-  }, [realtime, user, fetchTrades, roleLoading]);
+  }, [realtime, userId, fetchTrades, roleLoading]);
 
   const totalPages = Math.ceil(totalCount / limit);
 
-  return { 
-    trades, 
-    isLoading: isLoading || roleLoading, 
-    error, 
-    refetch: fetchTrades, 
-    totalCount, 
+  return {
+    trades,
+    isLoading: isLoading || roleLoading,
+    error,
+    refetch: fetchTrades,
+    totalCount,
     totalPages,
-    isProvider 
+    isProvider
   };
 };
 
@@ -150,7 +238,12 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
  * For providers: shows stats from ALL trades based on their signals.
  * For regular users: shows stats from their own trades only.
  */
-export const useProviderAwareTradeStats = () => {
+interface UseProviderAwareTradeStatsOptions {
+  adminGlobalView?: boolean;
+}
+
+export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOptions = {}) => {
+  const { adminGlobalView = false } = options;
   const [stats, setStats] = useState({
     totalTrades: 0,
     wins: 0,
@@ -162,12 +255,14 @@ export const useProviderAwareTradeStats = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const { isProvider, isLoading: roleLoading } = useAdminRole();
-  
+  const { allowedCategories } = useUserSubscriptionCategories();
+
   const channelNameRef = useRef(`provider_aware_stats_${Math.random().toString(36).substring(7)}`);
 
   const fetchStats = useCallback(async () => {
-    if (!user || roleLoading) {
+    if (!userId || roleLoading) {
       return;
     }
 
@@ -176,7 +271,18 @@ export const useProviderAwareTradeStats = () => {
 
       let trades: any[] = [];
 
-      if (isProvider) {
+      if (adminGlobalView) {
+        // For Super Admin global view: fetch ALL trades from ALL users/providers
+        const { data, error } = await supabase
+          .from('user_trades')
+          .select(`
+            result, 
+            pnl
+          `);
+
+        if (error) throw error;
+        trades = data || [];
+      } else if (isProvider) {
         // For providers: fetch ALL trades from signals they created (from all users)
         const { data, error } = await supabase
           .from('user_trades')
@@ -185,7 +291,7 @@ export const useProviderAwareTradeStats = () => {
             pnl,
             signal:signals!inner(created_by)
           `)
-          .eq('signal.created_by', user.id);
+          .eq('signal.created_by', userId);
 
         if (error) throw error;
         trades = data || [];
@@ -194,13 +300,18 @@ export const useProviderAwareTradeStats = () => {
         const { data, error } = await supabase
           .from('user_trades')
           .select(`
-            result, 
-            pnl
+            result,
+            pnl,
+            signal:signals(category)
           `)
-          .eq('user_id', user.id);
+          .eq('user_id', userId);
 
         if (error) throw error;
-        trades = data || [];
+        trades = (data || []).filter((t: any) =>
+          allowedCategories.length > 0
+            ? allowedCategories.includes(t.signal?.category || '')
+            : true
+        );
       }
 
       const wins = trades.filter(t => t.result === 'win').length;
@@ -221,11 +332,13 @@ export const useProviderAwareTradeStats = () => {
         totalPnL,
       });
     } catch (err) {
-      console.error('Error fetching provider-aware trade stats:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching provider-aware trade stats:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [user, isProvider, roleLoading]);
+  }, [userId, isProvider, roleLoading, adminGlobalView, allowedCategories]);
 
   useEffect(() => {
     if (!roleLoading) {
@@ -234,7 +347,7 @@ export const useProviderAwareTradeStats = () => {
   }, [fetchStats, roleLoading]);
 
   useEffect(() => {
-    if (user && !roleLoading) {
+    if (userId && !roleLoading) {
       const channel = supabase
         .channel(channelNameRef.current)
         .on(
@@ -254,7 +367,7 @@ export const useProviderAwareTradeStats = () => {
         supabase.removeChannel(channel);
       };
     }
-  }, [user, fetchStats, roleLoading]);
+  }, [userId, fetchStats, roleLoading]);
 
   return { stats, isLoading: isLoading || roleLoading, refetch: fetchStats, isProvider };
 };

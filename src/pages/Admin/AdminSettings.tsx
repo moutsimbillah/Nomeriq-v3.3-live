@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Shield,
   DollarSign,
@@ -33,6 +34,7 @@ import { TelegramIntegrationSection } from "@/components/settings/TelegramIntegr
 import { TIMEZONES } from "@/hooks/useTimezone";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
 
 const AdminSettings = () => {
   const { user } = useAuth();
@@ -45,6 +47,14 @@ const AdminSettings = () => {
   const [timezone, setTimezone] = useState("UTC");
   const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Payment method states
+  const [enableUsdtTrc20, setEnableUsdtTrc20] = useState(true);
+  const [enableBankTransfer, setEnableBankTransfer] = useState(false);
+  const [enableStripe, setEnableStripe] = useState(false);
+  const [bankAccountName, setBankAccountName] = useState("");
+  const [bankAccountNumber, setBankAccountNumber] = useState("");
+  const [bankName, setBankName] = useState("");
 
   const [country, setCountry] = useState("");
   const [isLoadingCountry, setIsLoadingCountry] = useState(true);
@@ -111,6 +121,13 @@ const AdminSettings = () => {
       setSubscriptionPrice(settings.subscription_price.toString());
       setWalletAddress(settings.wallet_address);
       setTimezone(settings.timezone || "UTC");
+      // Payment methods
+      setEnableUsdtTrc20(settings.enable_usdt_trc20 ?? true);
+      setEnableBankTransfer(settings.enable_bank_transfer ?? false);
+      setEnableStripe(settings.enable_stripe ?? false);
+      setBankAccountName(settings.bank_account_name || "");
+      setBankAccountNumber(settings.bank_account_number || "");
+      setBankName(settings.bank_name || "");
     }
   }, [settings]);
 
@@ -122,6 +139,12 @@ const AdminSettings = () => {
         subscription_price: parseFloat(subscriptionPrice),
         wallet_address: walletAddress,
         timezone: timezone,
+        enable_usdt_trc20: enableUsdtTrc20,
+        enable_bank_transfer: enableBankTransfer,
+        enable_stripe: enableStripe,
+        bank_account_name: bankAccountName || null,
+        bank_account_number: bankAccountNumber || null,
+        bank_name: bankName || null,
       });
       toast.success("Settings saved successfully!");
     } catch (err) {
@@ -414,6 +437,86 @@ const AdminSettings = () => {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     This address is displayed to users during payment.
+                  </p>
+                </div>
+
+                {/* Payment Methods Configuration */}
+                <div className="space-y-4 pt-4 border-t border-border/50">
+                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+                    Enabled Payment Methods
+                  </Label>
+
+                  {/* USDT TRC20 Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">USDT (TRC20)</p>
+                      <p className="text-xs text-muted-foreground">Cryptocurrency payment via Tron network</p>
+                    </div>
+                    <Switch
+                      checked={enableUsdtTrc20}
+                      onCheckedChange={setEnableUsdtTrc20}
+                    />
+                  </div>
+
+                  {/* Bank Transfer Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">Bank Transfer (Manual)</p>
+                      <p className="text-xs text-muted-foreground">Traditional bank account transfer</p>
+                    </div>
+                    <Switch
+                      checked={enableBankTransfer}
+                      onCheckedChange={setEnableBankTransfer}
+                    />
+                  </div>
+
+                  {/* Bank Account Details (shown when bank transfer is enabled) */}
+                  {enableBankTransfer && (
+                    <div className="space-y-3 pl-4 border-l-2 border-primary/30">
+                      <div className="space-y-2">
+                        <Label className="text-xs">Account Holder Name</Label>
+                        <Input
+                          value={bankAccountName}
+                          onChange={(e) => setBankAccountName(e.target.value)}
+                          placeholder="John Doe"
+                          className="bg-secondary/30 border-border/50"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Account Number</Label>
+                        <Input
+                          value={bankAccountNumber}
+                          onChange={(e) => setBankAccountNumber(e.target.value)}
+                          placeholder="1234567890"
+                          className="bg-secondary/30 border-border/50"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Bank Name</Label>
+                        <Input
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          placeholder="Bank of America"
+                          className="bg-secondary/30 border-border/50"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stripe Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">Stripe (Card Payments)</p>
+                      <p className="text-xs text-muted-foreground">Credit/Debit card processing</p>
+                    </div>
+                    <Switch
+                      checked={enableStripe}
+                      onCheckedChange={setEnableStripe}
+                    />
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Users will only see enabled payment methods on the subscription page.
                   </p>
                 </div>
 

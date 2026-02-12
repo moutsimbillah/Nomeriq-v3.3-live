@@ -10,12 +10,16 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAdminRole } from "@/hooks/useAdminRole";
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
+import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
+import { shouldSuppressQueryErrorLog } from "@/lib/queryStability";
 
 export const UpcomingTradesSection = () => {
   const [upcomingTrades, setUpcomingTrades] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const userId = user?.id ?? null;
   const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { allowedCategories } = useUserSubscriptionCategories();
   
   // Analysis modal state
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -36,8 +40,12 @@ export const UpcomingTradesSection = () => {
       });
       
       // If user is a provider, filter to only their signals
-      if (isProvider && user) {
-        query = query.eq('created_by', user.id);
+      if (isProvider && userId) {
+        query = query.eq('created_by', userId);
+      }
+      // Regular users should only see subscribed categories.
+      if (!isProvider && !isAdmin && allowedCategories.length > 0) {
+        query = query.in('category', allowedCategories);
       }
 
       const { data, error } = await query;
@@ -52,7 +60,9 @@ export const UpcomingTradesSection = () => {
       );
       setUpcomingTrades(filtered);
     } catch (err) {
-      console.error('Error fetching upcoming trades:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching upcoming trades:', err);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -73,7 +83,7 @@ export const UpcomingTradesSection = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roleLoading, isProvider, user]);
+  }, [roleLoading, isProvider, isAdmin, allowedCategories, userId]);
 
   // Apply filters
   const filteredTrades = useMemo(() => {

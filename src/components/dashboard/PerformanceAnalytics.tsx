@@ -5,7 +5,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { cn } from "@/lib/utils";
 import { TrendingUp, TrendingDown, Target, Flame, BarChart3 } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useMemo } from "react";
 
 interface PairStats {
@@ -41,7 +40,56 @@ const calculateRR = (signal: any): number => {
   return 1;
 };
 
-const COLORS = ["hsl(var(--success))", "hsl(var(--primary))", "hsl(var(--warning))", "hsl(var(--accent))", "hsl(var(--secondary))"];
+const COLORS = [
+  "#22C55E", // green
+  "#3B82F6", // blue
+  "#F59E0B", // amber
+  "#A855F7", // violet
+  "#EF4444", // red
+  "#06B6D4", // cyan
+  "#EC4899", // pink
+  "#84CC16", // lime
+];
+
+const getCategoryTheme = (category: string) => {
+  const key = category.toLowerCase();
+
+  if (key.includes("crypto")) {
+    return {
+      dot: "bg-emerald-400",
+      bar: "from-emerald-400 to-emerald-500",
+    };
+  }
+  if (key.includes("forex")) {
+    return {
+      dot: "bg-blue-400",
+      bar: "from-blue-400 to-blue-500",
+    };
+  }
+  if (key.includes("metals")) {
+    return {
+      dot: "bg-amber-400",
+      bar: "from-amber-400 to-amber-500",
+    };
+  }
+  if (key.includes("indices")) {
+    return {
+      dot: "bg-indigo-400",
+      bar: "from-indigo-400 to-indigo-500",
+    };
+  }
+  if (key.includes("commodities")) {
+    return {
+      dot: "bg-rose-400",
+      bar: "from-rose-400 to-rose-500",
+    };
+  }
+
+  return {
+    dot: "bg-cyan-400",
+    bar: "from-cyan-400 to-cyan-500",
+  };
+};
 
 export const PerformanceAnalytics = () => {
   const { trades, isLoading } = useProviderAwareTrades({ realtime: true, limit: 1000 });
@@ -131,7 +179,13 @@ export const PerformanceAnalytics = () => {
   });
 
   const bestPairs = Array.from(pairStatsMap.values())
-    .sort((a, b) => b.totalPnL - a.totalPnL)
+    .sort((a, b) => {
+      const byWinRate = b.winRate - a.winRate;
+      if (byWinRate !== 0) return byWinRate;
+      const byPnL = b.totalPnL - a.totalPnL;
+      if (byPnL !== 0) return byPnL;
+      return b.totalTrades - a.totalTrades;
+    })
     .slice(0, 5);
 
   // Calculate Category Performance
@@ -162,17 +216,13 @@ export const PerformanceAnalytics = () => {
   });
 
   const categoryStats = Array.from(categoryStatsMap.values())
-    .sort((a, b) => b.totalPnL - a.totalPnL);
-
-  // Prepare pie chart data (only positive P&L pairs for distribution)
-  const pieData = bestPairs
-    .filter((p) => p.totalPnL > 0)
-    .map((p) => ({
-      name: p.pair,
-      value: p.totalPnL,
-    }));
-
-  const totalPositivePnL = pieData.reduce((sum, p) => sum + p.value, 0);
+    .sort((a, b) => {
+      const byWinRate = b.winRate - a.winRate;
+      if (byWinRate !== 0) return byWinRate;
+      const byPnL = b.totalPnL - a.totalPnL;
+      if (byPnL !== 0) return byPnL;
+      return b.totalTrades - a.totalTrades;
+    });
 
   // Calculate starting balance for drawdown calculations using actual balance
   const effectiveStartBalance = isProvider ? (profile?.account_balance || 1000) : accountBalance;
@@ -333,69 +383,51 @@ export const PerformanceAnalytics = () => {
           </div>
           <h3 className="text-lg font-semibold">Best Performing Pairs</h3>
         </div>
-        {bestPairs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No trade history yet</p>
-        ) : (
-          <div className="space-y-4">
-            {/* Pie Chart */}
-            {pieData.length > 0 && (
-              <div className="h-[140px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={35}
-                      outerRadius={60}
-                      paddingAngle={2}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {pieData.map((_, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={COLORS[index % COLORS.length]}
-                          stroke="none"
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          const data = payload[0].payload;
-                          const percent = ((data.value / totalPositivePnL) * 100).toFixed(1);
-                          return (
-                            <div className="bg-popover border border-border rounded-lg p-2 shadow-lg">
-                              <p className="font-semibold text-sm">{data.name}</p>
-                              <p className="text-success text-sm font-mono">
-                                +${data.value.toFixed(2)} ({percent}%)
-                              </p>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            {/* Legend */}
-            <div className="space-y-2">
-              {bestPairs.map((pair, index) => (
-                <div
-                  key={pair.pair}
-                  className="flex items-center justify-between p-2 rounded-lg bg-secondary/30"
-                >
-                  <div className="flex items-center gap-2">
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, index) => {
+            const pair = bestPairs[index];
+            if (!pair) {
+              return (
+                <div key={`empty-pair-${index}`} className="p-3 rounded-xl bg-secondary/20 border border-border/30">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className="w-3 h-3 rounded-full shrink-0 opacity-40"
+                        style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                      />
+                      <span className="text-sm font-semibold text-muted-foreground">No pair</span>
+                    </div>
+                    <div className="text-right shrink-0 flex items-center gap-2">
+                      <span className="font-mono text-sm text-muted-foreground">0%</span>
+                      <span className="font-mono text-sm text-muted-foreground">$0.00</span>
+                    </div>
+                  </div>
+                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden" />
+                  <div className="flex items-center justify-between mt-1.5 text-xs text-muted-foreground">
+                    <span>0 trades</span>
+                    <span className="font-mono">0W / 0L / 0BE</span>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div key={pair.pair} className="p-3 rounded-xl bg-secondary/30 border border-border/40">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <div
-                      className="w-3 h-3 rounded-full"
+                      className="w-3 h-3 rounded-full shrink-0"
                       style={{ backgroundColor: COLORS[index % COLORS.length] }}
                     />
-                    <span className="text-sm font-medium">{pair.pair}</span>
+                    <span className="text-sm font-semibold truncate">{pair.pair}</span>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0 flex items-center gap-2">
+                    <span className={cn(
+                      "font-mono text-sm font-semibold",
+                      pair.winRate >= 50 ? "text-success" : "text-destructive"
+                    )}>
+                      {pair.winRate.toFixed(0)}%
+                    </span>
                     <span
                       className={cn(
                         "font-mono text-sm font-semibold",
@@ -404,15 +436,27 @@ export const PerformanceAnalytics = () => {
                     >
                       {pair.totalPnL >= 0 ? "+" : ""}${pair.totalPnL.toFixed(2)}
                     </span>
-                    <span className="text-xs text-muted-foreground ml-2">
-                      {pair.winRate.toFixed(0)}%
-                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+
+                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                  <span
+                    className="block h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, pair.winRate))}%`,
+                      backgroundColor: COLORS[index % COLORS.length],
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between mt-1.5 text-xs text-muted-foreground">
+                  <span>{pair.totalTrades} trades</span>
+                  <span className="font-mono">{pair.wins}W / {pair.losses}L / {Math.max(0, pair.totalTrades - pair.wins - pair.losses)}BE</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Category Performance */}
@@ -427,18 +471,12 @@ export const PerformanceAnalytics = () => {
           <p className="text-sm text-muted-foreground">No trade history yet</p>
         ) : (
           <div className="space-y-3">
-            {categoryStats.map((cat, index) => (
-              <div
-                key={cat.category}
-                className="p-3 rounded-lg bg-secondary/30"
-              >
+            {categoryStats.map((cat) => (
+              <div key={cat.category} className="p-3 rounded-xl bg-secondary/30 border border-border/40">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <div
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                    />
-                    <span className="text-sm font-medium">{cat.category}</span>
+                    <div className={cn("w-3 h-3 rounded-full", getCategoryTheme(cat.category).dot)} />
+                    <span className="text-sm font-semibold">{cat.category}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span
@@ -460,12 +498,9 @@ export const PerformanceAnalytics = () => {
                   </div>
                 </div>
                 {/* Win Rate Gauge */}
-                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                   <div
-                    className={cn(
-                      "h-full rounded-full transition-all",
-                      cat.winRate >= 50 ? "bg-success" : "bg-destructive"
-                    )}
+                    className={cn("h-full rounded-full transition-all bg-gradient-to-r", getCategoryTheme(cat.category).bar)}
                     style={{ width: `${cat.winRate}%` }}
                   />
                 </div>

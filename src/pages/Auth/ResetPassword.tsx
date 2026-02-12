@@ -203,7 +203,7 @@ const ResetPassword = () => {
           href: "/login",
         }}
       >
-        <div className="glass p-8 sm:p-10">
+        <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-8 sm:p-10 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.6)]">
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-success/20 to-success/5 border border-success/20 mb-5">
               <CheckCircle className="w-7 h-7 text-success" />
@@ -231,14 +231,14 @@ const ResetPassword = () => {
           href: "/login",
         }}
       >
-        <div className="glass p-8 sm:p-10">
+        <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-8 sm:p-10 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.6)]">
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 mb-5">
               <Lock className="w-7 h-7 text-primary" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight mb-2">Enter Reset Code</h1>
+            <h1 className="text-2xl font-bold tracking-tight mb-2">Verification Code</h1>
             <p className="text-sm text-muted-foreground mb-2">
-              We've sent a 6-digit code to
+              Enter the 6-digit code sent to
             </p>
             {email && (
               <p className="font-medium text-foreground mb-6">{email}</p>
@@ -263,7 +263,7 @@ const ResetPassword = () => {
 
             <Button
               onClick={handleVerifyCode}
-              className="w-full h-12 font-medium mb-4"
+              className="w-full h-12 font-medium mb-4 text-white"
               disabled={code.length !== 6 || isVerifying}
             >
               {isVerifying ? (
@@ -276,7 +276,7 @@ const ResetPassword = () => {
               )}
             </Button>
 
-            <div className="p-4 rounded-xl glass border border-black/10 dark:border-white/10 mb-4">
+            <div className="p-4 rounded-xl bg-secondary/30 border border-border/50 mb-4">
               <p className="text-xs text-muted-foreground">
                 Didn't receive the code? Check your spam folder or click below to resend.
               </p>
@@ -284,7 +284,7 @@ const ResetPassword = () => {
 
             <Button
               variant="outline"
-              className="w-full h-12 font-medium"
+              className="w-full h-12 font-medium text-white"
               onClick={handleResend}
               disabled={isResending}
             >
@@ -310,7 +310,7 @@ const ResetPassword = () => {
         href: "/login",
       }}
     >
-      <div className="glass p-8 sm:p-10">
+      <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-8 sm:p-10 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.6)]">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 mb-5">
@@ -384,7 +384,7 @@ const ResetPassword = () => {
 
           <Button
             type="submit"
-            className="w-full h-12 font-medium text-base"
+            className="w-full h-12 font-medium text-base text-white"
             disabled={isLoading}
           >
             {isLoading ? (
@@ -400,10 +400,10 @@ const ResetPassword = () => {
           <Button
             type="button"
             variant="ghost"
-            className="w-full"
+            className="w-full text-white"
             onClick={() => setStep("code")}
           >
-            ← Back to code entry
+            Back to code entry
           </Button>
         </form>
 

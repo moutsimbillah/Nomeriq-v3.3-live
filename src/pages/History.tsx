@@ -6,12 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
-import { format } from "date-fns";
+import { format, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, ResultFilter, filterByTime, sortTrades } from "@/components/filters/TradeFilters";
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { Signal } from "@/types/database";
+import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 
 const History = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -26,7 +27,7 @@ const History = () => {
   });
   const { profile } = useAuth();
   const { settings } = useBrand();
-  
+
   // Global risk percent for consistent display
   // Providers should always use the configured global provider risk.
   const globalRiskPercent = isProvider ? (settings?.global_risk_percent || 2) : (profile?.custom_risk_percent || settings?.global_risk_percent || 2);
@@ -68,196 +69,224 @@ const History = () => {
   const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
   const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100).toFixed(1) : "0";
   return <DashboardLayout title="Trade History">
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-        <div className="glass-card p-6 shadow-none">
-          <p className="text-sm text-muted-foreground mb-1">Total Trades</p>
-          <p className="text-3xl font-bold">{isLoading ? "..." : closedTrades.length}</p>
-        </div>
-        <div className="glass-card p-6 shadow-none">
-          <p className="text-sm text-muted-foreground mb-1">Win Rate</p>
-          <p className="text-3xl font-bold text-success">{isLoading ? "..." : `${winRate}%`}</p>
-        </div>
-        <div className="glass-card p-6 shadow-none">
-          <p className="text-sm text-muted-foreground mb-1">Wins / Losses</p>
-          <p className="text-3xl font-bold">
-            <span className="text-success">{isLoading ? "..." : wins}</span>
-            <span className="text-muted-foreground mx-2">/</span>
-            <span className="text-destructive">{isLoading ? "..." : losses}</span>
-          </p>
-        </div>
-        <div className="glass-card p-6 shadow-none">
-          <p className="text-sm text-muted-foreground mb-1">Breakeven</p>
-          <p className="text-3xl font-bold text-warning">{isLoading ? "..." : breakevens}</p>
-        </div>
-        <div className="glass-card p-6 shadow-none">
-          <p className="text-sm text-muted-foreground mb-1">Total P&L</p>
-          <p className={cn("text-3xl font-bold", totalPnL >= 0 ? "text-success" : "text-destructive")}>
-            {isLoading ? "..." : `${totalPnL >= 0 ? "+" : ""}$${totalPnL.toFixed(2)}`}
-          </p>
-        </div>
+    {/* Summary Cards */}
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <div className="glass-card p-6 shadow-none">
+        <p className="text-sm text-muted-foreground mb-1">Total Trades</p>
+        <p className="text-3xl font-bold">{isLoading ? "..." : closedTrades.length}</p>
       </div>
+      <div className="glass-card p-6 shadow-none">
+        <p className="text-sm text-muted-foreground mb-1">Win Rate</p>
+        <p className="text-3xl font-bold text-success">{isLoading ? "..." : `${winRate}%`}</p>
+      </div>
+      <div className="glass-card p-6 shadow-none">
+        <p className="text-sm text-muted-foreground mb-1">Wins / Losses</p>
+        <p className="text-3xl font-bold">
+          <span className="text-success">{isLoading ? "..." : wins}</span>
+          <span className="text-muted-foreground mx-2">/</span>
+          <span className="text-destructive">{isLoading ? "..." : losses}</span>
+        </p>
+      </div>
+      <div className="glass-card p-6 shadow-none">
+        <p className="text-sm text-muted-foreground mb-1">Breakeven</p>
+        <p className="text-3xl font-bold text-warning">{isLoading ? "..." : breakevens}</p>
+      </div>
+      <div className="glass-card p-6 shadow-none">
+        <p className="text-sm text-muted-foreground mb-1">Total P&L</p>
+        <p className={cn("text-3xl font-bold", totalPnL >= 0 ? "text-success" : "text-destructive")}>
+          {isLoading ? "..." : `${totalPnL >= 0 ? "+" : ""}$${totalPnL.toFixed(2)}`}
+        </p>
+      </div>
+    </div>
 
-      {/* Filters */}
-      <TradeFilters sortBy={sortBy} onSortChange={setSortBy} timeFilter={timeFilter} onTimeFilterChange={setTimeFilter} dateRange={dateRange} onDateRangeChange={setDateRange} directionFilter={directionFilter} onDirectionFilterChange={setDirectionFilter} categoryFilter={categoryFilter} onCategoryFilterChange={setCategoryFilter} resultFilter={resultFilter} onResultFilterChange={setResultFilter} showResultFilter={true} />
+    {/* Filters */}
+    <TradeFilters sortBy={sortBy} onSortChange={setSortBy} timeFilter={timeFilter} onTimeFilterChange={setTimeFilter} dateRange={dateRange} onDateRangeChange={setDateRange} directionFilter={directionFilter} onDirectionFilterChange={setDirectionFilter} categoryFilter={categoryFilter} onCategoryFilterChange={setCategoryFilter} resultFilter={resultFilter} onResultFilterChange={setResultFilter} showResultFilter={true} />
 
-      {/* History Table */}
-      <div className="glass-card overflow-hidden shadow-none my-[24px]">
-        {isLoading ? <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div> : closedTrades.length === 0 ? <div className="text-center py-12 text-muted-foreground">
-            <p>No closed trades yet</p>
-          </div> : <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border/50 bg-secondary/30">
-                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Pair
-                  </th>
-                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Direction
-                  </th>
-                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Entry
-                  </th>
-                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    SL / TP
-                  </th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Result
-                  </th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    R:R
-                  </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Risk
-                  </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Potential Profit
-                  </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    P&L
-                  </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
-                    Closed At
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/30">
-                {closedTrades.map(trade => {
-                  const hasAnalysis = hasAnalysisContent(trade.signal as Signal);
-                  return (
-                    <tr 
-                      key={trade.id} 
-                      className={cn(
-                        "hover:bg-accent/30 transition-colors",
-                        hasAnalysis && "cursor-pointer"
+    {/* History Table */}
+    <div className="glass-card overflow-hidden shadow-none my-[24px]">
+      {isLoading ? <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div> : closedTrades.length === 0 ? <div className="text-center py-12 text-muted-foreground">
+        <p>No closed trades yet</p>
+      </div> : <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border/50 bg-secondary/30">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Pair
+              </th>
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Direction
+              </th>
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Entry
+              </th>
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                SL / TP
+              </th>
+              <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Result
+              </th>
+              <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                R:R
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Risk
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Potential Profit
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Duration
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                P&L
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Closed At
+              </th>
+              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                Details
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {closedTrades.map(trade => {
+              const hasAnalysis = hasAnalysisContent(trade.signal as Signal);
+              return (
+                <tr
+                  key={trade.id}
+                  className={cn(
+                    "hover:bg-accent/30 transition-colors",
+                    hasAnalysis && "cursor-pointer"
+                  )}
+                  onClick={() => hasAnalysis && trade.signal && openAnalysis(trade.signal as Signal)}
+                >
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <div>
+                        <span className="font-semibold">{trade.signal?.pair}</span>
+                        <p className="text-xs text-muted-foreground">{trade.signal?.category}</p>
+                      </div>
+                      {hasAnalysis && (
+                        <FileText className="w-4 h-4 text-primary shrink-0" />
                       )}
-                      onClick={() => hasAnalysis && trade.signal && openAnalysis(trade.signal as Signal)}
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <div>
-                            <span className="font-semibold">{trade.signal?.pair}</span>
-                            <p className="text-xs text-muted-foreground">{trade.signal?.category}</p>
-                          </div>
-                          {hasAnalysis && (
-                            <FileText className="w-4 h-4 text-primary shrink-0" />
-                          )}
-                        </div>
-                      </td>
-                    <td className="px-6 py-4">
-                      <div className={cn("inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium w-20", trade.signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
-                        {trade.signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 shrink-0" /> : <ArrowDownRight className="w-4 h-4 shrink-0" />}
-                        {trade.signal?.direction}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-mono text-sm">{trade.signal?.entry_price}</span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="space-y-1">
-                        <p className="text-xs">
-                          <span className="text-destructive font-mono">
-                            {trade.signal?.stop_loss}
-                          </span>
-                        </p>
-                        <p className="text-xs">
-                          <span className="text-success font-mono">
-                            {trade.signal?.take_profit}
-                          </span>
-                        </p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <Badge variant="outline" className={cn(trade.result === "win" ? "border-success/30 text-success bg-success/10" : trade.result === "breakeven" ? "border-warning/30 text-warning bg-warning/10" : "border-destructive/30 text-destructive bg-destructive/10")}>
-                        {trade.result === "win" ? "Win" : trade.result === "breakeven" ? "Breakeven" : "Loss"}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      {(() => {
-                  const entry = trade.signal?.entry_price || 0;
-                  const sl = trade.signal?.stop_loss || 0;
-                  const tp = trade.signal?.take_profit || 0;
-                  let rr = 0;
-                  if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                    rr = Math.abs((tp - entry) / (entry - sl));
-                  } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                    rr = Math.abs((entry - tp) / (sl - entry));
-                  }
-                  return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
-                })()}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div>
-                        <p className="text-sm font-mono">{globalRiskPercent}%</p>
-                        <p className="text-xs text-muted-foreground">${trade.risk_amount.toFixed(2)}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {(() => {
-                  const entry = trade.signal?.entry_price || 0;
-                  const sl = trade.signal?.stop_loss || 0;
-                  const tp = trade.signal?.take_profit || 0;
-                  let rr = 0;
-                  if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                    rr = Math.abs((tp - entry) / (entry - sl));
-                  } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                    rr = Math.abs((entry - tp) / (sl - entry));
-                  }
-                  const potentialProfit = trade.risk_amount * rr;
-                  return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
-                })()}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>
-                        {(trade.pnl || 0) >= 0 ? "+" : ""}${(trade.pnl || 0).toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <div>
-                        <p className="text-sm">
-                          {trade.closed_at ? format(new Date(trade.closed_at), 'yyyy-MM-dd') : '-'}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {trade.closed_at ? format(new Date(trade.closed_at), 'HH:mm') : ''}
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>}
-      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className={cn("inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium w-20", trade.signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
+                      {trade.signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 shrink-0" /> : <ArrowDownRight className="w-4 h-4 shrink-0" />}
+                      {trade.signal?.direction}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="font-mono text-sm">{trade.signal?.entry_price}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="space-y-1">
+                      <p className="text-xs">
+                        <span className="text-destructive font-mono">
+                          {trade.signal?.stop_loss}
+                        </span>
+                      </p>
+                      <p className="text-xs">
+                        <span className="text-success font-mono">
+                          {trade.signal?.take_profit}
+                        </span>
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <Badge variant="outline" className={cn(trade.result === "win" ? "border-success/30 text-success bg-success/10" : trade.result === "breakeven" ? "border-warning/30 text-warning bg-warning/10" : "border-destructive/30 text-destructive bg-destructive/10")}>
+                      {trade.result === "win" ? "Win" : trade.result === "breakeven" ? "Breakeven" : "Loss"}
+                    </Badge>
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    {(() => {
+                      const entry = trade.signal?.entry_price || 0;
+                      const sl = trade.signal?.stop_loss || 0;
+                      const tp = trade.signal?.take_profit || 0;
+                      let rr = 0;
+                      if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
+                        rr = Math.abs((tp - entry) / (entry - sl));
+                      } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
+                        rr = Math.abs((entry - tp) / (sl - entry));
+                      }
+                      return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
+                    })()}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div>
+                      <p className="text-sm font-mono">{globalRiskPercent}%</p>
+                      <p className="text-xs text-muted-foreground">${trade.risk_amount.toFixed(2)}</p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {(() => {
+                      const entry = trade.signal?.entry_price || 0;
+                      const sl = trade.signal?.stop_loss || 0;
+                      const tp = trade.signal?.take_profit || 0;
+                      let rr = 0;
+                      if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
+                        rr = Math.abs((tp - entry) / (entry - sl));
+                      } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
+                        rr = Math.abs((entry - tp) / (sl - entry));
+                      }
+                      const potentialProfit = trade.risk_amount * rr;
+                      return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
+                    })()}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {(() => {
+                      if (!trade.created_at || !trade.closed_at) return <span className="text-muted-foreground">-</span>;
+                      const start = new Date(trade.created_at);
+                      const end = new Date(trade.closed_at);
+                      const minutes = differenceInMinutes(end, start);
+                      const hours = differenceInHours(end, start);
+                      const days = differenceInDays(end, start);
 
-      {/* Analysis Modal */}
-      <SignalAnalysisModal
-        signal={selectedSignal}
-        open={isOpen}
-        onOpenChange={handleOpenChange}
-      />
-    </DashboardLayout>;
+                      let duration = "";
+                      if (days > 0) duration = `${days}d ${hours % 24}h`;
+                      else if (hours > 0) duration = `${hours}h ${minutes % 60}m`;
+                      else duration = `${minutes}m`;
+
+                      return <span className="font-mono text-sm text-secondary-foreground">{duration}</span>;
+                    })()}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>
+                      {(trade.pnl || 0) >= 0 ? "+" : ""}${(trade.pnl || 0).toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div>
+                      <p className="text-sm">
+                        {trade.closed_at ? format(new Date(trade.closed_at), 'yyyy-MM-dd') : '-'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {trade.closed_at ? format(new Date(trade.closed_at), 'HH:mm') : ''}
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <TradeDetailsDialog trade={trade as any} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>}
+    </div>
+
+    {/* Analysis Modal */}
+    <SignalAnalysisModal
+      signal={selectedSignal}
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+    />
+  </DashboardLayout>;
 };
 export default History;

@@ -2,20 +2,24 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Signal, SignalStatus } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUserSubscriptionCategories } from './useSubscriptionPackages';
+import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
 
 interface UseSignalsOptions {
   status?: SignalStatus | SignalStatus[];
   signalType?: 'signal' | 'upcoming' | 'all';
   limit?: number;
   realtime?: boolean;
+  categories?: string[]; // optional client-side category filter
 }
 
 export const useSignals = (options: UseSignalsOptions = {}) => {
-  const { status, signalType = 'all', limit = 50, realtime = true } = options;
+  const { status, signalType = 'all', limit = 50, realtime = true, categories } = options;
   const [signals, setSignals] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { hasActiveSubscription, isAdmin } = useAuth();
+  const { allowedCategories } = useUserSubscriptionCategories();
   
   // Track previously seen signal IDs to detect new ones
   const previousSignalIdsRef = useRef<Set<string>>(new Set());
@@ -39,6 +43,17 @@ export const useSignals = (options: UseSignalsOptions = {}) => {
         } else {
           query = query.eq('status', status);
         }
+      }
+
+      const effectiveCategories =
+        categories && categories.length > 0
+          ? categories
+          : !isAdmin
+          ? allowedCategories
+          : [];
+
+      if (effectiveCategories.length > 0) {
+        query = query.in('category', effectiveCategories);
       }
 
       const { data, error: fetchError } = await query;
@@ -70,11 +85,13 @@ export const useSignals = (options: UseSignalsOptions = {}) => {
       setError(null);
     } catch (err) {
       setError(err as Error);
-      console.error('Error fetching signals:', err);
+      if (!shouldSuppressQueryErrorLog(err)) {
+        console.error('Error fetching signals:', err);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [status, signalType, limit]);
+  }, [status, signalType, limit, categories, isAdmin, allowedCategories]);
 
   useEffect(() => {
     if (!hasActiveSubscription && !isAdmin) {

@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { X } from "lucide-react";
+import { X, ChevronDown, ChevronUp, ExternalLink, FileText } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
+import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import {
   LineChart,
   Line,
@@ -27,15 +29,21 @@ interface Trade {
   pnl: number | null;
   result: string | null;
   risk_amount: number;
+  initial_risk_amount?: number;
   closed_at: string | null;
   created_at: string;
   signal: {
+    id: string;
     pair: string;
     direction: string;
     entry_price: number | null;
     take_profit: number | null;
     stop_loss: number | null;
+    category: string | null;
     created_by: string | null;
+    analysis_notes?: string | null;
+    analysis_video_url?: string | null;
+    analysis_image_url?: string | null;
   } | null;
 }
 
@@ -77,9 +85,17 @@ export const DayDetailModal = ({
   dayTrades,
 }: DayDetailModalProps) => {
   const { user, isAdmin } = useAuth();
+  const { allowedCategories } = useUserSubscriptionCategories();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProvider, setIsProvider] = useState(false);
+  const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
+
+  const signalIds = useMemo(
+    () => Array.from(new Set(trades.map((t) => t.signal?.id).filter((id): id is string => !!id))),
+    [trades]
+  );
+  const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: isOpen });
 
   // Fetch admin role to check if user is a signal provider
   useEffect(() => {
@@ -128,7 +144,7 @@ export const DayDetailModal = ({
             .select(
               `
               *,
-              signal:signals!inner(pair, direction, entry_price, take_profit, stop_loss, created_by)
+              signal:signals!inner(id, pair, direction, entry_price, take_profit, stop_loss, category, created_by, analysis_notes, analysis_video_url, analysis_image_url)
             `
             )
             .eq("signal.created_by", user.id)
@@ -146,7 +162,7 @@ export const DayDetailModal = ({
             .select(
               `
               *,
-              signal:signals(pair, direction, entry_price, take_profit, stop_loss, created_by)
+              signal:signals(id, pair, direction, entry_price, take_profit, stop_loss, category, created_by, analysis_notes, analysis_video_url, analysis_image_url)
             `
             )
             .eq("user_id", user.id)
@@ -156,7 +172,11 @@ export const DayDetailModal = ({
             .order("closed_at", { ascending: true });
 
           if (error) throw error;
-          data = userTrades || [];
+          data = (userTrades || []).filter((trade) =>
+            allowedCategories.length > 0
+              ? allowedCategories.includes((trade as any).signal?.category || "")
+              : true
+          );
         }
 
         setTrades(data);
@@ -168,7 +188,13 @@ export const DayDetailModal = ({
     };
 
     fetchTrades();
-  }, [user, date, isOpen, isProvider]);
+  }, [user, date, isOpen, isProvider, allowedCategories]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setExpandedTradeId(null);
+    }
+  }, [isOpen]);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -232,6 +258,28 @@ export const DayDetailModal = ({
       return `${diffHours}h ${remainingMins}m`;
     }
     return `${diffMins}m`;
+  };
+
+  const calculateRr = (trade: Trade, targetTp: number) => {
+    const entry = Number(trade.signal?.entry_price || 0);
+    const sl = Number(trade.signal?.stop_loss || 0);
+    if (!entry || !sl || !trade.signal) return 0;
+    if (trade.signal.direction === "BUY") {
+      if (entry - sl === 0) return 0;
+      return Math.abs((targetTp - entry) / (entry - sl));
+    }
+    if (sl - entry === 0) return 0;
+    return Math.abs((entry - targetTp) / (sl - entry));
+  };
+
+  const getCurrentTp = (trade: Trade) => {
+    const signal = trade.signal;
+    if (!signal) return 0;
+    const updates = updatesBySignal[signal.id] || [];
+    if (updates.length === 0) return Number(signal.take_profit || 0);
+    const prices = updates.map((u) => Number(u.tp_price)).filter((n) => Number.isFinite(n));
+    if (prices.length === 0) return Number(signal.take_profit || 0);
+    return signal.direction === "SELL" ? Math.min(...prices) : Math.max(...prices);
   };
 
   return (
@@ -407,7 +455,7 @@ export const DayDetailModal = ({
                     </p>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="w-full table-fixed min-w-[980px]">
                       <thead>
                         <tr className="border-b border-border/20">
                           <th className="px-4 py-3 text-left text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
@@ -434,62 +482,202 @@ export const DayDetailModal = ({
                           <th className="px-4 py-3 text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
                             P&L
                           </th>
+                          <th className="px-4 py-3 text-center text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                            Details
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {trades.map((trade) => (
-                          <tr
-                            key={trade.id}
-                            className="border-b border-border/10 hover:bg-secondary/30 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-sm font-medium">
-                              {trade.signal?.pair || "N/A"}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
-                                className={cn(
-                                  "px-2 py-0.5 rounded text-[10px] font-medium uppercase",
-                                  trade.signal?.direction === "BUY"
-                                    ? "bg-success/20 text-success"
-                                    : "bg-destructive/20 text-destructive"
-                                )}
+                        {trades.map((trade) => {
+                          const isExpanded = expandedTradeId === trade.id;
+                          const signal = trade.signal;
+                          const updates = signal?.id ? (updatesBySignal[signal.id] || []) : [];
+                          const currentTp = getCurrentTp(trade);
+                          const rr = calculateRr(trade, currentTp);
+                          const potentialProfit = (trade.risk_amount || 0) * rr;
+                          let remainingPercent = 100;
+
+                          return (
+                            <Fragment key={trade.id}>
+                              <tr
+                                className="border-b border-border/10 hover:bg-secondary/30 transition-colors"
                               >
-                                {trade.signal?.direction === "BUY"
-                                  ? "LONG"
-                                  : "SHORT"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-right text-sm font-mono">
-                              ${trade.risk_amount.toFixed(2)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-sm font-mono">
-                              {trade.signal?.entry_price?.toFixed(2) || "-"}
-                            </td>
-                            <td className="px-4 py-3 text-right text-sm font-mono text-muted-foreground">
-                              {trade.signal?.take_profit?.toFixed(2) || "-"} /{" "}
-                              {trade.signal?.stop_loss?.toFixed(2) || "-"}
-                            </td>
-                            <td className="px-4 py-3 text-center text-sm text-muted-foreground">
-                              {trade.closed_at
-                                ? format(new Date(trade.closed_at), "HH:mm")
-                                : "-"}
-                            </td>
-                            <td className="px-4 py-3 text-center text-sm text-muted-foreground">
-                              {formatDuration(trade.created_at, trade.closed_at)}
-                            </td>
-                            <td
-                              className={cn(
-                                "px-4 py-3 text-right text-sm font-bold font-mono",
-                                (trade.pnl || 0) >= 0
-                                  ? "text-success"
-                                  : "text-destructive"
+                                <td className="px-4 py-3 text-sm font-medium">
+                                  {signal?.pair || "N/A"}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={cn(
+                                      "px-2 py-0.5 rounded text-[10px] font-medium uppercase",
+                                      signal?.direction === "BUY"
+                                        ? "bg-success/20 text-success"
+                                        : "bg-destructive/20 text-destructive"
+                                    )}
+                                  >
+                                    {signal?.direction === "BUY"
+                                      ? "LONG"
+                                      : "SHORT"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right text-sm font-mono">
+                                  ${trade.risk_amount.toFixed(2)}
+                                </td>
+                                <td className="px-4 py-3 text-right text-sm font-mono">
+                                  {signal?.entry_price?.toFixed(2) || "-"}
+                                </td>
+                                <td className="px-4 py-3 text-right text-sm font-mono text-muted-foreground">
+                                  {signal?.take_profit?.toFixed(2) || "-"} /{" "}
+                                  {signal?.stop_loss?.toFixed(2) || "-"}
+                                </td>
+                                <td className="px-4 py-3 text-center text-sm text-muted-foreground">
+                                  {trade.closed_at
+                                    ? format(new Date(trade.closed_at), "HH:mm")
+                                    : "-"}
+                                </td>
+                                <td className="px-4 py-3 text-center text-sm text-muted-foreground">
+                                  {formatDuration(trade.created_at, trade.closed_at)}
+                                </td>
+                                <td
+                                  className={cn(
+                                    "px-4 py-3 text-right text-sm font-bold font-mono",
+                                    (trade.pnl || 0) >= 0
+                                      ? "text-success"
+                                      : "text-destructive"
+                                  )}
+                                >
+                                  {(trade.pnl || 0) >= 0 ? "+" : ""}$
+                                  {(trade.pnl || 0).toFixed(2)}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-border/50 bg-secondary/30 hover:bg-secondary/60 transition-colors"
+                                    onClick={() =>
+                                      setExpandedTradeId((prev) => (prev === trade.id ? null : trade.id))
+                                    }
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                    )}
+                                  </button>
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="border-b border-border/10 bg-secondary/10">
+                                  <td colSpan={9} className="p-0">
+                                    <div className="px-4 py-4 max-w-full overflow-hidden space-y-4">
+                                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                                        <span className="px-2 py-1 rounded-full border border-border/50 font-mono">
+                                          Pair: {signal?.pair || "-"}
+                                        </span>
+                                        <span className="px-2 py-1 rounded-full border border-border/50 font-mono">
+                                          Entry: {signal?.entry_price ?? "-"}
+                                        </span>
+                                        <span className="px-2 py-1 rounded-full border border-border/50 font-mono">
+                                          SL: {signal?.stop_loss ?? "-"}
+                                        </span>
+                                        <span className="px-2 py-1 rounded-full border border-border/50 font-mono">
+                                          TP: {signal?.take_profit ?? "-"}
+                                        </span>
+                                        {updates.length > 0 && (
+                                          <span className="px-2 py-1 rounded-full border border-border/50 font-mono">
+                                            Current TP: {currentTp}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                                        <div className="rounded-lg border border-border/30 p-3">
+                                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">R:R</p>
+                                          <p className="font-semibold font-mono">1:{rr.toFixed(1)}</p>
+                                        </div>
+                                        <div className="rounded-lg border border-border/30 p-3">
+                                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Potential Profit</p>
+                                          <p className="font-semibold font-mono text-success">+${potentialProfit.toFixed(2)}</p>
+                                        </div>
+                                        <div className="rounded-lg border border-border/30 p-3">
+                                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Opened</p>
+                                          <p className="font-semibold">{format(new Date(trade.created_at), "yyyy-MM-dd HH:mm")}</p>
+                                        </div>
+                                        <div className="rounded-lg border border-border/30 p-3">
+                                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Closed</p>
+                                          <p className="font-semibold">{trade.closed_at ? format(new Date(trade.closed_at), "yyyy-MM-dd HH:mm") : "-"}</p>
+                                        </div>
+                                      </div>
+
+                                      <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
+                                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">TP Updates</p>
+                                        {updates.length === 0 ? (
+                                          <p className="text-sm text-muted-foreground">No TP updates published.</p>
+                                        ) : (
+                                          <div className="space-y-2">
+                                            {updates.map((u) => {
+                                              const closePercent = Math.max(0, Math.min(remainingPercent, Number(u.close_percent || 0)));
+                                              remainingPercent = Math.max(0, remainingPercent - closePercent);
+                                              const updateRr = calculateRr(trade, Number(u.tp_price));
+                                              const baseRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+                                              const realizedProfit = baseRisk * (closePercent / 100) * updateRr;
+                                              return (
+                                                <div key={u.id} className="rounded-md bg-secondary/30 px-3 py-2 text-sm flex flex-wrap items-center gap-2 break-words">
+                                                  <span className="px-2 py-0.5 rounded-full border border-border/50 text-xs">{u.tp_label}</span>
+                                                  <span className="font-mono">Price: {u.tp_price}</span>
+                                                  <span className="text-primary">Close: {closePercent.toFixed(2)}%</span>
+                                                  <span className="text-success font-semibold">Profit: +${realizedProfit.toFixed(2)}</span>
+                                                  {u.note && <span className="text-muted-foreground">- {u.note}</span>}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
+                                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Analysis</p>
+                                        {!signal?.analysis_notes && !signal?.analysis_video_url && !signal?.analysis_image_url ? (
+                                          <p className="text-sm text-muted-foreground">No analysis provided.</p>
+                                        ) : (
+                                          <div className="space-y-2">
+                                            {signal?.analysis_notes && (
+                                              <div className="rounded-md bg-secondary/30 p-3 max-w-full overflow-hidden">
+                                                <div className="flex items-center gap-2 text-sm font-medium mb-1">
+                                                  <FileText className="w-4 h-4" />
+                                                  Notes
+                                                </div>
+                                                <p className="text-sm whitespace-pre-wrap break-words">{signal.analysis_notes}</p>
+                                              </div>
+                                            )}
+                                            {signal?.analysis_video_url && (
+                                              <a
+                                                href={signal.analysis_video_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                              >
+                                                Open video analysis <ExternalLink className="w-3 h-3" />
+                                              </a>
+                                            )}
+                                            {signal?.analysis_image_url && (
+                                              <a
+                                                href={signal.analysis_image_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                              >
+                                                Open analysis image <ExternalLink className="w-3 h-3" />
+                                              </a>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
                               )}
-                            >
-                              {(trade.pnl || 0) >= 0 ? "+" : ""}$
-                              {(trade.pnl || 0).toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
+                            </Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

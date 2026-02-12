@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { TelegramIntegration } from "@/types/database";
 
 export type TelegramSignalAction = "created" | "activated";
 
@@ -16,82 +17,144 @@ export interface TelegramSignalPayload {
   upcoming_status: string | null;
 }
 
+export interface TelegramTradeUpdatePayload {
+  pair: string;
+  category: string;
+  direction: string;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  tp_label: string;
+  tp_price: number;
+  close_percent: number;
+  note?: string | null;
+}
+
+export interface TelegramTradeClosedPayload {
+  pair: string;
+  category: string;
+  direction: string;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  status: "tp_hit" | "sl_hit" | "breakeven";
+}
+
+async function sendTelegramMessageToCategory(
+  category: string,
+  message: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { data, error: integrationsError } = await supabase
+      .from("telegram_integrations")
+      .select("*")
+      .eq("is_enabled", true);
+
+    if (integrationsError) {
+      return { ok: false, error: "Failed to fetch Telegram integrations" };
+    }
+
+    const allIntegrations = (data || []) as TelegramIntegration[];
+    const matchingIntegrations = allIntegrations.filter((integration) => {
+      const cats = integration.categories ?? [];
+      if (cats.length === 0) return true;
+      return cats.includes(category as any);
+    });
+
+    if (matchingIntegrations.length === 0) {
+      return { ok: true };
+    }
+
+    const results = await Promise.all(
+      matchingIntegrations.map(async (integration) => {
+        const telegramApiUrl = `https://api.telegram.org/bot${integration.bot_token}/sendMessage`;
+
+        const response = await fetch(telegramApiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: integration.chat_id,
+            text: message,
+            parse_mode: "Markdown",
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          return {
+            ok: false as const,
+            error: result.description || "Failed to send to Telegram",
+          };
+        }
+
+        return { ok: true as const };
+      })
+    );
+
+    const failed = results.filter((r) => !r.ok) as { ok: false; error: string }[];
+    if (failed.length > 0) {
+      return {
+        ok: false,
+        error: failed.map((f) => f.error).join("; "),
+      };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return { ok: false, error: msg };
+  }
+}
+
 export async function sendTelegramSignal(params: {
   signal: TelegramSignalPayload;
   action: TelegramSignalAction;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  try {
-    console.log("[Telegram] Starting send with params:", params);
+  const message = formatSignalMessage(params.signal, params.action);
+  return sendTelegramMessageToCategory(params.signal.category, message);
+}
 
-    const {
-      data: { session },
-      error: sessionError,
-    } = await supabase.auth.getSession();
+export async function sendTelegramTradeUpdate(params: {
+  signal: TelegramTradeUpdatePayload;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { signal } = params;
+  const directionEmoji = signal.direction === "BUY" ? "🟢" : "🔴";
+  const noteLine = signal.note ? `\n📝 Note: ${signal.note}` : "";
+  const message =
+    `📈 TRADE UPDATE\n\n` +
+    `${directionEmoji} *${signal.direction}* ${signal.pair}\n` +
+    `📁 Category: ${signal.category}\n` +
+    `🎯 Entry: ${signal.entry_price ?? "-"}\n` +
+    `🛑 Stop Loss: ${signal.stop_loss ?? "-"}\n` +
+    `✅ Take Profit: ${signal.take_profit ?? "-"}\n\n` +
+    `🔔 ${signal.tp_label}\n` +
+    `Price: ${signal.tp_price}\n` +
+    `Close: ${signal.close_percent}%` +
+    `${noteLine}\n\n` +
+    `Trade responsibly! 💹`;
 
-    if (sessionError) {
-      console.error("[Telegram] Session error:", sessionError);
-      return { ok: false, error: sessionError.message };
-    }
+  return sendTelegramMessageToCategory(signal.category, message);
+}
 
-    if (!session) {
-      console.error("[Telegram] No session found");
-      return { ok: false, error: "Not authenticated" };
-    }
+export async function sendTelegramTradeClosed(params: {
+  signal: TelegramTradeClosedPayload;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { signal } = params;
+  const directionEmoji = signal.direction === "BUY" ? "🟢" : "🔴";
+  const statusLabel =
+    signal.status === "tp_hit" ? "TP Hit ✅" : signal.status === "sl_hit" ? "SL Hit ❌" : "Breakeven ⚖️";
+  const message =
+    `🏁 TRADE CLOSED\n\n` +
+    `${directionEmoji} *${signal.direction}* ${signal.pair}\n` +
+    `📁 Category: ${signal.category}\n` +
+    `Status: ${statusLabel}\n` +
+    `🎯 Entry: ${signal.entry_price ?? "-"}\n` +
+    `🛑 Stop Loss: ${signal.stop_loss ?? "-"}\n` +
+    `✅ Take Profit: ${signal.take_profit ?? "-"}\n\n` +
+    `Trade responsibly! 💹`;
 
-    console.log("[Telegram] Session found, fetching global Telegram settings...");
-
-    // Fetch global Telegram settings (shared by all users)
-    const { data: settings, error: settingsError } = await supabase
-      .from("global_telegram_settings")
-      .select("*")
-      .eq("is_enabled", true)
-      .maybeSingle();
-
-    if (settingsError) {
-      console.error("[Telegram] Error fetching settings:", settingsError);
-      return { ok: false, error: "Failed to fetch Telegram settings" };
-    }
-
-    if (!settings) {
-      console.log("[Telegram] No global Telegram settings found or disabled");
-      return { ok: true }; // Not an error, just not configured
-    }
-
-    console.log("[Telegram] Settings found, sending message to Telegram API...");
-
-    // Format the message
-    const message = formatSignalMessage(params.signal, params.action);
-
-    // Type assertion for settings (until types are regenerated)
-    const telegramSettings = settings as { bot_token: string; chat_id: string };
-
-    // Call Telegram API directly
-    const telegramApiUrl = `https://api.telegram.org/bot${telegramSettings.bot_token}/sendMessage`;
-
-    const response = await fetch(telegramApiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: telegramSettings.chat_id,
-        text: message,
-        parse_mode: "Markdown",
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      console.error("[Telegram] API error:", result);
-      return { ok: false, error: result.description || "Failed to send to Telegram" };
-    }
-
-    console.log("[Telegram] Success! Message sent to Telegram");
-    return { ok: true };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    console.error("[Telegram] Exception:", msg, err);
-    return { ok: false, error: msg };
-  }
+  return sendTelegramMessageToCategory(signal.category, message);
 }
 
 // Helper function to format signal message

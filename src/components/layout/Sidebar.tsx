@@ -8,6 +8,7 @@ import {
   Clock,
   History,
   CalendarDays,
+  CreditCard,
   LogOut,
   Menu,
   ArrowLeft,
@@ -22,6 +23,7 @@ import { useAdminRoleContext } from "@/contexts/AdminRoleContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useUserSubscriptions } from "@/hooks/useSubscriptionPackages";
 import { differenceInDays } from "date-fns";
 
 const baseNavItems = [
@@ -30,6 +32,7 @@ const baseNavItems = [
   { icon: Clock, label: "Upcoming", path: "/upcoming" },
   { icon: History, label: "History", path: "/history" },
   { icon: CalendarDays, label: "Calendar", path: "/calendar" },
+  { icon: CreditCard, label: "Subscription", path: "/subscription" },
 ];
 
 const providerNavItems = [
@@ -39,12 +42,12 @@ const providerNavItems = [
   { icon: Clock, label: "Upcoming", path: "/upcoming" },
   { icon: History, label: "History", path: "/history" },
   { icon: CalendarDays, label: "Calendar", path: "/calendar" },
-
 ];
 
 export const SidebarContent = () => {
   const navigate = useNavigate();
   const { signOut, subscription, hasActiveSubscription } = useAuth();
+  const { activeSubscriptions } = useUserSubscriptions();
   const { adminRole } = useAdminRoleContext();
   const { settings } = useBrand();
 
@@ -54,12 +57,13 @@ export const SidebarContent = () => {
 
   // Build nav items dynamically based on role - use stable references
   const navItems = useMemo(() => {
-    if (isSignalProvider || isSuperAdmin) {
+    if (isSignalProvider) {
       return providerNavItems;
     }
     return baseNavItems;
-  }, [isSignalProvider, isSuperAdmin]);
+  }, [isSignalProvider]);
 
+  // Subscription label and days text from real data: use active subscription's package name and duration
   const subscriptionInfo = useMemo(() => {
     if (!subscription) {
       return {
@@ -79,11 +83,16 @@ export const SidebarContent = () => {
         daysText: "Subscription expired",
       };
     }
+    const activeSub = activeSubscriptions[0];
+    const pkg = activeSub?.package;
+    const packageName = pkg?.name ?? null;
+    const isLifetime = pkg?.duration_type === "lifetime";
+
     if (expiresAt) {
       const daysRemaining = differenceInDays(expiresAt, new Date());
       return {
         status: "active",
-        statusText: "Active",
+        statusText: packageName ? `Active ${packageName}` : "Active",
         daysText:
           daysRemaining > 0
             ? `Expires in ${daysRemaining} days`
@@ -92,10 +101,10 @@ export const SidebarContent = () => {
     }
     return {
       status: "active",
-      statusText: "Active",
-      daysText: "Lifetime access",
+      statusText: packageName ? `Active ${packageName}` : "Active",
+      daysText: isLifetime ? "Lifetime access" : "Active",
     };
-  }, [subscription, hasActiveSubscription]);
+  }, [subscription, hasActiveSubscription, activeSubscriptions]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -121,13 +130,19 @@ export const SidebarContent = () => {
               end
               style={{ transition: 'none' }}
               className={cn(
-                "flex items-center gap-3 py-3 rounded-lg text-sm font-medium px-4 my-0 transition-colors",
-                "text-muted-foreground hover:text-foreground hover:bg-accent dark:hover:bg-white/5",
+                "group/nav flex items-center gap-3 py-3 rounded-xl text-sm font-medium px-4 my-0 border border-transparent transition-colors",
+                "text-muted-foreground hover:text-foreground hover:bg-accent/70 dark:hover:bg-white/5",
               )}
-              activeClassName="!text-foreground dark:!text-white !bg-transparent font-bold"
+              activeClassName={cn(
+                "!text-amber-500 dark:!text-amber-400 font-semibold",
+                "!bg-[linear-gradient(90deg,rgba(251,191,36,0.14),rgba(251,191,36,0.08))]",
+                "!border-amber-500/35 shadow-[inset_0_1px_0_rgba(251,191,36,0.14)]",
+                "[&_.nav-indicator]:opacity-100"
+              )}
             >
-              <Icon className="w-5 h-5 shrink-0" style={{ transition: 'none' }} />
+              <Icon className="w-5 h-5 shrink-0 text-current" style={{ transition: 'none' }} />
               <span className="whitespace-nowrap" style={{ transition: 'none' }}>{item.label}</span>
+              <span className="nav-indicator ml-auto h-1.5 w-1.5 rounded-full bg-current opacity-0 transition-opacity" />
             </NavLink>
           );
         })}
@@ -135,28 +150,29 @@ export const SidebarContent = () => {
 
       {/* Footer - Sticky at bottom */}
       <div className="p-4 flex-shrink-0 space-y-4">
-        {/* Subscription Card */}
-        <div className="bg-card dark:bg-[#1A1D24] rounded-xl p-4 border border-border dark:border-white/5 shadow-sm">
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">
-            SUBSCRIPTION
-          </p>
-          <div className="flex items-center gap-2 mb-1">
-            <div
-              className={cn(
-                "w-2 h-2 rounded-full",
-                subscriptionInfo.status === "active"
-                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
-                  : "bg-destructive"
-              )}
-            />
-            <span className="text-sm font-medium text-foreground dark:text-white">
-              {subscriptionInfo.status === "active" ? "Active Professional" : "Inactive"}
-            </span>
+        {!isSignalProvider && (
+          <div className="bg-card dark:bg-[#1A1D24] rounded-xl p-4 border border-border dark:border-white/5 shadow-sm">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">
+              SUBSCRIPTION
+            </p>
+            <div className="flex items-center gap-2 mb-1">
+              <div
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  subscriptionInfo.status === "active"
+                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
+                    : "bg-destructive"
+                )}
+              />
+              <span className="text-sm font-medium text-foreground dark:text-white">
+                {subscriptionInfo.statusText}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {subscriptionInfo.daysText}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {subscriptionInfo.daysText}
-          </p>
-        </div>
+        )}
 
         {/* Sign Out Button */}
         <Button

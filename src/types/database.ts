@@ -13,6 +13,9 @@ export type SubscriptionStatus = 'active' | 'inactive' | 'expired' | 'pending';
 export type PaymentStatus = 'pending' | 'verified' | 'rejected';
 export type TradeResult = 'win' | 'loss' | 'pending' | 'breakeven';
 export type DiscountType = 'percentage' | 'fixed';
+export type SubscriptionPackageStatus = 'active' | 'inactive';
+export type SubscriptionDurationType = 'monthly' | 'yearly' | 'lifetime';
+export type SubscriptionPackageAvailability = 'single' | 'multiple';
 
 export interface Profile {
   id: string;
@@ -23,7 +26,9 @@ export interface Profile {
   phone: string | null;
   country: string | null;
   username: string | null;
+  telegram_username: string | null;
   account_balance: number | null;
+  starting_balance?: number | null;
   balance_set_at: string | null;
   custom_risk_percent: number | null;
   avatar_url: string | null;
@@ -63,6 +68,8 @@ export interface Subscription {
   status: SubscriptionStatus;
   starts_at: string | null;
   expires_at: string | null;
+  package_id?: string | null;
+  payment_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -77,6 +84,46 @@ export interface Payment {
   verified_by: string | null;
   verified_at: string | null;
   rejection_reason: string | null;
+  created_at: string;
+  payment_method: string | null;
+  user_bank_account_name: string | null;
+  user_bank_account_number: string | null;
+  user_bank_name: string | null;
+  package_id?: string | null;
+}
+
+export interface SubscriptionPackage {
+  id: string;
+  name: string;
+  description: string | null;
+  status: SubscriptionPackageStatus;
+  price: number;
+  currency: string;
+  duration_type: SubscriptionDurationType;
+  duration_months: number;
+  availability: SubscriptionPackageAvailability;
+  categories?: SignalCategory[]; // may be null/undefined on older rows
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TelegramIntegration {
+  id: string;
+  name: string;
+  bot_token: string;
+  chat_id: string;
+  categories: SignalCategory[];
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubscriptionPackageFeature {
+  id: string;
+  package_id: string;
+  feature_text: string;
+  sort_order: number;
   created_at: string;
 }
 
@@ -100,6 +147,9 @@ export interface Signal {
   analysis_video_url: string | null;
   analysis_notes: string | null;
   analysis_image_url: string | null;
+  send_updates_to_telegram?: boolean;
+  send_closed_trades_to_telegram?: boolean;
+  tp_updates?: SignalTakeProfitUpdate[];
 }
 
 export interface UserTrade {
@@ -108,11 +158,26 @@ export interface UserTrade {
   signal_id: string;
   risk_percent: number;
   risk_amount: number;
+  initial_risk_amount?: number;
+  remaining_risk_amount?: number;
+  realized_pnl?: number;
+  last_update_at?: string | null;
   pnl: number | null;
   result: TradeResult | null;
   created_at: string;
   closed_at: string | null;
   signal?: Signal;
+}
+
+export interface SignalTakeProfitUpdate {
+  id: string;
+  signal_id: string;
+  tp_label: string;
+  tp_price: number;
+  close_percent: number;
+  note: string | null;
+  created_by: string;
+  created_at: string;
 }
 
 export interface Favorite {

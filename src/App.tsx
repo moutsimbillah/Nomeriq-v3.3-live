@@ -15,10 +15,10 @@ import { BalanceSetupModal } from "@/components/auth/BalanceSetupModal";
 import Index from "./pages/Index";
 import Login from "./pages/Auth/Login";
 import Signup from "./pages/Auth/Signup";
-import SignupSuccess from "./pages/Auth/SignupSuccess";
 import ForgotPassword from "./pages/Auth/ForgotPassword";
 import ResetPassword from "./pages/Auth/ResetPassword";
-import VerifyEmail from "./pages/Auth/VerifyEmail";
+import TermsOfService from "./pages/TermsOfService";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 import NotFound from "./pages/NotFound";
 import AccessDenied from "./pages/AccessDenied";
 
@@ -42,10 +42,16 @@ import AdminPayments from "./pages/Admin/AdminPayments";
 import AdminSettings from "./pages/Admin/AdminSettings";
 import AdminDiscounts from "./pages/Admin/AdminDiscounts";
 import AdminManagement from "./pages/Admin/AdminManagement";
+import AdminHistory from "./pages/Admin/AdminHistory";
 import AdminBranding from "./pages/Admin/AdminBranding";
+import AdminLegalPages from "./pages/Admin/AdminLegalPages";
+import AdminEmailSettings from "./pages/Admin/AdminEmailSettings";
 import ProviderDashboard from "./pages/Admin/ProviderDashboard";
 import ProviderSignals from "./pages/Admin/ProviderSignals";
 import TelegramIntegration from "./pages/Admin/TelegramIntegration";
+import AdminActiveTrades from "./pages/Admin/AdminActiveTrades";
+import AdminSubscriptionSettings from "./pages/Admin/AdminSubscriptionSettings";
+import AdminTelegramIntegrations from "./pages/Admin/AdminTelegramIntegrations";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -64,144 +70,179 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
       <TooltipProvider>
-        <BrowserRouter>
+        <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
           <AuthProvider>
             <BrandProvider>
               <AdminRoleProvider>
                 <Toaster />
                 <Sonner />
                 <BalanceSetupModal />
-            <Routes>
-              {/* Public Routes */}
-              <Route path="/" element={<Index />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/signup-success" element={<SignupSuccess />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/verify-email" element={<VerifyEmail />} />
-              <Route path="/access-denied" element={<AccessDenied />} />
-              
-              {/* Protected User Routes */}
-              <Route path="/dashboard" element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              } />
-              <Route path="/active-trades" element={
-                <ProtectedRoute requireSubscription>
-                  <ActiveTrades />
-                </ProtectedRoute>
-              } />
-              <Route path="/upcoming" element={
-                <ProtectedRoute requireSubscription>
-                  <Upcoming />
-                </ProtectedRoute>
-              } />
-              <Route path="/history" element={
-                <ProtectedRoute requireSubscription>
-                  <History />
-                </ProtectedRoute>
-              } />
-              <Route path="/calendar" element={
-                <ProtectedRoute requireSubscription>
-                  <Calendar />
-                </ProtectedRoute>
-              } />
-              <Route path="/subscription" element={
-                <ProtectedRoute>
-                  <Subscription />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings" element={
-                <ProtectedRoute>
-                  <Settings />
-                </ProtectedRoute>
-              } />
-              <Route path="/my-signals" element={
-                <ProtectedRoute requireSubscription>
-                  <MySignals />
-                </ProtectedRoute>
-              } />
+                <Routes>
+                  {/* Public Routes */}
+                  <Route path="/" element={<Index />} />
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/signup" element={<Signup />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/terms" element={<TermsOfService />} />
+                  <Route path="/privacy" element={<PrivacyPolicy />} />
+                  <Route path="/access-denied" element={<AccessDenied />} />
 
-              {/* Admin Routes - Dashboard accessible to super_admin and payments_admin only */}
-              <Route path="/admin" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                  <AdminDashboard />
-                </AdminProtectedRoute>
-              } />
-              
-              {/* Signal Provider routes - Provider sees their own isolated data */}
-              <Route path="/admin/provider-dashboard" element={
-                <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
-                  <ProviderDashboard />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/provider-signals" element={
-                <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
-                  <ProviderSignals />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/telegram" element={
-                <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
-                  <TelegramIntegration />
-                </AdminProtectedRoute>
-              } />
-              
-              {/* Trade stats - Super Admin sees global, Provider sees their own */}
-              <Route path="/admin/trade-stats" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
-                  <AdminTradeStats />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/signals" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
-                  <AdminSignals />
-                </AdminProtectedRoute>
-              } />
-              
-              {/* Payment-related routes - Payments Admin + Super Admin */}
-              <Route path="/admin/users" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                  <AdminUsers />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/users/:userId" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                  <AdminUserDetails />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/payments" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                  <AdminPayments />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/discounts" element={
-                <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                  <AdminDiscounts />
-                </AdminProtectedRoute>
-              } />
-              
-              {/* Super Admin only routes */}
-              <Route path="/admin/branding" element={
-                <AdminProtectedRoute allowedRoles={['super_admin']}>
-                  <AdminBranding />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/settings" element={
-                <AdminProtectedRoute allowedRoles={['super_admin']}>
-                  <AdminSettings />
-                </AdminProtectedRoute>
-              } />
-              <Route path="/admin/management" element={
-                <AdminProtectedRoute allowedRoles={['super_admin']}>
-                  <AdminManagement />
-                </AdminProtectedRoute>
-              } />
+                  {/* Protected User Routes */}
+                  <Route path="/dashboard" element={
+                    <ProtectedRoute>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/active-trades" element={
+                    <ProtectedRoute requireSubscription>
+                      <ActiveTrades />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/upcoming" element={
+                    <ProtectedRoute requireSubscription>
+                      <Upcoming />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/history" element={
+                    <ProtectedRoute requireSubscription>
+                      <History />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/calendar" element={
+                    <ProtectedRoute requireSubscription>
+                      <Calendar />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/subscription" element={
+                    <ProtectedRoute>
+                      <Subscription />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/settings" element={
+                    <ProtectedRoute>
+                      <Settings />
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/my-signals" element={
+                    <ProtectedRoute requireSubscription>
+                      <MySignals />
+                    </ProtectedRoute>
+                  } />
 
-              {/* Catch-all */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+                  {/* Admin Routes - Dashboard accessible to super_admin and payments_admin only */}
+                  <Route path="/admin" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminDashboard />
+                    </AdminProtectedRoute>
+                  } />
+
+                  {/* Signal Provider routes - Provider sees their own isolated data */}
+                  <Route path="/admin/provider-dashboard" element={
+                    <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
+                      <ProviderDashboard />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/provider-signals" element={
+                    <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
+                      <ProviderSignals />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/telegram" element={
+                    <AdminProtectedRoute allowedRoles={['signal_provider_admin']}>
+                      <TelegramIntegration />
+                    </AdminProtectedRoute>
+                  } />
+
+                  {/* Trade stats - Super Admin sees global, Provider sees their own */}
+                  <Route path="/admin/trade-stats" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
+                      <AdminTradeStats />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/signals" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
+                      <AdminSignals />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/active-trades" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
+                      <AdminActiveTrades />
+                    </AdminProtectedRoute>
+                  } />
+
+                  {/* Payment-related routes - Payments Admin + Super Admin */}
+                  <Route path="/admin/users" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminUsers />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/users/:userId" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminUserDetails />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/payments" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminPayments />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/subscription-settings" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminSubscriptionSettings />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/discounts" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminDiscounts />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/telegram-integrations" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminTelegramIntegrations />
+                    </AdminProtectedRoute>
+                  } />
+
+                  {/* Super Admin only routes */}
+                  <Route path="/admin/branding" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminBranding />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/settings" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminSettings />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/legal-pages" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminLegalPages />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/email-settings" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminEmailSettings />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/management" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminManagement />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/history" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminHistory />
+                    </AdminProtectedRoute>
+                  } />
+
+                  {/* Catch-all */}
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
               </AdminRoleProvider>
             </BrandProvider>
           </AuthProvider>

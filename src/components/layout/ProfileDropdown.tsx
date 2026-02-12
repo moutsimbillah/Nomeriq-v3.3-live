@@ -9,12 +9,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminRoleContext } from "@/contexts/AdminRoleContext";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export const ProfileDropdown = () => {
   const { profile, subscription, hasActiveSubscription, signOut, isAdmin } = useAuth();
+  const { adminRole } = useAdminRoleContext();
+  const isSignalProvider = adminRole === "signal_provider_admin";
   const navigate = useNavigate();
 
   const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || "User";
@@ -72,16 +75,18 @@ export const ProfileDropdown = () => {
             </div>
           )}
 
-          <div className="flex items-center gap-2 text-sm">
-            <CreditCard className="w-4 h-4 text-muted-foreground" />
-            <span className="text-muted-foreground">Subscription:</span>
-            <span className={cn(
-              "font-medium",
-              hasActiveSubscription ? "text-success" : "text-destructive"
-            )}>
-              {hasActiveSubscription ? "Active" : "Inactive"}
-            </span>
-          </div>
+          {!isSignalProvider && (
+            <div className="flex items-center gap-2 text-sm">
+              <CreditCard className="w-4 h-4 text-muted-foreground" />
+              <span className="text-muted-foreground">Subscription:</span>
+              <span className={cn(
+                "font-medium",
+                hasActiveSubscription ? "text-success" : "text-destructive"
+              )}>
+                {hasActiveSubscription ? "Active" : "Inactive"}
+              </span>
+            </div>
+          )}
 
           {profile?.account_balance !== null && profile?.account_balance !== undefined && (
             <div className="flex items-center gap-2 text-sm">

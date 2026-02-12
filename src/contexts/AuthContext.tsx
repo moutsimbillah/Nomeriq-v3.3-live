@@ -13,7 +13,7 @@ interface AuthContextType {
   isAdmin: boolean;
   hasActiveSubscription: boolean;
   needsBalanceSetup: boolean;
-  signUp: (email: string, password: string, firstName?: string, lastName?: string, phone?: string, country?: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, firstName?: string, lastName?: string, phone?: string, country?: string, telegramUsername?: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -95,6 +95,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Use a ref to track user ID to avoid stale closure issues in auth callback
   const currentUserIdRef = useRef<string | null>(null);
+  const currentAccessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
@@ -152,6 +153,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (event === 'SIGNED_OUT') {
           console.log('[AuthContext] User signed out');
           currentUserIdRef.current = null;
+          currentAccessTokenRef.current = null;
           setSession(null);
           setUser(null);
           setProfile(null);
@@ -171,8 +173,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           // Check email verification BEFORE allowing the session
           const isCustomVerified = session.user.user_metadata?.custom_email_verified === true;
 
-          console.log('[AuthContext] Checking verification for:', session.user.email, 'verified:', isCustomVerified, 'metadata:', session.user.user_metadata);
-
           if (!isCustomVerified) {
             console.log('[AuthContext] User not verified, signing out:', session.user.email);
             // Sign out unverified users immediately - don't set any state
@@ -184,18 +184,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           // Use ref to check if user actually changed (avoids stale closure issue)
           const userChanged = session.user.id !== currentUserIdRef.current;
 
-          console.log('[AuthContext] Auth event:', event, 'userChanged:', userChanged, 'currentUserId:', currentUserIdRef.current, 'newUserId:', session.user.id);
+          if (userChanged) {
+            console.log('[AuthContext] Auth event:', event, 'userChanged:', userChanged, 'newUserId:', session.user.id);
+          }
 
           // Update the ref immediately
           currentUserIdRef.current = session.user.id;
+          const tokenChanged = currentAccessTokenRef.current !== session.access_token;
+          currentAccessTokenRef.current = session.access_token;
 
           // Only set loading if user actually changed
           if (userChanged) {
             setIsLoading(true);
           }
 
-          setSession(session);
-          setUser(session.user);
+          // Avoid redundant rerenders on repeated SIGNED_IN events for same user/token
+          if (userChanged || tokenChanged) {
+            setSession(session);
+          }
+          if (userChanged) {
+            setUser(session.user);
+          }
 
           // Use setTimeout to avoid potential deadlock with Supabase
           setTimeout(() => {
@@ -208,6 +217,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }
           }, 0);
         } else {
+          currentUserIdRef.current = null;
+          currentAccessTokenRef.current = null;
           setSession(null);
           setUser(null);
           setProfile(null);
@@ -238,6 +249,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         setSession(session);
         setUser(session.user);
+        currentUserIdRef.current = session.user.id;
+        currentAccessTokenRef.current = session.access_token;
         await fetchUserData(session.user.id);
         setupRealtimeForUser(session.user.id);
       } else {
@@ -255,7 +268,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  const signUp = async (email: string, password: string, firstName?: string, lastName?: string, phone?: string, country?: string) => {
+  const signUp = async (email: string, password: string, firstName?: string, lastName?: string, phone?: string, country?: string, telegramUsername?: string) => {
     try {
       // Use signUp without email confirmation to prevent Supabase's built-in email
       // We'll send our own branded email via the send-verification-email edge function
@@ -269,6 +282,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             last_name: lastName,
             phone: phone,
             country: country,
+            telegram_username: telegramUsername,
           }
         }
       });
@@ -311,6 +325,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .from('profiles')
         .update({
           account_balance: balance,
+          starting_balance: balance,
           balance_set_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);

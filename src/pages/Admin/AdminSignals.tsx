@@ -14,7 +14,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
-import { sendTelegramSignal } from "@/lib/telegram";
+import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
+import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 const AdminSignals = () => {
   // Admins should never receive user-facing popups.
@@ -28,6 +29,9 @@ const AdminSignals = () => {
   const {
     user
   } = useAuth();
+  const visibleSignals = signals.filter(
+    (s) => s.signal_type === "upcoming" || s.status === "active"
+  );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSignalId, setEditingSignalId] = useState<string | null>(null);
   const [convertingSignalId, setConvertingSignalId] = useState<string | null>(null);
@@ -45,7 +49,9 @@ const AdminSignals = () => {
     analysisVideoUrl: "",
     analysisNotes: "",
     analysisImageUrl: "",
-    sendToTelegram: false
+    sendToTelegram: false,
+    sendUpdatesToTelegram: false,
+    sendClosedTradesToTelegram: false
   });
   const resetForm = () => {
     setFormData({
@@ -61,8 +67,47 @@ const AdminSignals = () => {
       analysisVideoUrl: "",
       analysisNotes: "",
       analysisImageUrl: "",
-      sendToTelegram: false
+      sendToTelegram: false,
+      sendUpdatesToTelegram: false,
+      sendClosedTradesToTelegram: false
     });
+  };
+  const validateDirectionalPriceSetup = (requireAll: boolean): string | null => {
+    const entry = formData.entry.trim() === "" ? null : Number(formData.entry);
+    const stopLoss = formData.stopLoss.trim() === "" ? null : Number(formData.stopLoss);
+    const takeProfit = formData.takeProfit.trim() === "" ? null : Number(formData.takeProfit);
+
+    if (requireAll && (entry === null || stopLoss === null || takeProfit === null)) {
+      return "Please fill in entry, stop loss, and take profit.";
+    }
+
+    if ((stopLoss !== null || takeProfit !== null) && entry === null) {
+      return "Entry price is required when stop loss or take profit is provided.";
+    }
+
+    if (entry !== null && !Number.isFinite(entry)) return "Invalid entry price.";
+    if (stopLoss !== null && !Number.isFinite(stopLoss)) return "Invalid stop loss price.";
+    if (takeProfit !== null && !Number.isFinite(takeProfit)) return "Invalid take profit price.";
+
+    if (entry !== null && stopLoss !== null) {
+      if (formData.direction === "BUY" && stopLoss >= entry) {
+        return "For BUY, stop loss must be strictly lower than entry price.";
+      }
+      if (formData.direction === "SELL" && stopLoss <= entry) {
+        return "For SELL, stop loss must be strictly higher than entry price.";
+      }
+    }
+
+    if (entry !== null && takeProfit !== null) {
+      if (formData.direction === "BUY" && takeProfit <= entry) {
+        return "For BUY, take profit must be strictly higher than entry price.";
+      }
+      if (formData.direction === "SELL" && takeProfit >= entry) {
+        return "For SELL, take profit must be strictly lower than entry price.";
+      }
+    }
+
+    return null;
   };
   const handleCreate = async () => {
     // Validate required fields - price fields only required for 'signal' type
@@ -70,8 +115,9 @@ const AdminSignals = () => {
       toast.error("Please fill in pair and category");
       return;
     }
-    if (formData.signalType === "signal" && (!formData.entry || !formData.stopLoss || !formData.takeProfit)) {
-      toast.error("Please fill in entry, stop loss, and take profit for active signals");
+    const createPriceError = validateDirectionalPriceSetup(formData.signalType === "signal");
+    if (createPriceError) {
+      toast.error(createPriceError);
       return;
     }
     setIsSubmitting(true);
@@ -92,7 +138,9 @@ const AdminSignals = () => {
         created_by: user?.id,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       });
       if (error) throw error;
 
@@ -125,16 +173,18 @@ const AdminSignals = () => {
       refetch();
     } catch (err: any) {
       console.error('Error creating signal:', err);
-      // Detailed error for debugging
-      const errorMessage = err?.message || err?.error_description || err?.details || JSON.stringify(err);
-
-      toast.error(`Error: ${errorMessage}`);
+      toast.error("Failed to create signal. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
   const handleEdit = async () => {
     if (!editingSignalId) return;
+    const editPriceError = validateDirectionalPriceSetup(formData.signalType === "signal");
+    if (editPriceError) {
+      toast.error(editPriceError);
+      return;
+    }
     setIsSubmitting(true);
     try {
       const {
@@ -151,7 +201,9 @@ const AdminSignals = () => {
         notes: formData.notes || null,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       }).eq('id', editingSignalId);
       if (error) throw error;
       toast.success("Signal updated successfully");
@@ -168,9 +220,9 @@ const AdminSignals = () => {
   const handleConvertToSignal = async () => {
     if (!convertingSignalId) return;
 
-    // Validate required fields for active signal
-    if (!formData.entry || !formData.stopLoss || !formData.takeProfit) {
-      toast.error("Please fill in entry, stop loss, and take profit");
+    const convertPriceError = validateDirectionalPriceSetup(true);
+    if (convertPriceError) {
+      toast.error(convertPriceError);
       return;
     }
     setIsSubmitting(true);
@@ -190,7 +242,9 @@ const AdminSignals = () => {
         notes: formData.notes || null,
         analysis_video_url: formData.analysisVideoUrl || null,
         analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null
+        analysis_image_url: formData.analysisImageUrl || null,
+        send_updates_to_telegram: formData.sendUpdatesToTelegram,
+        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
       }).eq('id', convertingSignalId);
       if (error) throw error;
 
@@ -243,6 +297,7 @@ const AdminSignals = () => {
   };
   const updateStatus = async (id: string, status: string) => {
     try {
+      const signal = signals.find((s) => s.id === id);
       const {
         error
       } = await supabase.from('signals').update({
@@ -250,6 +305,27 @@ const AdminSignals = () => {
         closed_at: status !== 'active' ? new Date().toISOString() : null
       }).eq('id', id);
       if (error) throw error;
+      if (
+        signal &&
+        signal.send_closed_trades_to_telegram &&
+        (status === "tp_hit" || status === "sl_hit" || status === "breakeven")
+      ) {
+        const closedStatus = status as "tp_hit" | "sl_hit" | "breakeven";
+        const res = await sendTelegramTradeClosed({
+          signal: {
+            pair: signal.pair,
+            category: signal.category,
+            direction: signal.direction,
+            entry_price: signal.entry_price,
+            stop_loss: signal.stop_loss,
+            take_profit: signal.take_profit,
+            status: closedStatus,
+          },
+        });
+        if (res.ok === false) {
+          toast.error(`Telegram close event failed: ${res.error}`);
+        }
+      }
       toast.success(`Signal marked as ${status.replace('_', ' ')}`);
       refetch();
     } catch (err) {
@@ -271,7 +347,9 @@ const AdminSignals = () => {
       analysisVideoUrl: signal.analysis_video_url || "",
       analysisNotes: signal.analysis_notes || "",
       analysisImageUrl: signal.analysis_image_url || "",
-      sendToTelegram: false
+      sendToTelegram: false,
+      sendUpdatesToTelegram: signal.send_updates_to_telegram ?? false,
+      sendClosedTradesToTelegram: signal.send_closed_trades_to_telegram ?? false
     });
     setEditingSignalId(signal.id);
   };
@@ -290,7 +368,9 @@ const AdminSignals = () => {
       analysisVideoUrl: signal.analysis_video_url || "",
       analysisNotes: signal.analysis_notes || "",
       analysisImageUrl: signal.analysis_image_url || "",
-      sendToTelegram: false
+      sendToTelegram: false,
+      sendUpdatesToTelegram: signal.send_updates_to_telegram ?? false,
+      sendClosedTradesToTelegram: signal.send_closed_trades_to_telegram ?? false
     });
     setConvertingSignalId(signal.id);
   };
@@ -394,7 +474,7 @@ const AdminSignals = () => {
     <div className="glass-card overflow-hidden shadow-none">
       {isLoading ? <div className="flex items-center justify-center py-12">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div> : signals.length === 0 ? <div className="text-center py-12 text-muted-foreground">
+      </div> : visibleSignals.length === 0 ? <div className="text-center py-12 text-muted-foreground">
         <p>No signals yet. Create your first signal!</p>
       </div> : <div className="overflow-x-auto">
         <table className="w-full">
@@ -406,11 +486,12 @@ const AdminSignals = () => {
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Entry</th>
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">SL / TP</th>
               <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Status</th>
+              <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Updates</th>
               <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/30">
-            {signals.map(signal => <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
+            {visibleSignals.map(signal => <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
               <td className="px-6 py-4">
                 <div>
                   <p className="font-semibold">{signal.pair}</p>
@@ -442,6 +523,17 @@ const AdminSignals = () => {
                   {getStatusDisplay(signal)}
                 </Badge>
               </td>
+              <td className="px-6 py-4 text-center">
+                {signal.signal_type === "signal" ? (
+                  <SignalTakeProfitUpdatesDialog
+                    signal={signal as any}
+                    currentUserId={user?.id || ""}
+                    disabled={signal.status !== "active"}
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">-</span>
+                )}
+              </td>
               <td className="px-6 py-4">
                 <div className="flex items-center justify-end gap-2">
                   {/* Convert to Signal button for upcoming trades */}
@@ -452,8 +544,8 @@ const AdminSignals = () => {
                         Activate
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-h-[90vh] p-0">
-                      <ScrollArea className="h-full w-full">
+                    <DialogContent className="max-h-[90vh] overflow-hidden p-0">
+                      <ScrollArea className="h-[85vh] w-full">
                         <div className="p-6">
                           <DialogHeader>
                             <DialogTitle>Convert to Active Signal</DialogTitle>
@@ -495,12 +587,16 @@ const AdminSignals = () => {
                             <Pencil className="w-4 h-4" />
                           </Button>
                         </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Edit Upcoming Trade</DialogTitle>
-                            <DialogDescription>Update the upcoming trade details before publishing.</DialogDescription>
-                          </DialogHeader>
-                          <AdminSignalForm categories={categories} formData={formData} setFormData={setFormData} isSubmitting={isSubmitting} onSubmit={handleEdit} submitLabel="Update" />
+                        <DialogContent className="max-h-[90vh] p-0">
+                          <ScrollArea className="max-h-[85vh]">
+                            <div className="p-6">
+                              <DialogHeader>
+                                <DialogTitle>Edit Upcoming Trade</DialogTitle>
+                                <DialogDescription>Update the upcoming trade details before publishing.</DialogDescription>
+                              </DialogHeader>
+                              <AdminSignalForm categories={categories} formData={formData} setFormData={setFormData} isSubmitting={isSubmitting} onSubmit={handleEdit} submitLabel="Update" showTelegramOption={true} />
+                            </div>
+                          </ScrollArea>
                         </DialogContent>
                       </Dialog>
                       <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => handleDelete(signal.id)}>

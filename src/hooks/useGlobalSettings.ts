@@ -12,6 +12,13 @@ interface GlobalSettings {
   support_phone: string | null;
   timezone: string;
   updated_at: string;
+  // Payment method configuration (optional for backward compatibility)
+  enable_usdt_trc20?: boolean;
+  enable_bank_transfer?: boolean;
+  enable_stripe?: boolean;
+  bank_account_name?: string | null;
+  bank_account_number?: string | null;
+  bank_name?: string | null;
 }
 
 export const useGlobalSettings = () => {
@@ -28,7 +35,7 @@ export const useGlobalSettings = () => {
         .maybeSingle();
 
       if (fetchError) throw fetchError;
-      setSettings(data as GlobalSettings);
+      setSettings(data as GlobalSettings | null);
       setError(null);
     } catch (err) {
       setError(err as Error);
@@ -63,14 +70,25 @@ export const useGlobalSettings = () => {
   }, [fetchSettings]);
 
   const updateSettings = async (updates: Partial<GlobalSettings>) => {
-    if (!settings) return;
-    
+    if (!settings) {
+      console.error('Cannot update settings: settings is null');
+      throw new Error('Settings not loaded');
+    }
+
+    console.log('Updating settings with:', updates);
+
     const { error } = await supabase
       .from('global_settings')
       .update(updates)
       .eq('id', settings.id);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase update error:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
+      throw error;
+    }
+
+    console.log('Settings updated successfully');
     await fetchSettings();
   };
 

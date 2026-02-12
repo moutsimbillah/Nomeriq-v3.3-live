@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,18 +47,18 @@ const ForgotPassword = () => {
   return (
     <AuthLayout
       alternateAction={{
-        text: "Remember your password?",
+        text: "Back to",
         linkText: "Sign In",
         href: "/login",
       }}
     >
-      <div className="glass p-8 sm:p-10">
+      <div className="rounded-2xl border border-border/50 bg-background/70 backdrop-blur-xl p-8 sm:p-10 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.6)]">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 mb-5">
             <Mail className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight mb-2">Forgot Password?</h1>
+          <h1 className="text-2xl font-bold tracking-tight mb-2">Reset Password</h1>
           <p className="text-sm text-muted-foreground">
             Enter your email and we'll send you a reset code
           </p>
@@ -83,7 +83,7 @@ const ForgotPassword = () => {
 
           <Button
             type="submit"
-            className="w-full h-12 font-medium text-base"
+            className="w-full h-12 font-medium text-base text-white"
             disabled={isLoading}
           >
             {isLoading ? (
@@ -101,9 +101,9 @@ const ForgotPassword = () => {
         <div className="mt-8 pt-6 border-t border-border/50 text-center">
           <p className="text-sm text-muted-foreground">
             Remember your password?{" "}
-            <a href="/login" className="text-primary hover:text-primary/80 font-medium transition-colors">
+            <Link to="/login" className="text-primary hover:text-primary/80 font-medium transition-colors">
               Sign in
-            </a>
+            </Link>
           </p>
         </div>
       </div>

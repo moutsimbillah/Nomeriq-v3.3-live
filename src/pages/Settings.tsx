@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,15 +24,11 @@ import {
   CheckCircle2,
   ArrowRight,
   Globe,
-  Clock,
-  Languages,
-  DollarSign,
-  Bell,
   Shield,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminRoleContext } from "@/contexts/AdminRoleContext";
-import { useGlobalSettings } from "@/hooks/useGlobalSettings";
+import { useSubscriptionPackages, useUserSubscriptions } from "@/hooks/useSubscriptionPackages";
 import { cn } from "@/lib/utils";
 import { differenceInDays } from "date-fns";
 
@@ -41,13 +36,9 @@ const Settings = () => {
   const navigate = useNavigate();
   const { user, subscription, hasActiveSubscription } = useAuth();
   const { adminRole } = useAdminRoleContext();
-  const { settings } = useGlobalSettings();
-
-  const [notifications, setNotifications] = useState({
-    liveSignalAlerts: true,
-    executionReports: true,
-    weeklyInsights: false,
-  });
+  const isSignalProvider = adminRole === "signal_provider_admin";
+  const { packages } = useSubscriptionPackages();
+  const { activeSubscriptions } = useUserSubscriptions();
 
   const [phoneNumber, setPhoneNumber] = useState("");
   const [isLoadingPhone, setIsLoadingPhone] = useState(true);
@@ -56,9 +47,45 @@ const Settings = () => {
   const [isLoadingCountry, setIsLoadingCountry] = useState(true);
 
   const [username, setUsername] = useState("");
+  const [telegramUsername, setTelegramUsername] = useState("");
   const [fullName, setFullName] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSendingPasswordReset, setIsSendingPasswordReset] = useState(false);
   const { toast } = useToast();
+
+  const handleChangePassword = async () => {
+    if (!user?.email) {
+      toast({
+        title: "Email not found",
+        description: "No account email found for password reset.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSendingPasswordReset(true);
+      const { error } = await supabase.functions.invoke("send-password-reset", {
+        body: { email: user.email },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Verification code sent",
+        description: "Check your inbox for the 6-digit code to reset your password.",
+      });
+      navigate("/reset-password", { state: { email: user.email } });
+    } catch (error: any) {
+      console.error("Error sending password reset code:", error);
+      toast({
+        title: "Failed to send verification code",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingPasswordReset(false);
+    }
+  };
 
   // Fetch phone number and country from profile
   useEffect(() => {
@@ -68,7 +95,7 @@ const Settings = () => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('phone, country, username, first_name, last_name')
+          .select('phone, country, username, telegram_username, first_name, last_name')
           .eq('user_id', user.id)
           .single();
 
@@ -85,6 +112,9 @@ const Settings = () => {
         if (profileData?.username) {
           setUsername(profileData.username);
         }
+        if (profileData?.telegram_username) {
+          setTelegramUsername(profileData.telegram_username);
+        }
         if (profileData?.first_name || profileData?.last_name) {
           setFullName(`${profileData.first_name || ''} ${profileData.last_name || ''}`.trim());
         } else if (user?.user_metadata?.full_name) {
@@ -100,12 +130,6 @@ const Settings = () => {
 
     fetchProfile();
   }, [user?.id]);
-
-  const [systemPreferences, setSystemPreferences] = useState({
-    currency: "USD",
-    timezone: "UTC-5 (New York)",
-    language: "English (US)",
-  });
 
   const userDisplayName = user?.user_metadata?.first_name
     ? `${user.user_metadata.first_name} ${user.user_metadata.last_name || ""}`
@@ -173,8 +197,27 @@ const Settings = () => {
     };
   })();
 
-  const subscriptionPrice = settings?.subscription_price || 10;
-  const subscriptionTier = hasActiveSubscription ? "INSTITUTIONAL PRO" : "FREE";
+  const currentActiveSubscription = activeSubscriptions[0] ?? null;
+  const currentPlan = useMemo(() => {
+    if (!currentActiveSubscription?.package_id) return null;
+    return packages.find((p) => p.id === currentActiveSubscription.package_id) ?? null;
+  }, [packages, currentActiveSubscription?.package_id]);
+
+  const subscriptionPrice = currentPlan ? Number(currentPlan.price) : 0;
+  const subscriptionTier = isSignalProvider
+    ? "SIGNAL PROVIDER"
+    : hasActiveSubscription
+      ? (currentPlan?.name?.toUpperCase() || "ACTIVE PLAN")
+      : "FREE";
+  const subscriptionDurationLabel = currentPlan
+    ? currentPlan.duration_type === "lifetime"
+      ? "/lifetime"
+      : currentPlan.duration_type === "yearly"
+      ? "/yr"
+      : "/mo"
+    : "";
+  const currentPlanFeatures = currentPlan?.features?.slice(0, 3) ?? [];
+  const currentPlanCategories = currentPlan?.categories ?? [];
 
   return (
     <DashboardLayout title="">
@@ -232,63 +275,7 @@ const Settings = () => {
                     <User className="w-5 h-5 text-primary" />
                     <h2 className="text-lg font-semibold">Personal Information</h2>
                   </div>
-                  <Button
-                    variant="link"
-                    className="text-primary h-auto p-0 text-sm"
-                    onClick={() => {
-                      const handleSaveChanges = async () => {
-                        if (!user?.id) return;
-                        setIsSaving(true);
-                        try {
-                          const [firstName, ...lastNameParts] = fullName.split(' ');
-                          const lastName = lastNameParts.join(' ');
-
-                          const { error } = await supabase
-                            .from('profiles')
-                            .update({
-                              first_name: firstName,
-                              last_name: lastName,
-                              phone: phoneNumber,
-                              country: country
-                            })
-                            .eq('user_id', user.id);
-
-                          if (error) throw error;
-
-                          // Also update auth metadata for consistency
-                          await supabase.auth.updateUser({
-                            data: {
-                              first_name: firstName,
-                              last_name: lastName,
-                              phone: phoneNumber,
-                              country: country,
-                              full_name: fullName
-                            }
-                          });
-
-                          toast({
-                            title: "Profile updated",
-                            description: "Your personal information has been saved successfully.",
-                            variant: "default",
-                            className: "bg-success border-success text-white"
-                          });
-                        } catch (error) {
-                          console.error('Error saving profile:', error);
-                          toast({
-                            title: "Error",
-                            description: "Failed to save profile. Please try again.",
-                            variant: "destructive",
-                          });
-                        } finally {
-                          setIsSaving(false);
-                        }
-                      };
-                      handleSaveChanges();
-                    }}
-                    disabled={isSaving}
-                  >
-                    {isSaving ? "Saving..." : "Save Changes"}
-                  </Button>
+                  {/* Save button removed as per requirement to disable editing */}
                 </div>
               </div>
               <CardContent className="p-6">
@@ -301,8 +288,9 @@ const Settings = () => {
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <Input
                         value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        className="pl-10 bg-secondary/30 border-border/50"
+                        readOnly
+                        disabled
+                        className="pl-10 bg-secondary/30 border-border/50 cursor-not-allowed opacity-70"
                         placeholder="Enter your full name"
                       />
                     </div>
@@ -315,7 +303,9 @@ const Settings = () => {
                       <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <Input
                         defaultValue={userEmail}
-                        className="pl-10 bg-secondary/30 border-border/50"
+                        readOnly
+                        disabled
+                        className="pl-10 bg-secondary/30 border-border/50 cursor-not-allowed opacity-70"
                       />
                     </div>
                   </div>
@@ -329,7 +319,7 @@ const Settings = () => {
                         value={username || ""}
                         readOnly={true}
                         disabled={true}
-                        className="pl-8 bg-secondary/30 border-border/50"
+                        className="pl-8 bg-secondary/30 border-border/50 cursor-not-allowed opacity-70"
                         placeholder="Not set"
                       />
                     </div>
@@ -342,19 +332,34 @@ const Settings = () => {
                       <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                       <Input
                         value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        readOnly
+                        disabled
                         placeholder="Add phone number"
-                        className="pl-10 bg-secondary/30 border-border/50"
-                        disabled={isLoadingPhone}
+                        className="pl-10 bg-secondary/30 border-border/50 cursor-not-allowed opacity-70"
                       />
                     </div>
                   </div>
-                  <div className="space-y-2 md:col-span-2">
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+                      Telegram Username
+                    </Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">@</span>
+                      <Input
+                        value={(telegramUsername || "").replace(/^@/, "")}
+                        readOnly
+                        disabled
+                        placeholder="Not set"
+                        className="pl-8 bg-secondary/30 border-border/50 cursor-not-allowed opacity-70"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground uppercase tracking-wide">
                       Country
                     </Label>
-                    <Select value={country} onValueChange={setCountry}>
-                      <SelectTrigger className="bg-secondary/30 border-border/50">
+                    <Select value={country} disabled>
+                      <SelectTrigger className="bg-secondary/30 border-border/50 cursor-not-allowed opacity-70">
                         <SelectValue placeholder="Select your country" />
                       </SelectTrigger>
                       <SelectContent className="max-h-[300px]">
@@ -367,93 +372,11 @@ const Settings = () => {
                     </Select>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            {/* System Preferences */}
-            <Card className="border-border/50">
-              <div className="p-4 border-b border-border/50">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-primary" />
-                  <h2 className="text-lg font-semibold">System Preferences</h2>
-                </div>
-              </div>
-              <CardContent className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                      Default Currency
-                    </Label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
-                      <Select
-                        value={systemPreferences.currency}
-                        onValueChange={(value) =>
-                          setSystemPreferences({ ...systemPreferences, currency: value })
-                        }
-                      >
-                        <SelectTrigger className="pl-10 bg-secondary/30 border-border/50">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="USD">USD</SelectItem>
-                          <SelectItem value="EUR">EUR</SelectItem>
-                          <SelectItem value="GBP">GBP</SelectItem>
-                          <SelectItem value="JPY">JPY</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                      Trading Timezone
-                    </Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
-                      <Select
-                        value={systemPreferences.timezone}
-                        onValueChange={(value) =>
-                          setSystemPreferences({ ...systemPreferences, timezone: value })
-                        }
-                      >
-                        <SelectTrigger className="pl-10 bg-secondary/30 border-border/50">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="UTC-5 (New York)">UTC-5 (New York)</SelectItem>
-                          <SelectItem value="UTC+0 (London)">UTC+0 (London)</SelectItem>
-                          <SelectItem value="UTC+1 (Paris)">UTC+1 (Paris)</SelectItem>
-                          <SelectItem value="UTC+8 (Singapore)">UTC+8 (Singapore)</SelectItem>
-                          <SelectItem value="UTC+9 (Tokyo)">UTC+9 (Tokyo)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                      Interface Language
-                    </Label>
-                    <div className="relative">
-                      <Languages className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground z-10" />
-                      <Select
-                        value={systemPreferences.language}
-                        onValueChange={(value) =>
-                          setSystemPreferences({ ...systemPreferences, language: value })
-                        }
-                      >
-                        <SelectTrigger className="pl-10 bg-secondary/30 border-border/50">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="English (US)">English (US)</SelectItem>
-                          <SelectItem value="English (UK)">English (UK)</SelectItem>
-                          <SelectItem value="Spanish">Spanish</SelectItem>
-                          <SelectItem value="French">French</SelectItem>
-                          <SelectItem value="German">German</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+                <div className="mt-4 p-3 bg-primary/10 border border-primary/20 rounded-md">
+                  <p className="text-xs text-primary flex items-center gap-2">
+                    <Shield className="w-3 h-3" />
+                    Profile details are managed by administrators. Contact support to update your information.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -468,124 +391,106 @@ const Settings = () => {
               </div>
               <CardContent className="p-6">
                 <div className="space-y-4">
-                  <Button variant="outline" className="w-full justify-start">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={handleChangePassword}
+                    disabled={isSendingPasswordReset}
+                  >
                     <Shield className="w-4 h-4 mr-2" />
-                    Change Password
-                  </Button>
-                  <Button variant="outline" className="w-full justify-start">
-                    <Shield className="w-4 h-4 mr-2" />
-                    Two-Factor Authentication
-                  </Button>
-                  <Button variant="outline" className="w-full justify-start text-destructive hover:text-destructive">
-                    <Shield className="w-4 h-4 mr-2" />
-                    Manage Sessions
+                    {isSendingPasswordReset ? "Sending verification code..." : "Change Password"}
                   </Button>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Right Column - Subscription & Alerts */}
+          {/* Right Column - Alerts (subscription section hidden for signal providers) */}
           <div className="space-y-6">
-            {/* Subscription Card */}
-            <Card className="border-border/50 bg-gradient-to-br from-primary/5 to-transparent">
-              <div className="p-4 border-b border-border/50">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Globe className="w-5 h-5 text-primary" />
-                    <h2 className="text-lg font-semibold">Subscription</h2>
+            {!isSignalProvider && (
+              <Card className="border-border/50 bg-gradient-to-br from-primary/5 to-transparent">
+                <div className="p-4 border-b border-border/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-5 h-5 text-primary" />
+                      <h2 className="text-lg font-semibold">Subscription</h2>
+                    </div>
+                    <Badge
+                      className={cn(
+                        "text-xs font-semibold",
+                        subscriptionInfo.status === "active"
+                          ? "bg-success/20 text-success border-success/30"
+                          : "bg-destructive/20 text-destructive border-destructive/30"
+                      )}
+                    >
+                      {subscriptionInfo.statusText}
+                    </Badge>
                   </div>
-                  <Badge
-                    className={cn(
-                      "text-xs font-semibold",
-                      subscriptionInfo.status === "active"
-                        ? "bg-success/20 text-success border-success/30"
-                        : "bg-destructive/20 text-destructive border-destructive/30"
+                </div>
+                <CardContent className="p-6 space-y-6">
+                  <div>
+                    <div className="text-sm text-muted-foreground mb-1">TIME REMAINING</div>
+                    <div className="text-2xl font-bold mb-4">{subscriptionInfo.daysText}</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-4xl font-bold text-primary">
+                        {hasActiveSubscription ? `$${subscriptionPrice}` : "$0"}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {hasActiveSubscription ? subscriptionDurationLabel : ""}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                      Plan Categories
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentPlanCategories.length > 0 ? (
+                        currentPlanCategories.map((category) => (
+                          <Badge
+                            key={category}
+                            variant="outline"
+                            className="h-6 rounded-full px-2.5 py-0 text-[11px] font-medium leading-none"
+                          >
+                            {category}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {hasActiveSubscription ? "No categories configured" : "No active plan"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {currentPlanFeatures.length > 0 ? (
+                      currentPlanFeatures.map((feature) => (
+                        <div key={feature.id} className="flex items-center gap-2 text-sm">
+                          <CheckCircle2 className="w-4 h-4 text-success" />
+                          <span>{feature.feature_text}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+                        <span>{hasActiveSubscription ? "Plan features unavailable" : "No active subscription plan"}</span>
+                      </div>
                     )}
+                  </div>
+
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90 text-white"
+                    onClick={() => navigate("/subscription")}
                   >
-                    {subscriptionInfo.statusText}
-                  </Badge>
-                </div>
-              </div>
-              <CardContent className="p-6 space-y-6">
-                <div>
-                  <div className="text-sm text-muted-foreground mb-1">TIME REMAINING</div>
-                  <div className="text-2xl font-bold mb-4">{subscriptionInfo.daysText}</div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-bold text-primary">${subscriptionPrice}</span>
-                    <span className="text-muted-foreground">/mo</span>
-                  </div>
-                </div>
+                    {hasActiveSubscription ? "Upgrade Subscription" : "Choose Subscription"}
+                    <ArrowRight className="w-4 h-4 ml-2 text-white" />
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
 
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-success" />
-                    <span>Institutional Speed Signals</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-success" />
-                    <span>Advanced Performance Analytics</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-success" />
-                    <span>Unlimited Trade Journaling</span>
-                  </div>
-                </div>
-
-                <Button
-                  className="w-full bg-primary hover:bg-primary/90"
-                  onClick={() => navigate("/subscription")}
-                >
-                  Upgrade Subscription
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Alerts */}
-            <Card className="border-border/50">
-              <div className="p-4 border-b border-border/50">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-5 h-5 text-primary" />
-                  <h2 className="text-lg font-semibold">Alerts</h2>
-                </div>
-              </div>
-              <CardContent className="p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium">Live Signal Alerts</div>
-                  </div>
-                  <Switch
-                    checked={notifications.liveSignalAlerts}
-                    onCheckedChange={(checked) =>
-                      setNotifications({ ...notifications, liveSignalAlerts: checked })
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium">Execution Reports</div>
-                  </div>
-                  <Switch
-                    checked={notifications.executionReports}
-                    onCheckedChange={(checked) =>
-                      setNotifications({ ...notifications, executionReports: checked })
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium">Weekly Insights</div>
-                  </div>
-                  <Switch
-                    checked={notifications.weeklyInsights}
-                    onCheckedChange={(checked) =>
-                      setNotifications({ ...notifications, weeklyInsights: checked })
-                    }
-                  />
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAdminRoleContext } from '@/contexts/AdminRoleContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
@@ -17,6 +18,8 @@ export const ProtectedRoute = ({
   requireAdmin = false,
 }: ProtectedRouteProps) => {
   const { user, isLoading, hasActiveSubscription, isAdmin } = useAuth();
+  const { adminRole } = useAdminRoleContext();
+  const isSignalProvider = adminRole === 'signal_provider_admin';
   const location = useLocation();
   const { toast } = useToast();
   const [hasHandledUnverified, setHasHandledUnverified] = useState(false);
@@ -62,7 +65,7 @@ export const ProtectedRoute = ({
     return <Navigate to="/dashboard" replace />;
   }
 
-  if (requireSubscription && !hasActiveSubscription && !isAdmin) {
+  if (requireSubscription && !hasActiveSubscription && !isAdmin && !isSignalProvider) {
     return <Navigate to="/subscription" replace />;
   }
 

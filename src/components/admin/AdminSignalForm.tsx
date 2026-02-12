@@ -37,6 +37,8 @@ export interface AdminSignalFormData {
   analysisImageUrl: string;
   // Telegram option
   sendToTelegram: boolean;
+  sendUpdatesToTelegram: boolean;
+  sendClosedTradesToTelegram: boolean;
 }
 
 interface AdminSignalFormProps {
@@ -165,9 +167,16 @@ export const AdminSignalForm = React.memo(
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="space-y-2">
+        <div className="space-y-1">
+          <Label className="text-sm font-medium">Price Setup</Label>
+          {isUpcoming && (
+            <p className="text-xs text-muted-foreground">All fields optional for upcoming trade</p>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="space-y-2">
-          <Label>{isUpcoming ? "Entry Price (Optional)" : "Entry Price"}</Label>
+          <Label className="block text-xs uppercase tracking-wide text-muted-foreground">Entry Price</Label>
           <Input
             type="number"
             step="any"
@@ -179,7 +188,7 @@ export const AdminSignalForm = React.memo(
         </div>
 
         <div className="space-y-2">
-          <Label>{isUpcoming ? "Stop Loss (Optional)" : "Stop Loss"}</Label>
+          <Label className="block text-xs uppercase tracking-wide text-muted-foreground">Stop Loss</Label>
           <Input
             type="number"
             step="any"
@@ -191,7 +200,7 @@ export const AdminSignalForm = React.memo(
         </div>
 
         <div className="space-y-2">
-          <Label>{isUpcoming ? "Take Profit (Optional)" : "Take Profit"}</Label>
+          <Label className="block text-xs uppercase tracking-wide text-muted-foreground">Take Profit</Label>
           <Input
             type="number"
             step="any"
@@ -201,6 +210,7 @@ export const AdminSignalForm = React.memo(
             className="bg-secondary/50"
           />
         </div>
+      </div>
       </div>
 
       {/* Notes - especially useful for upcoming */}
@@ -226,23 +236,61 @@ export const AdminSignalForm = React.memo(
 
       {/* Telegram Option */}
       {showTelegramOption && (
-        <div className="flex items-center space-x-3 p-4 rounded-lg bg-secondary/30 border border-border/50">
-          <Checkbox
-            id="send-telegram"
-            checked={formData.sendToTelegram}
-            onCheckedChange={(checked) => 
-              setFormData((prev) => ({ ...prev, sendToTelegram: checked === true }))
-            }
-          />
-          <div className="flex-1">
-            <Label htmlFor="send-telegram" className="text-sm font-medium cursor-pointer">
-              Send to Telegram
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              Send this signal to your configured Telegram group
-            </p>
+        <div className="space-y-3 p-4 rounded-lg bg-secondary/30 border border-border/50">
+          <div className="flex items-center space-x-3">
+            <Checkbox
+              id="send-telegram"
+              checked={formData.sendToTelegram}
+              onCheckedChange={(checked) => 
+                setFormData((prev) => ({ ...prev, sendToTelegram: checked === true }))
+              }
+            />
+            <div className="flex-1">
+              <Label htmlFor="send-telegram" className="text-sm font-medium cursor-pointer">
+                Send Signal to Telegram
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Send this signal to your configured Telegram group
+              </p>
+            </div>
+            <Send className="w-4 h-4 text-muted-foreground" />
           </div>
-          <Send className="w-4 h-4 text-muted-foreground" />
+
+          <div className="flex items-center space-x-3">
+            <Checkbox
+              id="send-updates-telegram"
+              checked={formData.sendUpdatesToTelegram}
+              onCheckedChange={(checked) =>
+                setFormData((prev) => ({ ...prev, sendUpdatesToTelegram: checked === true }))
+              }
+            />
+            <div className="flex-1">
+              <Label htmlFor="send-updates-telegram" className="text-sm font-medium cursor-pointer">
+                Send Updates to Telegram
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Send TP update events for this signal to matching Telegram categories
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <Checkbox
+              id="send-closed-telegram"
+              checked={formData.sendClosedTradesToTelegram}
+              onCheckedChange={(checked) =>
+                setFormData((prev) => ({ ...prev, sendClosedTradesToTelegram: checked === true }))
+              }
+            />
+            <div className="flex-1">
+              <Label htmlFor="send-closed-telegram" className="text-sm font-medium cursor-pointer">
+                Send Closed Trades to Telegram
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Send TP/SL/Breakeven close events for this signal to matching Telegram categories
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

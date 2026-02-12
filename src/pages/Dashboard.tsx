@@ -2,7 +2,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { EquityChart } from "@/components/dashboard/EquityChart";
 import { ActiveTradesTable } from "@/components/dashboard/ActiveTradesTable";
-import { RecentSignals } from "@/components/dashboard/RecentSignals";
+import { PerformanceBySessionDay } from "@/components/dashboard/PerformanceBySessionDay";
 import { UpcomingTradesSection } from "@/components/dashboard/UpcomingTradesSection";
 import { TradeHistorySection } from "@/components/dashboard/TradeHistorySection";
 import { PerformanceAnalytics } from "@/components/dashboard/PerformanceAnalytics";
@@ -20,6 +20,8 @@ import {
   Percent,
   User,
 } from "lucide-react";
+import { useDashboardLayout, DashboardSectionId } from "@/hooks/useDashboardLayout";
+import { DashboardCustomizer } from "@/components/dashboard/DashboardCustomizer";
 
 const Dashboard = () => {
   const { stats, isLoading: statsLoading, isProvider } = useProviderAwareTradeStats();
@@ -34,29 +36,12 @@ const Dashboard = () => {
   // Calculate unrealized P&L from active trades (simplified - would need real price data)
   const unrealizedPnL = stats.totalPnL > 0 ? stats.totalPnL : 0;
 
-  return (
-    <DashboardLayout title="Dashboard">
-      {/* Provider Mode Indicator */}
-      {isProvider && (
-        <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20 flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/20">
-            <User className="w-5 h-5 text-primary" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-primary">Provider Mode Active</h3>
-              <Badge variant="outline" className="text-xs border-primary/30 text-primary">
-                {adminRole === 'super_admin' ? 'Super Admin' : 'Signal Provider'}
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              All data shown is filtered to your own signals and trades only.
-            </p>
-          </div>
-        </div>
-      )}
-      
-      {/* Stats Grid */}
+  const { sections, updateOrder, resetLayout, isLoaded } = useDashboardLayout();
+
+  if (!isLoaded) return null;
+
+  const sectionContent: Record<DashboardSectionId, React.ReactNode> = {
+    'stats': (
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-8">
         <StatCard
           title="Total Trades"
@@ -107,41 +92,85 @@ const Dashboard = () => {
           iconColor="text-warning"
         />
       </div>
-
-      {/* Active Trades */}
+    ),
+    'active-trades': (
       <div className="mb-8">
         <ActiveTradesTable />
       </div>
-
-      {/* Upcoming Trades */}
+    ),
+    'upcoming-trades': (
       <div className="mb-8">
         <UpcomingTradesSection />
       </div>
-
-      {/* Trading Performance Calendar */}
+    ),
+    'calendar': (
       <div className="mb-8">
         <CalendarSection />
       </div>
-
-      {/* Performance Analytics */}
+    ),
+    'performance-analytics': (
       <div className="mb-8">
         <PerformanceAnalytics />
       </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
-        <div className="xl:col-span-2">
+    ),
+    'charts-and-signals': (
+      <div className="grid grid-cols-1 xl:grid-cols-3 items-stretch gap-6 mb-8">
+        <div className="xl:col-span-2 h-full">
           <EquityChart />
         </div>
         <div className="h-full">
-          <RecentSignals />
+          <PerformanceBySessionDay />
         </div>
       </div>
-
-      {/* Trade History */}
+    ),
+    'trade-history': (
       <div className="mb-8">
         <TradeHistorySection />
       </div>
+    )
+  };
+
+  return (
+    <DashboardLayout
+      title="Dashboard"
+      subtitle={`Welcome back, ${profile?.first_name ? `${profile.first_name} ${profile.last_name || ''}` : 'Trader'}. Here's your performance summary.`}
+      action={
+        <DashboardCustomizer
+          sections={sections}
+          onReorder={updateOrder}
+          onReset={resetLayout}
+        />
+      }
+    >
+      {/* Provider Mode Indicator */}
+      {isProvider && (
+        <div className="mb-6 p-4 rounded-xl bg-primary/10 border border-primary/20 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/20">
+            <User className="w-5 h-5 text-primary" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-primary">Provider Mode Active</h3>
+              <Badge variant="outline" className="text-xs border-primary/30 text-primary">
+                {adminRole === 'super_admin' ? 'Super Admin' : 'Signal Provider'}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              All data shown is filtered to your own signals and trades only.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Sections */}
+      {sections.map(section => {
+        if (!section.enabled) return null;
+        return (
+          <div key={section.id}>
+            {sectionContent[section.id]}
+          </div>
+        );
+      })}
 
       {/* Disclaimer */}
       <div className="mt-8 p-4 rounded-xl bg-warning/10 border border-warning/20">
