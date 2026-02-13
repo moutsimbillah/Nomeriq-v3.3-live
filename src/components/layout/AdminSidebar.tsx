@@ -2,7 +2,8 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
-  Signal,
+  Activity,
+  TrendingUp,
   Users,
   CreditCard,
   Settings,
@@ -11,12 +12,12 @@ import {
   X,
   ShieldCheck,
   Tag,
-  BarChart3,
   Crown,
   Palette,
   Send,
   ArrowLeft,
   History,
+  Clock,
   FileText,
   Mail,
 } from "lucide-react";
@@ -25,7 +26,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { useTheme } from "@/hooks/useTheme";
-import { supabase } from "@/integrations/supabase/client";
+import { useAdminRole } from "@/hooks/useAdminRole";
 import { AdminRole } from "@/types/database";
 import { LogoIcon } from "@/components/icons/TradingIcons";
 
@@ -54,36 +55,35 @@ const navItems: NavItem[] = [
   },
   // Provider-specific Signals
   {
-    icon: Signal,
-    label: "My Signals",
+    icon: Activity,
+    label: "Live Trades",
     path: "/admin/provider-signals",
     allowedRoles: ['signal_provider_admin']
   },
 
   // Global Trade Stats (Super Admin only - sees all providers)
   {
-    icon: Signal,
+    icon: Activity,
+    label: "Live Trades",
+    path: "/admin/signals",
+    allowedRoles: ['super_admin']
+  },
+  {
+    icon: TrendingUp,
     label: "Active Trades",
     path: "/admin/active-trades",
     allowedRoles: ['super_admin']
   },
   {
+    icon: Clock,
+    label: "Upcoming Trades",
+    path: "/admin/upcoming-trades",
+    allowedRoles: ['super_admin']
+  },
+  {
     icon: History,
-    label: "Trade History",
+    label: "Trades History",
     path: "/admin/history",
-    allowedRoles: ['super_admin']
-  },
-  {
-    icon: BarChart3,
-    label: "Platform Stats",
-    path: "/admin/trade-stats",
-    allowedRoles: ['super_admin']
-  },
-  // Global Signals (Super Admin only - manages all)
-  {
-    icon: Signal,
-    label: "All Signals",
-    path: "/admin/signals",
     allowedRoles: ['super_admin']
   },
   {
@@ -96,6 +96,12 @@ const navItems: NavItem[] = [
     icon: CreditCard,
     label: "Payments",
     path: "/admin/payments",
+    allowedRoles: ['super_admin', 'payments_admin']
+  },
+  {
+    icon: Settings,
+    label: "Payment Settings",
+    path: "/admin/payment-settings",
     allowedRoles: ['super_admin', 'payments_admin']
   },
   {
@@ -145,34 +151,34 @@ const navItems: NavItem[] = [
 export const AdminSidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null);
+  const { signOut } = useAuth();
+  const { adminRole, isLoading: roleLoading } = useAdminRole();
+  const [stableRole, setStableRole] = useState<AdminRole | null>(() => {
+    try {
+      return (sessionStorage.getItem("admin_sidebar_role") as AdminRole | null) ?? null;
+    } catch {
+      return null;
+    }
+  });
 
-  // Check current user's admin role
   useEffect(() => {
-    if (!user) return;
+    if (!adminRole) return;
+    setStableRole(adminRole);
+    try {
+      sessionStorage.setItem("admin_sidebar_role", adminRole);
+    } catch {
+      // no-op
+    }
+  }, [adminRole]);
 
-    const checkAdminRole = async () => {
-      const { data } = await supabase
-        .from('admin_roles')
-        .select('admin_role')
-        .eq('user_id', user.id)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      setAdminRole(data?.admin_role as AdminRole | null);
-    };
-
-    checkAdminRole();
-  }, [user]);
-
-  const isSuperAdmin = adminRole === 'super_admin';
+  const effectiveRole = adminRole || stableRole;
+  const isSuperAdmin = effectiveRole === 'super_admin';
 
   // Filter nav items based on admin role
   const filteredNavItems = useMemo(() => {
-    if (!adminRole) return [];
-    return navItems.filter(item => item.allowedRoles.includes(adminRole));
-  }, [adminRole]);
+    if (!effectiveRole) return [];
+    return navItems.filter(item => item.allowedRoles.includes(effectiveRole));
+  }, [effectiveRole]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -182,6 +188,9 @@ export const AdminSidebarContent = ({ onNavigate }: { onNavigate?: () => void })
   return (
     <div className="flex flex-col h-full">
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        {roleLoading && filteredNavItems.length === 0 ? (
+          <div className="px-4 py-3 text-xs text-muted-foreground">Loading menu...</div>
+        ) : null}
         {filteredNavItems.map((item) => {
           const isActive = location.pathname === item.path ||
             (item.path !== "/admin" && location.pathname.startsWith(item.path));

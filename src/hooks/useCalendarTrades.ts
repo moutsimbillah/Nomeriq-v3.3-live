@@ -43,7 +43,8 @@ const initialStats: CalendarStats = {
   worstDay: null,
 };
 
-export const useCalendarTrades = (currentMonth: Date) => {
+export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalView?: boolean }) => {
+  const adminGlobalView = options?.adminGlobalView ?? false;
   const { user, isAdmin } = useAuth();
   const userId = user?.id ?? null;
   const { allowedCategories } = useUserSubscriptionCategories();
@@ -100,7 +101,20 @@ export const useCalendarTrades = (currentMonth: Date) => {
 
       let trades: any[] = [];
 
-      if (isProvider) {
+      if (adminGlobalView && isAdmin) {
+        const { data, error } = await supabase
+          .from('user_trades')
+          .select(`
+            *,
+            signal:signals(created_by, category)
+          `)
+          .gte('closed_at', monthStart.toISOString())
+          .lte('closed_at', monthEnd.toISOString())
+          .not('result', 'eq', 'pending');
+
+        if (error) throw error;
+        trades = data || [];
+      } else if (isProvider) {
         // For providers: fetch ALL trades from signals they created (from all users)
         const { data, error } = await supabase
           .from('user_trades')
@@ -210,7 +224,7 @@ export const useCalendarTrades = (currentMonth: Date) => {
     } finally {
       setIsLoading(false);
     }
-  }, [userId, currentMonth, isProvider, roleLoading, allowedCategories]);
+  }, [userId, currentMonth, isProvider, roleLoading, allowedCategories, adminGlobalView, isAdmin]);
 
   useEffect(() => {
     if (!roleLoading) {

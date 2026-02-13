@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { LogoIcon } from "@/components/icons/TradingIcons";
 import {
   LayoutDashboard,
+  Activity,
   TrendingUp,
   Clock,
   History,
@@ -12,7 +13,6 @@ import {
   LogOut,
   Menu,
   ArrowLeft,
-  Signal,
   Send,
   MoreVertical,
 } from "lucide-react";
@@ -37,7 +37,7 @@ const baseNavItems = [
 
 const providerNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
-  { icon: Signal, label: "My Signals", path: "/my-signals" },
+  { icon: Activity, label: "Live Trades", path: "/my-signals" },
   { icon: TrendingUp, label: "Active Trades", path: "/active-trades" },
   { icon: Clock, label: "Upcoming", path: "/upcoming" },
   { icon: History, label: "History", path: "/history" },
@@ -52,8 +52,7 @@ export const SidebarContent = () => {
   const { settings } = useBrand();
 
   // Determine if user is a signal provider or super admin
-  const isSignalProvider = adminRole === "signal_provider_admin";
-  const isSuperAdmin = adminRole === "super_admin";
+  const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
 
   // Build nav items dynamically based on role - use stable references
   const navItems = useMemo(() => {

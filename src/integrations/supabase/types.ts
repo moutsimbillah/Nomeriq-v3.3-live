@@ -320,9 +320,20 @@ export type Database = {
           created_at: string
           currency: string
           id: string
+          metadata: Json | null
+          package_id: string | null
+          payment_method: string
+          provider: string
+          provider_customer_id: string | null
+          provider_payment_id: string | null
+          provider_session_id: string | null
+          provider_subscription_id: string | null
           rejection_reason: string | null
           status: string
-          tx_hash: string
+          tx_hash: string | null
+          user_bank_account_name: string | null
+          user_bank_account_number: string | null
+          user_bank_name: string | null
           user_id: string
           verified_at: string | null
           verified_by: string | null
@@ -332,9 +343,20 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          metadata?: Json | null
+          package_id?: string | null
+          payment_method?: string
+          provider?: string
+          provider_customer_id?: string | null
+          provider_payment_id?: string | null
+          provider_session_id?: string | null
+          provider_subscription_id?: string | null
           rejection_reason?: string | null
           status?: string
-          tx_hash: string
+          tx_hash?: string | null
+          user_bank_account_name?: string | null
+          user_bank_account_number?: string | null
+          user_bank_name?: string | null
           user_id: string
           verified_at?: string | null
           verified_by?: string | null
@@ -344,12 +366,56 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          metadata?: Json | null
+          package_id?: string | null
+          payment_method?: string
+          provider?: string
+          provider_customer_id?: string | null
+          provider_payment_id?: string | null
+          provider_session_id?: string | null
+          provider_subscription_id?: string | null
           rejection_reason?: string | null
           status?: string
-          tx_hash?: string
+          tx_hash?: string | null
+          user_bank_account_name?: string | null
+          user_bank_account_number?: string | null
+          user_bank_name?: string | null
           user_id?: string
           verified_at?: string | null
           verified_by?: string | null
+        }
+        Relationships: []
+      }
+      payment_provider_settings: {
+        Row: {
+          created_at: string
+          id: string
+          provider: string
+          stripe_publishable_key: string | null
+          stripe_secret_key: string | null
+          stripe_webhook_endpoint: string | null
+          stripe_webhook_secret: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          provider: string
+          stripe_publishable_key?: string | null
+          stripe_secret_key?: string | null
+          stripe_webhook_endpoint?: string | null
+          stripe_webhook_secret?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          provider?: string
+          stripe_publishable_key?: string | null
+          stripe_secret_key?: string | null
+          stripe_webhook_endpoint?: string | null
+          stripe_webhook_secret?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -434,6 +500,57 @@ export type Database = {
           is_enabled?: boolean
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      telegram_integrations: {
+        Row: {
+          bot_token: string
+          categories: string[]
+          chat_id: string
+          created_at: string
+          id: string
+          include_risk: boolean
+          include_sl: boolean
+          include_tp: boolean
+          is_enabled: boolean
+          message_header: string | null
+          message_footer: string | null
+          message_tags: string[]
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          bot_token: string
+          categories?: string[]
+          chat_id: string
+          created_at?: string
+          id?: string
+          include_risk?: boolean
+          include_sl?: boolean
+          include_tp?: boolean
+          is_enabled?: boolean
+          message_header?: string | null
+          message_footer?: string | null
+          message_tags?: string[]
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          bot_token?: string
+          categories?: string[]
+          chat_id?: string
+          created_at?: string
+          id?: string
+          include_risk?: boolean
+          include_sl?: boolean
+          include_tp?: boolean
+          is_enabled?: boolean
+          message_header?: string | null
+          message_footer?: string | null
+          message_tags?: string[]
+          name?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -555,6 +672,11 @@ export type Database = {
           created_at: string
           expires_at: string | null
           id: string
+          package_id: string | null
+          payment_id: string | null
+          provider: string
+          provider_customer_id: string | null
+          provider_subscription_id: string | null
           starts_at: string | null
           status: string
           updated_at: string
@@ -564,6 +686,11 @@ export type Database = {
           created_at?: string
           expires_at?: string | null
           id?: string
+          package_id?: string | null
+          payment_id?: string | null
+          provider?: string
+          provider_customer_id?: string | null
+          provider_subscription_id?: string | null
           starts_at?: string | null
           status?: string
           updated_at?: string
@@ -573,6 +700,11 @@ export type Database = {
           created_at?: string
           expires_at?: string | null
           id?: string
+          package_id?: string | null
+          payment_id?: string | null
+          provider?: string
+          provider_customer_id?: string | null
+          provider_subscription_id?: string | null
           starts_at?: string | null
           status?: string
           updated_at?: string

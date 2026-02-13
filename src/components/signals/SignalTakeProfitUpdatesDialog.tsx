@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { sendTelegramTradeUpdate } from "@/lib/telegram";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface FormRow {
   tpPrice: string;
@@ -68,7 +69,7 @@ export const SignalTakeProfitUpdatesDialog = ({
     [rows]
   );
 
-  const riskPercent = profile?.custom_risk_percent ?? settings?.global_risk_percent ?? 2;
+  const riskPercent = settings?.global_risk_percent ?? 2;
   const accountBalance = profile?.account_balance ?? null;
   const riskAmountUsd =
     typeof accountBalance === "number" && accountBalance > 0
@@ -196,7 +197,7 @@ export const SignalTakeProfitUpdatesDialog = ({
             },
           });
           if (res.ok === false) {
-            toast.error(`Telegram update event failed: ${res.error}`);
+            toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram update right now."));
             break;
           }
         }
@@ -216,7 +217,7 @@ export const SignalTakeProfitUpdatesDialog = ({
       } else if (normalized.includes("row-level security") || normalized.includes("permission")) {
         toast.error("Permission denied to publish updates for this signal.");
       } else {
-        toast.error(`Failed to publish updates: ${msg}`);
+        toast.error(getSafeErrorMessage(msg, "Failed to publish updates. Please try again."));
       }
     } finally {
       setIsSubmitting(false);

@@ -34,7 +34,6 @@ import MySignals from "./pages/MySignals";
 
 // Admin pages
 import AdminDashboard from "./pages/Admin/AdminDashboard";
-import AdminTradeStats from "./pages/Admin/AdminTradeStats";
 import AdminSignals from "./pages/Admin/AdminSignals";
 import AdminUsers from "./pages/Admin/AdminUsers";
 import AdminUserDetails from "./pages/Admin/AdminUserDetails";
@@ -50,8 +49,10 @@ import ProviderDashboard from "./pages/Admin/ProviderDashboard";
 import ProviderSignals from "./pages/Admin/ProviderSignals";
 import TelegramIntegration from "./pages/Admin/TelegramIntegration";
 import AdminActiveTrades from "./pages/Admin/AdminActiveTrades";
+import AdminUpcomingTrades from "./pages/Admin/AdminUpcomingTrades";
 import AdminSubscriptionSettings from "./pages/Admin/AdminSubscriptionSettings";
 import AdminTelegramIntegrations from "./pages/Admin/AdminTelegramIntegrations";
+import AdminPaymentSettings from "./pages/Admin/AdminPaymentSettings";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -159,20 +160,19 @@ const App = () => (
                     </AdminProtectedRoute>
                   } />
 
-                  {/* Trade stats - Super Admin sees global, Provider sees their own */}
-                  <Route path="/admin/trade-stats" element={
-                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
-                      <AdminTradeStats />
-                    </AdminProtectedRoute>
-                  } />
                   <Route path="/admin/signals" element={
-                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
                       <AdminSignals />
                     </AdminProtectedRoute>
                   } />
                   <Route path="/admin/active-trades" element={
-                    <AdminProtectedRoute allowedRoles={['super_admin', 'signal_provider_admin']}>
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
                       <AdminActiveTrades />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/upcoming-trades" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <AdminUpcomingTrades />
                     </AdminProtectedRoute>
                   } />
 
@@ -190,6 +190,11 @@ const App = () => (
                   <Route path="/admin/payments" element={
                     <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
                       <AdminPayments />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/payment-settings" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                      <AdminPaymentSettings />
                     </AdminProtectedRoute>
                   } />
                   <Route path="/admin/subscription-settings" element={

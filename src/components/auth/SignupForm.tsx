@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useOptionalAuthModal } from "@/contexts/AuthModalContext";
 import { countries } from "@/constants/countries";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface SignupFormProps {
     onSwitchToLogin?: () => void;
@@ -63,7 +64,7 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
         if (error) {
             toast({
                 title: "Signup Failed",
-                description: error.message || "Failed to create account. Please try again.",
+                description: getSafeErrorMessage(error, "Failed to create account. Please try again."),
                 variant: "destructive"
             });
             setIsLoading(false);

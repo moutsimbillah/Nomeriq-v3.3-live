@@ -11,15 +11,18 @@ interface UseProviderAwareSignalsOptions {
   signalType?: 'signal' | 'upcoming' | 'all';
   limit?: number;
   realtime?: boolean;
+  adminGlobalView?: boolean;
 }
 
 /**
  * Hook that fetches signals with provider-aware filtering.
- * If the user is an admin/signal provider, only fetches their own signals.
- * Regular users see all signals as normal.
+ * Default behavior:
+ * - Providers/admins: only their own issued signals.
+ * - Regular users: signals limited by subscription categories.
+ * Set adminGlobalView=true to intentionally fetch global admin data.
  */
 export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions = {}) => {
-  const { status, signalType = 'all', limit = 50, realtime = true } = options;
+  const { status, signalType = 'all', limit = 50, realtime = true, adminGlobalView = false } = options;
   const [signals, setSignals] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -46,6 +49,7 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
         userId ?? 'anon',
         isProvider ? 'provider' : 'user',
         isAdmin ? 'admin' : 'member',
+        adminGlobalView ? 'admin_global' : 'scoped',
         signalType,
         Array.isArray(status) ? status.join(',') : status ?? 'all',
         limit,
@@ -80,12 +84,14 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
           .order('created_at', { ascending: false })
           .limit(limit);
 
-        // If user is a provider, filter to only their signals
-        if (isProvider && userId) {
+        // Explicit global mode for admin analytics only.
+        if (adminGlobalView && isAdmin) {
+          // No created_by/category filters.
+        } else if ((isProvider || isAdmin) && userId) {
+          // Provider-aware default: admins/providers see only their own issued signals.
           query = query.eq('created_by', userId);
-        }
-        // Regular users should only fetch categories they are subscribed to.
-        if (!isProvider && !isAdmin && allowedCategories.length > 0) {
+        } else if (!isProvider && !isAdmin && allowedCategories.length > 0) {
+          // Regular users should only fetch categories they are subscribed to.
           query = query.in('category', allowedCategories);
         }
 
@@ -138,7 +144,7 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
     } finally {
       setIsLoading(false);
     }
-  }, [status, signalType, limit, isProvider, isAdmin, allowedCategories, userId, roleLoading]);
+  }, [status, signalType, limit, isProvider, isAdmin, adminGlobalView, allowedCategories, userId, roleLoading]);
 
   useEffect(() => {
     if (!hasActiveSubscription && !isAdmin) {

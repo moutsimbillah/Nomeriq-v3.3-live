@@ -31,6 +31,7 @@ ALTER TABLE public.signals ENABLE ROW LEVEL SECURITY;
 -- Drop any existing generic select policy to replace with category-aware one
 DROP POLICY IF EXISTS "Authenticated users can view signals" ON public.signals;
 DROP POLICY IF EXISTS "Users can view signals" ON public.signals;
+DROP POLICY IF EXISTS "Users can view signals by category" ON public.signals;
 
 -- Authenticated users can view only signals whose category they have access to
 CREATE POLICY "Users can view signals by category"

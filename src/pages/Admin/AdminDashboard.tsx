@@ -1,140 +1,175 @@
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import { useAdminDashboardStats } from "@/hooks/useAdminDashboardStats";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ExecutiveOverview } from "@/components/admin/dashboard-analytics/ExecutiveOverview";
-import { SubscriptionPaymentsOverview } from "@/components/admin/dashboard-analytics/SubscriptionPaymentsOverview";
-import { RevenueAnalytics } from "@/components/admin/dashboard-analytics/RevenueAnalytics";
-import { UserGrowthAnalytics } from "@/components/admin/dashboard-analytics/UserGrowthAnalytics";
-import { RiskRevenueAnalytics } from "@/components/admin/dashboard-analytics/RiskRevenueAnalytics";
-import { DiscountAnalytics } from "@/components/admin/dashboard-analytics/DiscountAnalytics";
-import { UserSegmentation } from "@/components/admin/dashboard-analytics/UserSegmentation";
-import { Loader2 } from "lucide-react";
-
-import { useDashboardLayout, DashboardSection } from "@/hooks/useDashboardLayout";
+import { useBrand } from "@/contexts/BrandContext";
+import { StatCard } from "@/components/dashboard/StatCard";
+import { EquityChart } from "@/components/dashboard/EquityChart";
+import { ActiveTradesTable } from "@/components/dashboard/ActiveTradesTable";
+import { PerformanceBySessionDay } from "@/components/dashboard/PerformanceBySessionDay";
+import { UpcomingTradesSection } from "@/components/dashboard/UpcomingTradesSection";
+import { TradeHistorySection } from "@/components/dashboard/TradeHistorySection";
+import { PerformanceAnalytics } from "@/components/dashboard/PerformanceAnalytics";
+import { CalendarSection } from "@/components/dashboard/CalendarSection";
+import { useProviderAwareTradeStats } from "@/hooks/useProviderAwareTrades";
+import { useGlobalTradeStats } from "@/hooks/useGlobalTradeStats";
+import { SignalQualityHealth } from "@/components/admin/platform-analytics/SignalQualityHealth";
+import { ProviderPerformanceTable } from "@/components/admin/platform-analytics/ProviderPerformanceTable";
 import { DashboardCustomizer } from "@/components/dashboard/DashboardCustomizer";
+import { useDashboardLayout, DashboardSection } from "@/hooks/useDashboardLayout";
+import {
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Target,
+  Percent,
+} from "lucide-react";
 
-const ADMIN_SECTIONS: DashboardSection[] = [
-  { id: 'admin-executive', label: 'Executive Overview', enabled: true },
-  { id: 'admin-analytics-tabs', label: 'Analytics Modules', enabled: true },
+const ADMIN_TRADING_SECTIONS: DashboardSection[] = [
+  { id: "stats", label: "Overview Stats", enabled: true },
+  { id: "charts-and-signals", label: "Equity Chart & Recent Signals", enabled: true },
+  { id: "performance-analytics", label: "Performance Analytics", enabled: true },
+  { id: "admin-signal-quality", label: "Signal Quality & Health", enabled: true },
+  { id: "admin-provider-performance", label: "Provider Performance", enabled: true },
+  { id: "calendar", label: "Trading Calendar", enabled: true },
+  { id: "active-trades", label: "Active Trades", enabled: true },
+  { id: "upcoming-trades", label: "Upcoming Trades", enabled: true },
+  { id: "trade-history", label: "Trade History", enabled: true },
 ];
 
 const AdminDashboard = () => {
   const { profile } = useAuth();
-  const { stats, isLoading, error } = useAdminDashboardStats();
-  const { sections, updateOrder, resetLayout, isLoaded } = useDashboardLayout('dashboard-layout-admin-v1', ADMIN_SECTIONS);
+  const { settings } = useBrand();
+  const { stats, isLoading: statsLoading } = useProviderAwareTradeStats({ adminGlobalView: true });
+  const { qualityStats, tradeDistribution, providerStats, isLoading: qualityLoading } = useGlobalTradeStats();
+  const { sections, updateOrder, resetLayout, isLoaded } = useDashboardLayout(
+    "dashboard-layout-admin-global-v1",
+    ADMIN_TRADING_SECTIONS,
+  );
 
-  if (error) {
-    return (
-      <AdminLayout
-        title="Admin Dashboard"
-        subtitle={`Welcome back, ${profile?.first_name ? `${profile.first_name} ${profile.last_name || ''}` : 'Admin'}. Here's your performance summary.`}
-      >
-        <div className="flex items-center justify-center h-64">
-          <p className="text-destructive">Error loading dashboard data</p>
-        </div>
-      </AdminLayout>
-    );
-  }
+  const riskPercent = Number(settings?.global_risk_percent || 2);
 
-  if (isLoading || !isLoaded) {
-    return (
-      <AdminLayout
-        title="Admin Dashboard"
-        subtitle={`Welcome back, ${profile?.first_name ? `${profile.first_name} ${profile.last_name || ''}` : 'Admin'}. Here's your performance summary.`}
-      >
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
-      </AdminLayout>
-    );
-  }
+  if (!isLoaded) return null;
 
   const sectionContent: Record<string, React.ReactNode> = {
-    'admin-executive': (
-      stats ? <ExecutiveOverview stats={stats.executive} isLoading={isLoading} /> : null
+    stats: (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 mb-8">
+        <StatCard
+          title="Total Trades"
+          value={statsLoading ? "..." : stats.totalTrades.toString()}
+          change={`${stats.pending} active`}
+          changeType="neutral"
+          icon={Activity}
+          iconColor="text-primary"
+        />
+        <StatCard
+          title="Winning Trades"
+          value={statsLoading ? "..." : stats.wins.toString()}
+          change={`${stats.winRate.toFixed(0)}% win rate`}
+          changeType="profit"
+          icon={TrendingUp}
+          iconColor="text-success"
+        />
+        <StatCard
+          title="Losing Trades"
+          value={statsLoading ? "..." : stats.losses.toString()}
+          change={`${(100 - stats.winRate).toFixed(0)}% loss rate`}
+          changeType="loss"
+          icon={TrendingDown}
+          iconColor="text-destructive"
+        />
+        <StatCard
+          title="Breakeven Trades"
+          value={statsLoading ? "..." : stats.breakeven.toString()}
+          change="No P&L impact"
+          changeType="neutral"
+          icon={Activity}
+          iconColor="text-warning"
+        />
+        <StatCard
+          title="Win Rate"
+          value={statsLoading ? "..." : `${stats.winRate.toFixed(0)}%`}
+          change={stats.winRate >= 50 ? "On track" : "Needs improvement"}
+          changeType={stats.winRate >= 50 ? "profit" : "loss"}
+          icon={Target}
+          iconColor="text-success"
+        />
+        <StatCard
+          title="Risk/Trade"
+          value={`${riskPercent}%`}
+          change="Global setting"
+          changeType="neutral"
+          icon={Percent}
+          iconColor="text-warning"
+        />
+      </div>
     ),
-    'admin-analytics-tabs': (
-      stats ? (
-        <Tabs defaultValue="subscriptions" className="w-full">
-          <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-secondary/30 p-1">
-            <TabsTrigger value="subscriptions" className="flex-1 min-w-[120px]">
-              Subscriptions
-            </TabsTrigger>
-            <TabsTrigger value="revenue" className="flex-1 min-w-[120px]">
-              Revenue
-            </TabsTrigger>
-            <TabsTrigger value="users" className="flex-1 min-w-[120px]">
-              User Growth
-            </TabsTrigger>
-            <TabsTrigger value="risk" className="flex-1 min-w-[120px]">
-              Risk & Pending
-            </TabsTrigger>
-            <TabsTrigger value="discounts" className="flex-1 min-w-[120px]">
-              Discounts
-            </TabsTrigger>
-            <TabsTrigger value="segments" className="flex-1 min-w-[120px]">
-              Segments
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="subscriptions" className="mt-6">
-            <SubscriptionPaymentsOverview
-              subscriptions={stats.subscriptions}
-              payments={stats.payments}
-              isLoading={isLoading}
-            />
-          </TabsContent>
-
-          <TabsContent value="revenue" className="mt-6">
-            <RevenueAnalytics revenue={stats.revenue} isLoading={isLoading} />
-          </TabsContent>
-
-          <TabsContent value="users" className="mt-6">
-            <UserGrowthAnalytics userGrowth={stats.userGrowth} isLoading={isLoading} />
-          </TabsContent>
-
-          <TabsContent value="risk" className="mt-6">
-            <RiskRevenueAnalytics riskRevenue={stats.riskRevenue} isLoading={isLoading} />
-          </TabsContent>
-
-          <TabsContent value="discounts" className="mt-6">
-            <DiscountAnalytics discounts={stats.discounts} isLoading={isLoading} />
-          </TabsContent>
-
-          <TabsContent value="segments" className="mt-6">
-            <UserSegmentation
-              segments={stats.segments}
-              totalUsers={stats.executive.totalUsers}
-              isLoading={isLoading}
-            />
-          </TabsContent>
-        </Tabs>
-      ) : null
-    )
+    "active-trades": (
+      <div className="mb-8">
+        <ActiveTradesTable adminGlobalView />
+      </div>
+    ),
+    "upcoming-trades": (
+      <div className="mb-8">
+        <UpcomingTradesSection adminGlobalView />
+      </div>
+    ),
+    calendar: (
+      <div className="mb-8">
+        <CalendarSection adminGlobalView />
+      </div>
+    ),
+    "performance-analytics": (
+      <div className="mb-8">
+        <PerformanceAnalytics adminGlobalView />
+      </div>
+    ),
+    "admin-signal-quality": (
+      <div className="mb-8">
+        <SignalQualityHealth
+          qualityStats={qualityStats}
+          avgHoldingHours={tradeDistribution.avgTradeDuration}
+          isLoading={qualityLoading}
+        />
+      </div>
+    ),
+    "admin-provider-performance": (
+      <div className="mb-8">
+        <ProviderPerformanceTable providers={providerStats} isLoading={qualityLoading} />
+      </div>
+    ),
+    "charts-and-signals": (
+      <div className="grid grid-cols-1 xl:grid-cols-3 items-stretch gap-6 mb-8">
+        <div className="xl:col-span-2 h-full">
+          <EquityChart adminGlobalView />
+        </div>
+        <div className="h-full">
+          <PerformanceBySessionDay adminGlobalView />
+        </div>
+      </div>
+    ),
+    "trade-history": (
+      <div className="mb-8">
+        <TradeHistorySection adminGlobalView />
+      </div>
+    ),
   };
 
   return (
     <AdminLayout
       title="Admin Dashboard"
-      subtitle={`Welcome back, ${profile?.first_name ? `${profile.first_name} ${profile.last_name || ''}` : 'Admin'}. Here's your performance summary.`}
+      subtitle={`Welcome back, ${profile?.first_name ? `${profile.first_name} ${profile.last_name || ""}` : "Admin"}. Here's your global performance summary.`}
       action={
-        <DashboardCustomizer
-          sections={sections}
-          onReorder={updateOrder}
-          onReset={resetLayout}
-        />
+        <DashboardCustomizer sections={sections} onReorder={updateOrder} onReset={resetLayout} />
       }
     >
-      <div className="space-y-6">
-        {sections.map(section => {
-          if (!section.enabled) return null;
-          return (
-            <div key={section.id}>
-              {sectionContent[section.id]}
-            </div>
-          );
-        })}
+      {sections.map((section) => {
+        if (!section.enabled) return null;
+        return <div key={section.id}>{sectionContent[section.id]}</div>;
+      })}
+
+      <div className="mt-8 p-4 rounded-xl bg-warning/10 border border-warning/20">
+        <p className="text-xs text-warning leading-relaxed">
+          Global dashboard values are aggregated across all providers and admin-issued trades.
+        </p>
       </div>
     </AdminLayout>
   );

@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useTimezone } from "@/hooks/useTimezone";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface AdminManagementTableProps {
   admins: AdminWithProfile[];
@@ -100,7 +101,7 @@ export const AdminManagementTable = ({
     setProcessing(false);
     
     if (error) {
-      toast.error(error.message);
+      toast.error(getSafeErrorMessage(error, "Failed to update admin role"));
     } else {
       toast.success(`Role updated to ${roleConfig[newRole].label}`);
     }
@@ -120,7 +121,7 @@ export const AdminManagementTable = ({
     setProcessing(false);
     
     if (error) {
-      toast.error(error.message);
+      toast.error(getSafeErrorMessage(error, "Failed to update admin status"));
     } else {
       toast.success(`Admin ${newStatus === 'active' ? 'activated' : 'suspended'}`);
     }
@@ -138,7 +139,7 @@ export const AdminManagementTable = ({
     setProcessing(false);
     
     if (error) {
-      toast.error(error.message);
+      toast.error(getSafeErrorMessage(error, "Failed to remove admin"));
     } else {
       toast.success("Admin removed successfully");
     }
@@ -153,7 +154,7 @@ export const AdminManagementTable = ({
     setProcessing(false);
     
     if (error) {
-      toast.error(error.message);
+      toast.error(getSafeErrorMessage(error, "Failed to suspend admin"));
     } else {
       toast.success("Admin suspended successfully");
     }

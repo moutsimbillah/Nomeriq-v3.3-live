@@ -4,6 +4,7 @@ VALUES ('signal-analysis', 'signal-analysis', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Allow admins to upload analysis images
+DROP POLICY IF EXISTS "Admins can upload analysis images" ON storage.objects;
 CREATE POLICY "Admins can upload analysis images"
 ON storage.objects FOR INSERT
 WITH CHECK (
@@ -12,6 +13,7 @@ WITH CHECK (
 );
 
 -- Allow admins to update analysis images
+DROP POLICY IF EXISTS "Admins can update analysis images" ON storage.objects;
 CREATE POLICY "Admins can update analysis images"
 ON storage.objects FOR UPDATE
 USING (
@@ -20,6 +22,7 @@ USING (
 );
 
 -- Allow admins to delete analysis images
+DROP POLICY IF EXISTS "Admins can delete analysis images" ON storage.objects;
 CREATE POLICY "Admins can delete analysis images"
 ON storage.objects FOR DELETE
 USING (
@@ -28,6 +31,7 @@ USING (
 );
 
 -- Allow anyone with subscription to view analysis images
+DROP POLICY IF EXISTS "Subscribers can view analysis images" ON storage.objects;
 CREATE POLICY "Subscribers can view analysis images"
 ON storage.objects FOR SELECT
 USING (

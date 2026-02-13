@@ -17,7 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 export const ProfileDropdown = () => {
   const { profile, subscription, hasActiveSubscription, signOut, isAdmin } = useAuth();
   const { adminRole } = useAdminRoleContext();
-  const isSignalProvider = adminRole === "signal_provider_admin";
+  const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const navigate = useNavigate();
 
   const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || "User";

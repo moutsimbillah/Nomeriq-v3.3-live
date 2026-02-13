@@ -46,24 +46,30 @@ SELECT 'TradingSignal', 'TNYhMKhLQWz6d5oX7Kqj7sdUo8vNcRYuPE', 2.00, 50.00, 'UTC'
 WHERE NOT EXISTS (SELECT 1 FROM public.global_settings);
 
 -- Create profile for existing user (moutsimbillah@gmail.com)
-INSERT INTO public.profiles (user_id, email)
-VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'moutsimbillah@gmail.com')
-ON CONFLICT (user_id) DO NOTHING;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM auth.users
+    WHERE id = '564440d5-5460-43e7-a86a-aae6ef9e142e'
+  ) THEN
+    INSERT INTO public.profiles (user_id, email)
+    VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'moutsimbillah@gmail.com')
+    ON CONFLICT (user_id) DO NOTHING;
 
--- Create user role
-INSERT INTO public.user_roles (user_id, role)
-VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'admin')
-ON CONFLICT (user_id, role) DO NOTHING;
+    INSERT INTO public.user_roles (user_id, role)
+    VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'admin')
+    ON CONFLICT (user_id, role) DO NOTHING;
 
--- Create super_admin role
-INSERT INTO public.admin_roles (user_id, admin_role, status)
-VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'super_admin', 'active')
-ON CONFLICT (user_id) DO NOTHING;
+    INSERT INTO public.admin_roles (user_id, admin_role, status)
+    VALUES ('564440d5-5460-43e7-a86a-aae6ef9e142e', 'super_admin', 'active')
+    ON CONFLICT (user_id) DO NOTHING;
 
--- Create subscription (inactive by default)
-INSERT INTO public.subscriptions (user_id, status)
-SELECT '564440d5-5460-43e7-a86a-aae6ef9e142e', 'inactive'
-WHERE NOT EXISTS (
-    SELECT 1 FROM public.subscriptions 
-    WHERE user_id = '564440d5-5460-43e7-a86a-aae6ef9e142e'
-);
+    INSERT INTO public.subscriptions (user_id, status)
+    SELECT '564440d5-5460-43e7-a86a-aae6ef9e142e', 'inactive'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.subscriptions
+      WHERE user_id = '564440d5-5460-43e7-a86a-aae6ef9e142e'
+    );
+  END IF;
+END $$;

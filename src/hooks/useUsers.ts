@@ -14,6 +14,36 @@ interface UseUsersOptions {
   page?: number;
 }
 
+const isSubscriptionActiveNow = (sub: Subscription): boolean => {
+  if (sub.status !== 'active') return false;
+  if (!sub.expires_at) return true; // lifetime / no-expiry plans
+  return new Date(sub.expires_at) > new Date();
+};
+
+const pickPrimarySubscription = (subs: Subscription[]): Subscription | undefined => {
+  if (!subs.length) return undefined;
+
+  const active = subs
+    .filter(isSubscriptionActiveNow)
+    .sort((a, b) => {
+      const aExp = a.expires_at ? new Date(a.expires_at).getTime() : Number.MAX_SAFE_INTEGER;
+      const bExp = b.expires_at ? new Date(b.expires_at).getTime() : Number.MAX_SAFE_INTEGER;
+      return bExp - aExp;
+    });
+  if (active.length > 0) return active[0];
+
+  const pending = subs
+    .filter((s) => s.status === 'pending')
+    .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime());
+  if (pending.length > 0) return pending[0];
+
+  return [...subs].sort(
+    (a, b) =>
+      new Date(b.updated_at || b.created_at).getTime() -
+      new Date(a.updated_at || a.created_at).getTime()
+  )[0];
+};
+
 export const useUsers = (options: UseUsersOptions = {}) => {
   const { search = '', limit = 20, page = 1 } = options;
   const [users, setUsers] = useState<UserWithDetails[]>([]);
@@ -61,16 +91,20 @@ export const useUsers = (options: UseUsersOptions = {}) => {
         supabase.from('user_roles').select('*').in('user_id', userIds),
       ]);
 
-      const subscriptionsMap = new Map(
-        (subscriptionsResult.data || []).map(s => [s.user_id, s])
-      );
+      const subscriptionsByUser = new Map<string, Subscription[]>();
+      for (const row of (subscriptionsResult.data || [])) {
+        const sub = row as Subscription;
+        const list = subscriptionsByUser.get(sub.user_id) || [];
+        list.push(sub);
+        subscriptionsByUser.set(sub.user_id, list);
+      }
       const rolesMap = new Map(
         (rolesResult.data || []).map(r => [r.user_id, r.role])
       );
 
       const usersWithDetails: UserWithDetails[] = (profilesData || []).map(profile => ({
         ...profile,
-        subscription: subscriptionsMap.get(profile.user_id) as Subscription | undefined,
+        subscription: pickPrimarySubscription(subscriptionsByUser.get(profile.user_id) || []),
         role: rolesMap.get(profile.user_id),
       }));
 

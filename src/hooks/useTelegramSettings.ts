@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { getSafeErrorMessage } from '@/lib/error-sanitizer';
 
 export interface TelegramSettings {
   id?: string;
@@ -140,8 +141,7 @@ export const useTelegramSettings = () => {
       return true;
     } catch (err) {
       console.error('Error testing Telegram connection:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      toast.error(`Test failed: ${errorMessage}`);
+      toast.error(getSafeErrorMessage(err, 'Test failed. Please check bot token and chat ID.'));
       return false;
     }
   };

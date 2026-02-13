@@ -14,6 +14,7 @@ import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
 import { Signal } from "@/types/database";
 import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -153,7 +154,7 @@ const ProviderSignals = () => {
         });
 
         if (res.ok === false) {
-          toast.error(`Telegram send failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
         }
       }
 
@@ -260,7 +261,7 @@ const ProviderSignals = () => {
         });
 
         if (res.ok === false) {
-          toast.error(`Telegram send failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
         }
       }
 
@@ -315,7 +316,7 @@ const ProviderSignals = () => {
           },
         });
         if (res.ok === false) {
-          toast.error(`Telegram close event failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram close update right now."));
         }
       }
       toast.success(`Signal marked as ${status.replace('_', ' ')}`);
@@ -410,7 +411,7 @@ const ProviderSignals = () => {
   );
 
   return (
-    <AdminLayout title="My Signals">
+    <AdminLayout title="Live Trades">
       {/* Provider Info Banner */}
       <div className="glass-card p-4 mb-6 shadow-none border-l-4 border-l-primary">
         <div className="flex items-center gap-3">
@@ -434,7 +435,7 @@ const ProviderSignals = () => {
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button variant="gradient" onClick={resetForm}>
+            <Button variant="gradient" onClick={resetForm} className="text-white hover:text-white [&_svg]:text-white">
               <Plus className="w-4 h-4 mr-2" />
               Create Signal
             </Button>
@@ -517,9 +518,10 @@ const ProviderSignals = () => {
                       <span className="font-mono text-sm">{signal.entry_price ?? '—'}</span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="space-y-1">
-                        <p className="text-xs"><span className="text-destructive font-mono">{signal.stop_loss ?? '—'}</span></p>
-                        <p className="text-xs"><span className="text-success font-mono">{signal.take_profit ?? '—'}</span></p>
+                      <div className="text-xs font-mono whitespace-nowrap">
+                        <span className="text-destructive">{signal.stop_loss ?? "-"}</span>
+                        <span className="text-muted-foreground mx-1">/</span>
+                        <span className="text-success">{signal.take_profit ?? "-"}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-center">

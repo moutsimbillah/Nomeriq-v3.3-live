@@ -18,7 +18,9 @@ export type DashboardSectionId =
     | 'provider-pair-performance'
     // Admin Dashboard
     | 'admin-executive'
-    | 'admin-analytics-tabs';
+    | 'admin-analytics-tabs'
+    | 'admin-signal-quality'
+    | 'admin-provider-performance';
 
 export interface DashboardSection {
     id: DashboardSectionId;

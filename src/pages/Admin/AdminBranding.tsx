@@ -25,6 +25,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useBrand } from "@/contexts/BrandContext";
 import { toast } from "sonner";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 const AdminBranding = () => {
   const { settings, refreshSettings } = useBrand();
@@ -176,7 +177,7 @@ const AdminBranding = () => {
       toast.success("Branding settings saved successfully!");
     } catch (err) {
       console.error('Error saving branding:', err);
-      toast.error(`Failed to save branding settings: ${(err as any).message || 'Unknown error'}`);
+      toast.error(getSafeErrorMessage(err, "Failed to save branding settings"));
     } finally {
       setIsSaving(false);
     }

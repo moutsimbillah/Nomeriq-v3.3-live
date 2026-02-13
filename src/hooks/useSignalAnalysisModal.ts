@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { Signal } from "@/types/database";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 
 /**
  * Hook to manage signal analysis modal state
@@ -13,6 +14,7 @@ export const useSignalAnalysisModal = () => {
     // Only open if signal has analysis content
     const hasAnalysis = signal.analysis_video_url || signal.analysis_notes || signal.analysis_image_url;
     if (hasAnalysis) {
+      void preloadSignalAnalysisMedia(signal);
       setSelectedSignal(signal);
       setIsOpen(true);
     }

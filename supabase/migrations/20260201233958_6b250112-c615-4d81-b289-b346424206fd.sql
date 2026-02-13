@@ -61,24 +61,30 @@ UPDATE public.global_settings SET
   updated_at = now();
 
 -- 7. Create profile for admin user (moutsimbillah@gmail.com)
-INSERT INTO public.profiles (user_id, email)
-VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'moutsimbillah@gmail.com')
-ON CONFLICT (user_id) DO NOTHING;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM auth.users
+    WHERE id = '5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1'
+  ) THEN
+    INSERT INTO public.profiles (user_id, email)
+    VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'moutsimbillah@gmail.com')
+    ON CONFLICT (user_id) DO NOTHING;
 
--- 8. Add admin role in user_roles table
-INSERT INTO public.user_roles (user_id, role)
-VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'admin')
-ON CONFLICT (user_id, role) DO NOTHING;
+    INSERT INTO public.user_roles (user_id, role)
+    VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'admin')
+    ON CONFLICT (user_id, role) DO NOTHING;
 
--- 9. Add super_admin role in admin_roles table
-INSERT INTO public.admin_roles (user_id, admin_role, status)
-VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'super_admin', 'active')
-ON CONFLICT (user_id) DO NOTHING;
+    INSERT INTO public.admin_roles (user_id, admin_role, status)
+    VALUES ('5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'super_admin', 'active')
+    ON CONFLICT (user_id) DO NOTHING;
 
--- 10. Create subscription for admin user
-INSERT INTO public.subscriptions (user_id, status, starts_at, expires_at)
-SELECT '5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'active', now(), now() + interval '100 years'
-WHERE NOT EXISTS (
-    SELECT 1 FROM public.subscriptions 
-    WHERE user_id = '5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1'
-);
+    INSERT INTO public.subscriptions (user_id, status, starts_at, expires_at)
+    SELECT '5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1', 'active', now(), now() + interval '100 years'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.subscriptions
+      WHERE user_id = '5a9d1ed2-55a4-47dc-8da1-cd46fa91ead1'
+    );
+  END IF;
+END $$;

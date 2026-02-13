@@ -148,7 +148,8 @@ export const TradeFilters = ({
 export const filterByTime = <T extends { created_at: string }>(
   items: T[],
   timeFilter: TimeFilter,
-  dateRange?: DateRange
+  dateRange?: DateRange,
+  getItemDate?: (item: T) => Date
 ): T[] => {
   if (timeFilter === 'all') return items;
 
@@ -176,7 +177,7 @@ export const filterByTime = <T extends { created_at: string }>(
   }
 
   return items.filter(item => {
-    const itemDate = new Date(item.created_at);
+    const itemDate = getItemDate ? getItemDate(item) : new Date(item.created_at);
     return itemDate >= startDate && itemDate <= endDate;
   });
 };

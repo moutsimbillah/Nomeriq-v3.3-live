@@ -15,7 +15,7 @@ interface CalendarGridProps {
   calendarDays: DayData[];
   weekData: Map<number, WeekData>;
   selectedDate: Date | null;
-  onSelectDate: (date: Date) => void;
+  onSelectDate: (date: Date | null) => void;
   onOpenDayModal: (date: Date) => void;
   currentMonth: Date;
 }
@@ -77,10 +77,12 @@ export const CalendarGrid = ({
           const isProfit = day.pnl > 0;
           const isLoss = day.pnl < 0;
           return <div key={dayIndex} onClick={() => {
-            onSelectDate(day.date);
-            if (hasData) {
-              onOpenDayModal(day.date);
+            if (!hasData) {
+              onSelectDate(null);
+              return;
             }
+            onSelectDate(day.date);
+            onOpenDayModal(day.date);
           }} className={cn("min-h-[80px] p-2 border-r cursor-pointer transition-all duration-200 hover:bg-secondary/40 border-secondary-foreground border-solid opacity-100 rounded-xl mx-px my-px px-[9px] py-[7px] border-0", !day.isCurrentMonth && "opacity-40", hasData && isProfit && "bg-success/10", hasData && isLoss && "bg-destructive/10", isSelected && "ring-2 ring-success ring-inset", isCurrentDay && !isSelected && "ring-1 ring-primary/50 ring-inset")}>
                   <div className="flex flex-col h-full">
                     <span className={cn("text-sm font-medium mb-1 text-center", !day.isCurrentMonth && "text-muted-foreground", isCurrentDay && "text-primary font-bold")}>

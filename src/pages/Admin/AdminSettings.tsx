@@ -12,12 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import {
   Shield,
-  DollarSign,
   AlertTriangle,
-  Copy,
   Check,
   Loader2,
   Globe,
@@ -25,12 +22,10 @@ import {
   CheckCircle2,
   User,
   Mail,
-  Settings as SettingsIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminRoleContext } from "@/contexts/AdminRoleContext";
 import { useGlobalSettings } from "@/hooks/useGlobalSettings";
-import { TelegramIntegrationSection } from "@/components/settings/TelegramIntegrationSection";
 import { TIMEZONES } from "@/hooks/useTimezone";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -42,19 +37,8 @@ const AdminSettings = () => {
   const { settings, isLoading, updateSettings } = useGlobalSettings();
 
   const [globalRisk, setGlobalRisk] = useState("2");
-  const [subscriptionPrice, setSubscriptionPrice] = useState("50");
-  const [walletAddress, setWalletAddress] = useState("");
   const [timezone, setTimezone] = useState("UTC");
   const [isSaving, setIsSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  // Payment method states
-  const [enableUsdtTrc20, setEnableUsdtTrc20] = useState(true);
-  const [enableBankTransfer, setEnableBankTransfer] = useState(false);
-  const [enableStripe, setEnableStripe] = useState(false);
-  const [bankAccountName, setBankAccountName] = useState("");
-  const [bankAccountNumber, setBankAccountNumber] = useState("");
-  const [bankName, setBankName] = useState("");
 
   const [country, setCountry] = useState("");
   const [isLoadingCountry, setIsLoadingCountry] = useState(true);
@@ -111,23 +95,11 @@ const AdminSettings = () => {
     })
     : "Jan 2026";
 
-  const canConfigureTelegram =
-    adminRole === "signal_provider_admin" || adminRole === "super_admin";
-
   // Initialize form from settings
   useEffect(() => {
     if (settings) {
       setGlobalRisk(settings.global_risk_percent.toString());
-      setSubscriptionPrice(settings.subscription_price.toString());
-      setWalletAddress(settings.wallet_address);
       setTimezone(settings.timezone || "UTC");
-      // Payment methods
-      setEnableUsdtTrc20(settings.enable_usdt_trc20 ?? true);
-      setEnableBankTransfer(settings.enable_bank_transfer ?? false);
-      setEnableStripe(settings.enable_stripe ?? false);
-      setBankAccountName(settings.bank_account_name || "");
-      setBankAccountNumber(settings.bank_account_number || "");
-      setBankName(settings.bank_name || "");
     }
   }, [settings]);
 
@@ -136,15 +108,7 @@ const AdminSettings = () => {
     try {
       await updateSettings({
         global_risk_percent: parseFloat(globalRisk),
-        subscription_price: parseFloat(subscriptionPrice),
-        wallet_address: walletAddress,
         timezone: timezone,
-        enable_usdt_trc20: enableUsdtTrc20,
-        enable_bank_transfer: enableBankTransfer,
-        enable_stripe: enableStripe,
-        bank_account_name: bankAccountName || null,
-        bank_account_number: bankAccountNumber || null,
-        bank_name: bankName || null,
       });
       toast.success("Settings saved successfully!");
     } catch (err) {
@@ -153,13 +117,6 @@ const AdminSettings = () => {
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleCopyWallet = () => {
-    navigator.clipboard.writeText(walletAddress);
-    setCopied(true);
-    toast.success("Wallet address copied!");
-    setTimeout(() => setCopied(false), 2000);
   };
 
   if (isLoading) {
@@ -216,10 +173,8 @@ const AdminSettings = () => {
           </div>
         </div>
 
-        {/* Two Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Main Settings */}
-          <div className="lg:col-span-2 space-y-6">
+        {/* Main Settings */}
+        <div className="space-y-6">
             {/* Admin Information */}
             <Card className="border-border/50">
               <div className="p-4 border-b border-border/50">
@@ -380,177 +335,11 @@ const AdminSettings = () => {
                 </div>
               </CardContent>
             </Card>
-          </div>
-
-          {/* Right Column - Subscription Settings & Telegram */}
-          <div className="space-y-6">
-            {/* Telegram Integration - Only for Signal Provider Admins */}
-            {canConfigureTelegram && <TelegramIntegrationSection />}
-            {/* Subscription Settings */}
-            <Card className="border-border/50 bg-gradient-to-br from-success/5 to-transparent">
-              <div className="p-4 border-b border-border/50">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="w-5 h-5 text-success" />
-                  <h2 className="text-lg font-semibold">Subscription Settings</h2>
-                </div>
-              </div>
-              <CardContent className="p-6 space-y-6">
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                    Monthly Price (USDT)
-                  </Label>
-                  <div className="flex gap-3">
-                    <Input
-                      type="number"
-                      value={subscriptionPrice}
-                      onChange={(e) => setSubscriptionPrice(e.target.value)}
-                      className="bg-secondary/30 border-border/50"
-                    />
-                    <span className="flex items-center px-4 rounded-lg bg-secondary/30 text-sm font-medium border border-border/50">
-                      USDT
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                    USDT Wallet (TRC20)
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={walletAddress}
-                      onChange={(e) => setWalletAddress(e.target.value)}
-                      className="bg-secondary/30 border-border/50 font-mono text-sm"
-                    />
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={handleCopyWallet}
-                      className="shrink-0"
-                    >
-                      {copied ? (
-                        <Check className="w-4 h-4 text-success" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    This address is displayed to users during payment.
-                  </p>
-                </div>
-
-                {/* Payment Methods Configuration */}
-                <div className="space-y-4 pt-4 border-t border-border/50">
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide">
-                    Enabled Payment Methods
-                  </Label>
-
-                  {/* USDT TRC20 Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">USDT (TRC20)</p>
-                      <p className="text-xs text-muted-foreground">Cryptocurrency payment via Tron network</p>
-                    </div>
-                    <Switch
-                      checked={enableUsdtTrc20}
-                      onCheckedChange={setEnableUsdtTrc20}
-                    />
-                  </div>
-
-                  {/* Bank Transfer Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Bank Transfer (Manual)</p>
-                      <p className="text-xs text-muted-foreground">Traditional bank account transfer</p>
-                    </div>
-                    <Switch
-                      checked={enableBankTransfer}
-                      onCheckedChange={setEnableBankTransfer}
-                    />
-                  </div>
-
-                  {/* Bank Account Details (shown when bank transfer is enabled) */}
-                  {enableBankTransfer && (
-                    <div className="space-y-3 pl-4 border-l-2 border-primary/30">
-                      <div className="space-y-2">
-                        <Label className="text-xs">Account Holder Name</Label>
-                        <Input
-                          value={bankAccountName}
-                          onChange={(e) => setBankAccountName(e.target.value)}
-                          placeholder="John Doe"
-                          className="bg-secondary/30 border-border/50"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs">Account Number</Label>
-                        <Input
-                          value={bankAccountNumber}
-                          onChange={(e) => setBankAccountNumber(e.target.value)}
-                          placeholder="1234567890"
-                          className="bg-secondary/30 border-border/50"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs">Bank Name</Label>
-                        <Input
-                          value={bankName}
-                          onChange={(e) => setBankName(e.target.value)}
-                          placeholder="Bank of America"
-                          className="bg-secondary/30 border-border/50"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Stripe Toggle */}
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">Stripe (Card Payments)</p>
-                      <p className="text-xs text-muted-foreground">Credit/Debit card processing</p>
-                    </div>
-                    <Switch
-                      checked={enableStripe}
-                      onCheckedChange={setEnableStripe}
-                    />
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Users will only see enabled payment methods on the subscription page.
-                  </p>
-                </div>
-
-                <div className="p-4 rounded-xl bg-secondary/30 border border-border/50">
-                  <h4 className="font-medium mb-3 text-sm">Pricing Summary</h4>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Monthly Price</span>
-                      <span className="font-semibold">${subscriptionPrice} USDT</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Payment Method</span>
-                      <span className="font-semibold">USDT (TRC20)</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Verification</span>
-                      <span className="font-semibold">Manual (Admin)</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Network</span>
-                      <span className="font-semibold">Tron (TRC20)</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
 
             {/* Quick Actions */}
             <Card className="border-border/50">
               <div className="p-4 border-b border-border/50">
-                <div className="flex items-center gap-2">
-                  <SettingsIcon className="w-5 h-5 text-primary" />
-                  <h2 className="text-lg font-semibold">Quick Actions</h2>
-                </div>
+                <h2 className="text-lg font-semibold">Quick Actions</h2>
               </div>
               <CardContent className="p-6 space-y-3">
                 <Button
@@ -570,7 +359,6 @@ const AdminSettings = () => {
                 </div>
               </CardContent>
             </Card>
-          </div>
         </div>
       </div>
     </AdminLayout>

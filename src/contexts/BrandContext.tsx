@@ -29,11 +29,33 @@ const defaultSettings: GlobalSettings = {
   updated_at: new Date().toISOString(),
 };
 
+const BRAND_SETTINGS_CACHE_KEY = 'brand_settings_cache_v1';
+
+const readCachedSettings = (): GlobalSettings | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(BRAND_SETTINGS_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as GlobalSettings;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedSettings = (settings: GlobalSettings) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(BRAND_SETTINGS_CACHE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore cache write failures
+  }
+};
+
 const BrandContext = createContext<BrandContextType | undefined>(undefined);
 
 export const BrandProvider = ({ children }: { children: ReactNode }) => {
-  const [settings, setSettings] = useState<GlobalSettings | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [settings, setSettings] = useState<GlobalSettings | null>(() => readCachedSettings());
+  const [isLoading, setIsLoading] = useState(() => readCachedSettings() === null);
   const fetchAttemptedRef = useRef(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -48,17 +70,28 @@ export const BrandProvider = ({ children }: { children: ReactNode }) => {
       if (error) {
         console.error('[BrandContext] Error fetching settings:', error);
         // Use default settings on error
-        setSettings((prev) => prev ?? defaultSettings);
+        setSettings((prev) => {
+          const next = prev ?? defaultSettings;
+          writeCachedSettings(next);
+          return next;
+        });
       } else if (data) {
-        setSettings(data as GlobalSettings);
+        const typed = data as GlobalSettings;
+        setSettings(typed);
+        writeCachedSettings(typed);
       } else {
         // No data found, use defaults
         setSettings(defaultSettings);
+        writeCachedSettings(defaultSettings);
       }
     } catch (error) {
       console.error('[BrandContext] Error fetching settings:', error);
       // Use default settings on error
-      setSettings((prev) => prev ?? defaultSettings);
+      setSettings((prev) => {
+        const next = prev ?? defaultSettings;
+        writeCachedSettings(next);
+        return next;
+      });
     } finally {
       setIsLoading(false);
       // Clear timeout if fetch completed
@@ -82,7 +115,11 @@ export const BrandProvider = ({ children }: { children: ReactNode }) => {
     // If fetch takes longer than 5 seconds, fall back to defaults
     timeoutRef.current = setTimeout(() => {
       console.warn('[BrandContext] Settings fetch timeout - using defaults');
-      setSettings((prev) => prev ?? defaultSettings);
+      setSettings((prev) => {
+        const next = prev ?? defaultSettings;
+        writeCachedSettings(next);
+        return next;
+      });
       setIsLoading(false);
     }, 5000);
 

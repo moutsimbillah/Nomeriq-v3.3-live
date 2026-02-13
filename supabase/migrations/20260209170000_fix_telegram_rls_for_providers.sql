@@ -3,6 +3,7 @@
 
 -- Drop the restrictive SELECT policy
 DROP POLICY IF EXISTS "Super admins can view global telegram settings" ON public.global_telegram_settings;
+DROP POLICY IF EXISTS "All admins can view global telegram settings" ON public.global_telegram_settings;
 
 -- Create new policy that allows all admin roles to read settings
 CREATE POLICY "All admins can view global telegram settings"

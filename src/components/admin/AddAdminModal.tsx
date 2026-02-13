@@ -24,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Search, UserPlus, Mail, Loader2, Crown, CreditCard, Signal, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface AddAdminModalProps {
   open: boolean;
@@ -116,7 +117,7 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
     setIsLoading(false);
 
     if (error) {
-      toast.error(error.message);
+      toast.error(getSafeErrorMessage(error, "Failed to add admin"));
     } else {
       toast.success(`${selectedUser.first_name || selectedUser.email} added as ${roleOptions.find(r => r.value === selectedRole)?.label}`);
       onSuccess();

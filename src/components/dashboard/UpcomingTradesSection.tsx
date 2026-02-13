@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, Loader2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -12,8 +12,14 @@ import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
 import { shouldSuppressQueryErrorLog } from "@/lib/queryStability";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
+import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 
-export const UpcomingTradesSection = () => {
+interface UpcomingTradesSectionProps {
+  adminGlobalView?: boolean;
+}
+
+export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTradesSectionProps) => {
   const [upcomingTrades, setUpcomingTrades] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { user, isAdmin } = useAuth();
@@ -31,7 +37,7 @@ export const UpcomingTradesSection = () => {
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
 
-  const fetchUpcoming = async () => {
+  const fetchUpcoming = useCallback(async () => {
     if (roleLoading) return;
     
     try {
@@ -40,11 +46,11 @@ export const UpcomingTradesSection = () => {
       });
       
       // If user is a provider, filter to only their signals
-      if (isProvider && userId) {
+      if (!adminGlobalView && isProvider && userId) {
         query = query.eq('created_by', userId);
       }
       // Regular users should only see subscribed categories.
-      if (!isProvider && !isAdmin && allowedCategories.length > 0) {
+      if (!adminGlobalView && !isProvider && !isAdmin && allowedCategories.length > 0) {
         query = query.in('category', allowedCategories);
       }
 
@@ -66,7 +72,7 @@ export const UpcomingTradesSection = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [roleLoading, isProvider, userId, isAdmin, allowedCategories, adminGlobalView]);
 
   useEffect(() => {
     if (!roleLoading) {
@@ -83,11 +89,21 @@ export const UpcomingTradesSection = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roleLoading, isProvider, isAdmin, allowedCategories, userId]);
+  }, [roleLoading, fetchUpcoming]);
 
   // Apply filters
   const filteredTrades = useMemo(() => {
     let result = [...upcomingTrades];
+    const getPotential = (s: Signal) => {
+      const entry = Number(s.entry_price ?? 0);
+      const tp = Number(s.take_profit ?? 0);
+      return Math.abs(tp - entry);
+    };
+    const getRisk = (s: Signal) => {
+      const entry = Number(s.entry_price ?? 0);
+      const sl = Number(s.stop_loss ?? 0);
+      return Math.abs(entry - sl);
+    };
     
     // Time filter
     result = filterByTime(result, timeFilter, dateRange);
@@ -113,11 +129,30 @@ export const UpcomingTradesSection = () => {
           return (a.pair || '').localeCompare(b.pair || '');
         case 'pair-desc':
           return (b.pair || '').localeCompare(a.pair || '');
+        case 'pnl-high':
+          return getPotential(b) - getPotential(a);
+        case 'pnl-low':
+          return getPotential(a) - getPotential(b);
+        case 'risk-high':
+          return getRisk(b) - getRisk(a);
+        case 'risk-low':
+          return getRisk(a) - getRisk(b);
         default:
           return 0;
       }
     });
   }, [upcomingTrades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+  const providerNameMap = useProviderNameMap(
+    adminGlobalView ? filteredTrades.map((s) => s.created_by || "") : []
+  );
+
+  useEffect(() => {
+    filteredTrades
+      .filter((signal) => Boolean(signal.analysis_image_url))
+      .forEach((signal) => {
+        void preloadSignalAnalysisMedia(signal);
+      });
+  }, [filteredTrades]);
 
   const getStatusDisplay = (status: string | null) => {
     switch (status) {
@@ -222,6 +257,11 @@ export const UpcomingTradesSection = () => {
                           {trade.category}
                         </Badge>
                       </div>
+                      {adminGlobalView && (
+                        <p className="text-xs text-muted-foreground">
+                          Provider: {providerNameMap[trade.created_by || ""] || "Admin"}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className={cn("px-3 py-1.5 rounded-lg text-xs font-medium shrink-0", trade.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
@@ -273,6 +313,11 @@ export const UpcomingTradesSection = () => {
                       {trade.category}
                     </Badge>
                   </div>
+                  {adminGlobalView && (
+                    <p className="text-xs text-muted-foreground truncate">
+                      Provider: {providerNameMap[trade.created_by || ""] || "Admin"}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground truncate">
                     {trade.entry_price && `Entry: ${trade.entry_price}`}
                     {trade.stop_loss && ` • SL: ${trade.stop_loss}`}

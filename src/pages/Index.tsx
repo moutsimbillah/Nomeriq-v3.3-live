@@ -14,12 +14,24 @@ const Index = () => {
     <AuthModalProvider>
       <div className="min-h-screen bg-background">
         <LandingHeader />
-        <HeroSection />
-        <MarketsSection />
-        <FeaturesSection />
-        <SolutionsSection />
-        <AudienceSection />
-        <CTASection />
+        <div className="user-page-enter user-page-enter-delay-2">
+          <HeroSection />
+        </div>
+        <div className="user-page-enter user-page-enter-delay-3">
+          <MarketsSection />
+        </div>
+        <div className="user-page-enter user-page-enter-delay-4">
+          <FeaturesSection />
+        </div>
+        <div className="user-page-enter user-page-enter-delay-5">
+          <SolutionsSection />
+        </div>
+        <div className="user-page-enter user-page-enter-delay-5">
+          <AudienceSection />
+        </div>
+        <div className="user-page-enter user-page-enter-delay-5">
+          <CTASection />
+        </div>
         <Footer />
         <AuthModal />
       </div>

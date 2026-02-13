@@ -24,11 +24,14 @@ interface Payment {
   id: string;
   amount: number;
   currency: string;
-  tx_hash: string;
+  tx_hash: string | null;
   status: string;
   created_at: string;
   verified_at: string | null;
   rejection_reason: string | null;
+  payment_method?: string | null;
+  provider_session_id?: string | null;
+  provider_payment_id?: string | null;
 }
 const AdminUserDetails = () => {
   const {
@@ -44,7 +47,6 @@ const AdminUserDetails = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [editedBalance, setEditedBalance] = useState("");
-  const [editedRisk, setEditedRisk] = useState("");
   const [editedSubscriptionStatus, setEditedSubscriptionStatus] = useState<string>("");
   const [editedFirstName, setEditedFirstName] = useState("");
   const [editedLastName, setEditedLastName] = useState("");
@@ -65,7 +67,6 @@ const AdminUserDetails = () => {
         if (profileError) throw profileError;
         setProfile(profileData);
         setEditedBalance(profileData?.account_balance?.toString() || "0");
-        setEditedRisk(profileData?.custom_risk_percent?.toString() || "2");
         setEditedFirstName(profileData?.first_name || "");
         setEditedLastName(profileData?.last_name || "");
         setEditedPhone(profileData?.phone || "");
@@ -220,17 +221,6 @@ const AdminUserDetails = () => {
       return;
     }
 
-    // Input validation for risk percentage
-    const riskValue = parseFloat(editedRisk);
-    if (isNaN(riskValue) || riskValue < 1 || riskValue > 3) {
-      toast({
-        title: "Invalid Risk Percentage",
-        description: "Risk percentage must be between 1% and 3%.",
-        variant: "destructive"
-      });
-      return;
-    }
-
     // Confirmation for large balance changes
     const currentBalance = profile?.account_balance || 0;
     const balanceDifference = Math.abs(balanceValue - currentBalance);
@@ -249,7 +239,6 @@ const AdminUserDetails = () => {
         data: updatedProfile
       } = await supabase.from("profiles").update({
         account_balance: balanceValue,
-        custom_risk_percent: riskValue,
         first_name: editedFirstName.trim() || null,
         last_name: editedLastName.trim() || null,
         phone: editedPhone.trim() || null,
@@ -273,7 +262,6 @@ const AdminUserDetails = () => {
       setProfile(prev => prev ? {
         ...prev,
         account_balance: balanceValue,
-        custom_risk_percent: riskValue,
         first_name: editedFirstName.trim() || null,
         last_name: editedLastName.trim() || null,
         phone: editedPhone.trim() || null,
@@ -438,20 +426,6 @@ const AdminUserDetails = () => {
             </div>
 
             <div className="space-y-2">
-              <Label>Risk Per Trade (%)</Label>
-              <Select value={editedRisk} onValueChange={setEditedRisk}>
-                <SelectTrigger className="bg-secondary/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1%</SelectItem>
-                  <SelectItem value="2">2%</SelectItem>
-                  <SelectItem value="3">3%</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
               <Label>Subscription Status</Label>
               <Select value={editedSubscriptionStatus} onValueChange={setEditedSubscriptionStatus}>
                 <SelectTrigger className="bg-secondary/50">
@@ -480,7 +454,7 @@ const AdminUserDetails = () => {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
                 <p className="text-xs text-warning">
-                  Changes to balance and risk settings are logged for compliance.
+                  Changes to balance and subscription settings are logged for compliance.
                 </p>
               </div>
             </div>

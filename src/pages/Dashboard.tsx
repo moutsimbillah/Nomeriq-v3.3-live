@@ -29,7 +29,7 @@ const Dashboard = () => {
   const { settings } = useBrand();
   const { adminRole } = useAdminRole();
 
-  const riskPercent = isProvider ? (settings?.global_risk_percent || 2) : (profile?.custom_risk_percent || settings?.global_risk_percent || 2);
+  const riskPercent = settings?.global_risk_percent || 2;
   const balance = profile?.account_balance || 0;
   const riskAmount = (balance * riskPercent) / 100;
 

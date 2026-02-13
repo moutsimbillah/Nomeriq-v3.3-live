@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,10 +26,11 @@ function getPackageTierScore(pkg: { duration_type: string; price: number }): num
 }
 
 const Subscription = () => {
-  const { user } = useAuth();
+  const { user, subscription: authSubscription, hasActiveSubscription: hasAuthActiveSubscription } = useAuth();
   const { adminRole } = useAdminRoleContext();
-  const isSignalProvider = adminRole === "signal_provider_admin";
+  const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const { settings } = useGlobalSettings();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>('usdt_trc20');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<typeof payments[0] | null>(null);
@@ -44,10 +45,28 @@ const Subscription = () => {
     refetchSubscriptions();
   }, [refetchSubscriptions]);
 
-  const { payments, isLoading, submitPayment } = usePayments({
+  const { payments, isLoading, submitPayment, refetch: refetchPayments } = usePayments({
     userId: user?.id,
     limit: 10,
   });
+
+  useEffect(() => {
+    const stripeState = searchParams.get("stripe");
+    if (!stripeState) return;
+
+    if (stripeState === "success") {
+      toast.info("Payment received. Verifying your subscription status...");
+      refetchSubscriptions();
+      refetchPayments();
+    } else if (stripeState === "cancel") {
+      toast.message("Stripe checkout was cancelled.");
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("stripe");
+    next.delete("session_id");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, refetchSubscriptions, refetchPayments]);
 
   const walletAddress = settings?.wallet_address || "TNYhMKhLQWz6d5oX7Kqj7sdUo8vNcRYuPE";
 
@@ -62,27 +81,36 @@ const Subscription = () => {
   }, [effectiveSelectedPackage, settings]);
 
   // Subscribed package IDs: from both subscription.package_id and subscription.package so we don't miss when .package isn't loaded
-  const activePackageIds = useMemo(
-    () =>
-      new Set(
-        activeSubscriptions.flatMap((sub) =>
-          [sub.package?.id, sub.package_id].filter((id): id is string => !!id)
-        )
-      ),
-    [activeSubscriptions]
-  );
+  const activePackageIds = useMemo(() => {
+    const ids = new Set(
+      activeSubscriptions.flatMap((sub) =>
+        [sub.package?.id, sub.package_id].filter((id): id is string => !!id)
+      )
+    );
+    if (hasAuthActiveSubscription && authSubscription?.package_id) {
+      ids.add(authSubscription.package_id);
+    }
+    return ids;
+  }, [activeSubscriptions, hasAuthActiveSubscription, authSubscription?.package_id]);
 
   // Best (highest) tier score among active subscriptions; fallback to packages list when .package is missing
   const bestActiveTierScore = useMemo(() => {
-    if (activeSubscriptions.length === 0) return -1;
     const scores = activeSubscriptions
       .map((s) => {
         const pkg = s.package ?? packages.find((p) => p.id === s.package_id);
         return pkg ? getPackageTierScore(pkg) : -1;
       })
       .filter((o) => o >= 0);
+
+    if (scores.length === 0 && hasAuthActiveSubscription && authSubscription?.package_id) {
+      const authPkg = packages.find((p) => p.id === authSubscription.package_id);
+      if (authPkg) return getPackageTierScore(authPkg);
+    }
+
     return scores.length > 0 ? Math.max(...scores) : -1;
-  }, [activeSubscriptions, packages]);
+  }, [activeSubscriptions, packages, hasAuthActiveSubscription, authSubscription?.package_id]);
+
+  const hasAnyActiveSubscription = activeSubscriptions.length > 0 || hasAuthActiveSubscription;
 
   // Plans currently waiting for admin verification
   const pendingPaymentPackageIds = useMemo(
@@ -99,8 +127,19 @@ const Subscription = () => {
   const enabledMethods = useMemo(() => ({
     usdt_trc20: settings?.enable_usdt_trc20 ?? true,
     bank_transfer: settings?.enable_bank_transfer ?? false,
-    stripe: settings?.enable_stripe ?? false,
-  }), [settings]);
+    stripe: (settings?.enable_stripe ?? false) && !!effectiveSelectedPackage?.stripe_price_id,
+  }), [settings, effectiveSelectedPackage?.stripe_price_id]);
+
+  useEffect(() => {
+    if (selectedPaymentMethod !== "stripe" || enabledMethods.stripe) return;
+    if (enabledMethods.usdt_trc20) {
+      setSelectedPaymentMethod("usdt_trc20");
+      return;
+    }
+    if (enabledMethods.bank_transfer) {
+      setSelectedPaymentMethod("bank_transfer");
+    }
+  }, [selectedPaymentMethod, enabledMethods]);
 
   // Handle USDT payment submission
   const handleUsdtSubmit = async (txHash: string, paymentMethod: string) => {
@@ -237,22 +276,29 @@ const Subscription = () => {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(290px,1fr))] gap-4 md:gap-5">
                   {packages.map((pkg) => {
                     const isSubscribedToPackage = activePackageIds.has(pkg.id);
-                    const isLifetime = pkg.duration_type === "lifetime";
-                    const hasAnyActiveSubscription = activeSubscriptions.length > 0;
                     const hasPendingVerification = pendingPaymentPackageIds.has(pkg.id);
+                    const pkgTierScore = getPackageTierScore(pkg);
                     const isHigherTierThanCurrent =
-                      hasAnyActiveSubscription && getPackageTierScore(pkg) > bestActiveTierScore;
+                      hasAnyActiveSubscription && pkgTierScore > bestActiveTierScore;
                     const isLowerTierThanCurrent =
-                      hasAnyActiveSubscription && getPackageTierScore(pkg) < bestActiveTierScore;
+                      hasAnyActiveSubscription && pkgTierScore < bestActiveTierScore;
+                    const isCurrentTierPlan =
+                      hasAnyActiveSubscription && pkgTierScore === bestActiveTierScore;
 
                     const buttonLabel = hasPendingVerification
                       ? "Pending Verification"
                       : isSubscribedToPackage
                       ? "Subscribed"
+                      : isCurrentTierPlan
+                      ? "Current Plan"
                       : isHigherTierThanCurrent
                       ? "Upgrade"
                       : "Select Plan";
-                    const disabled = isSubscribedToPackage || isLowerTierThanCurrent || hasPendingVerification;
+                    const disabled =
+                      hasPendingVerification ||
+                      isSubscribedToPackage ||
+                      isLowerTierThanCurrent ||
+                      isCurrentTierPlan;
 
                     const onChoosePlan = () => {
                       if (disabled) return;
@@ -276,36 +322,32 @@ const Subscription = () => {
                             Subscribed
                           </div>
                         )}
-                        <div className="mb-4 flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">
-                              {pkg.duration_type === "lifetime"
-                                ? "Lifetime Plan"
-                                : pkg.duration_type === "monthly"
-                                ? "Monthly Plan"
-                                : "Yearly Plan"}
-                            </p>
-                            <h3 className="text-xl font-semibold tracking-tight">{pkg.name}</h3>
-                            {pkg.description && (
-                              <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                                {pkg.description}
-                              </p>
-                            )}
-                          </div>
-                          <div className="text-right shrink-0 rounded-xl border border-border/60 bg-secondary/25 px-3 py-2">
-                            <div className="flex items-end gap-1 justify-end">
-                              <span className="text-2xl font-bold leading-none">
-                                {pkg.currency} {Number(pkg.price).toFixed(2)}
-                              </span>
-                              <span className="text-[11px] text-muted-foreground mb-0.5">
-                                {isLifetime
-                                  ? "lifetime"
+                        <div className="mb-4 space-y-1.5">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="self-end">
+                              <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mb-1 whitespace-nowrap">
+                                {pkg.duration_type === "lifetime"
+                                  ? "Lifetime Plan"
                                   : pkg.duration_type === "monthly"
-                                  ? "/month"
-                                  : "/year"}
-                              </span>
+                                  ? "Monthly Plan"
+                                  : "Yearly Plan"}
+                              </p>
+                              <h3 className="text-xl font-semibold tracking-tight">{pkg.name}</h3>
+                            </div>
+                            <div className="shrink-0 rounded-xl border border-border/60 bg-secondary/25 px-4 py-2.5 min-w-[190px]">
+                              <div className="flex items-center justify-center text-center">
+                                <span className="text-xl md:text-[22px] font-semibold leading-none">
+                                  {pkg.currency} {Number(pkg.price).toFixed(2)}
+                                </span>
+                              </div>
                             </div>
                           </div>
+
+                          {pkg.description && (
+                            <p className="text-sm text-muted-foreground leading-relaxed break-words">
+                              {pkg.description}
+                            </p>
+                          )}
                         </div>
 
                         <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -368,6 +410,11 @@ const Subscription = () => {
                         {isLowerTierThanCurrent && (
                           <p className="text-xs text-muted-foreground mb-3">
                             Your current plan is higher than this package.
+                          </p>
+                        )}
+                        {isCurrentTierPlan && !isSubscribedToPackage && (
+                          <p className="text-xs text-muted-foreground mb-3">
+                            You already have an active plan at this tier.
                           </p>
                         )}
                         {hasPendingVerification && (
@@ -457,7 +504,13 @@ const Subscription = () => {
                     )}
 
                     {selectedPaymentMethod === 'stripe' && (
-                      <StripePayment subscriptionPrice={Number(effectiveSelectedPackage.price)} />
+                      <StripePayment
+                        subscriptionPrice={Number(effectiveSelectedPackage.price)}
+                        packageId={effectiveSelectedPackage.id}
+                        packageName={effectiveSelectedPackage.name}
+                        currency={effectiveSelectedPackage.currency}
+                        stripePriceId={effectiveSelectedPackage.stripe_price_id ?? null}
+                      />
                     )}
                   </div>
                 </div>
@@ -740,6 +793,11 @@ const Subscription = () => {
                           </div>
                         </div>
                       </>
+                    ) : selectedPayment.payment_method === 'stripe' ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Provider</p>
+                        <p className="text-sm font-medium">Stripe Checkout</p>
+                      </div>
                     ) : (
                       <>
                         <div>
@@ -763,9 +821,25 @@ const Subscription = () => {
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Transaction Hash / Reference</p>
                       <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
-                        {selectedPayment.tx_hash}
+                        {selectedPayment.tx_hash || '-'}
                       </code>
                     </div>
+                    {selectedPayment.payment_method === 'stripe' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Stripe Session ID</p>
+                          <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
+                            {selectedPayment.provider_session_id || '-'}
+                          </code>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Stripe Payment ID</p>
+                          <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
+                            {selectedPayment.provider_payment_id || '-'}
+                          </code>
+                        </div>
+                      </div>
+                    )}
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Submitted On</p>
                       <p className="text-sm font-medium">

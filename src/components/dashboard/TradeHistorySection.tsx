@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Loader2, History, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -7,14 +7,20 @@ import { format, formatDistanceStrict } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, ResultFilter, filterByTime, sortTrades } from "@/components/filters/TradeFilters";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { SignalAnalysisModal, useHasAnalysis } from "@/components/signals/SignalAnalysisModal";
+import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { Signal } from "@/types/database";
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
+import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 
 const PAGE_SIZE = 10;
 
-export const TradeHistorySection = () => {
+interface TradeHistorySectionProps {
+  adminGlobalView?: boolean;
+}
+
+export const TradeHistorySection = ({ adminGlobalView = false }: TradeHistorySectionProps) => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -29,7 +35,9 @@ export const TradeHistorySection = () => {
     trades,
     isLoading
   } = useProviderAwareTrades({
-    realtime: true
+    realtime: true,
+    limit: 1000,
+    adminGlobalView,
   });
 
   // Filter closed trades only (win, loss, or breakeven)
@@ -40,7 +48,12 @@ export const TradeHistorySection = () => {
     let result = [...closedTrades];
 
     // Time filter
-    result = filterByTime(result, timeFilter, dateRange);
+    result = filterByTime(
+      result,
+      timeFilter,
+      dateRange,
+      (t) => new Date(t.closed_at || t.created_at)
+    );
 
     // Direction filter
     if (directionFilter !== 'all') {
@@ -60,6 +73,9 @@ export const TradeHistorySection = () => {
     // Sort
     return sortTrades(result, sortBy);
   }, [closedTrades, timeFilter, dateRange, directionFilter, categoryFilter, resultFilter, sortBy]);
+  const providerNameMap = useProviderNameMap(
+    adminGlobalView ? filteredTrades.map((t) => t.signal?.created_by || "") : []
+  );
 
   // Pagination
   const totalPages = Math.ceil(filteredTrades.length / PAGE_SIZE);
@@ -68,8 +84,17 @@ export const TradeHistorySection = () => {
     return filteredTrades.slice(start, start + PAGE_SIZE);
   }, [filteredTrades, currentPage]);
 
-  // Reset to page 1 when filter changes
-  useMemo(() => {
+  useEffect(() => {
+    paginatedTrades
+      .map((trade) => trade.signal as Signal | null | undefined)
+      .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url))
+      .forEach((signal) => {
+        void preloadSignalAnalysisMedia(signal);
+      });
+  }, [paginatedTrades]);
+
+  // Reset to page 1 when filters/sort change
+  useEffect(() => {
     setCurrentPage(1);
   }, [sortBy, timeFilter, dateRange, directionFilter, categoryFilter, resultFilter]);
 
@@ -78,7 +103,8 @@ export const TradeHistorySection = () => {
   const losses = filteredTrades.filter(t => t.result === "loss").length;
   const breakevens = filteredTrades.filter(t => t.result === "breakeven").length;
   const totalPnL = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const winRate = filteredTrades.length > 0 ? (wins / filteredTrades.length * 100).toFixed(1) : "0";
+  const decidedTrades = wins + losses;
+  const winRate = decidedTrades > 0 ? (wins / decidedTrades * 100).toFixed(1) : "0";
   return <div className="space-y-6">
       {/* Section Header */}
       <div className="flex flex-col gap-4">
@@ -149,6 +175,11 @@ export const TradeHistorySection = () => {
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Pair
                   </th>
+                  {adminGlobalView && (
+                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                      Provider
+                    </th>
+                  )}
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Direction
                   </th>
@@ -158,28 +189,28 @@ export const TradeHistorySection = () => {
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     SL / TP
                   </th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Result
                   </th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     R:R
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Risk
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Potential Profit
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     P&L
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Duration
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Closed At
                   </th>
-                  <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Details
                   </th>
                 </tr>
@@ -209,6 +240,13 @@ export const TradeHistorySection = () => {
                         )}
                       </div>
                     </td>
+                    {adminGlobalView && (
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-muted-foreground">
+                          {providerNameMap[trade.signal?.created_by || ""] || "Admin"}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-6 py-4">
                       <div className={cn("inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium w-20", trade.signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
                         {trade.signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 shrink-0" /> : <ArrowDownRight className="w-4 h-4 shrink-0" />}
@@ -234,12 +272,12 @@ export const TradeHistorySection = () => {
                         </p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-center">
+                    <td className="px-6 py-4 text-left">
                       <Badge variant="outline" className={cn(trade.result === "win" ? "border-success/30 text-success bg-success/10" : trade.result === "breakeven" ? "border-warning/30 text-warning bg-warning/10" : "border-destructive/30 text-destructive bg-destructive/10")}>
                         {trade.result === "win" ? "Win" : trade.result === "breakeven" ? "Breakeven" : "Loss"}
                       </Badge>
                     </td>
-                    <td className="px-6 py-4 text-center">
+                    <td className="px-6 py-4 text-left">
                       {(() => {
                   const entry = trade.signal?.entry_price || 0;
                   const sl = trade.signal?.stop_loss || 0;
@@ -255,15 +293,17 @@ export const TradeHistorySection = () => {
                           </span>;
                 })()}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       <div>
-                        <p className="text-sm font-mono text-red-600 text-right">{trade.risk_percent}%</p>
-                        <p className="text-sm text-red-700">
-                          ${trade.risk_amount.toFixed(2)}
+                        <p className="text-sm font-mono font-semibold text-foreground">
+                          {Number(trade.risk_percent || 0).toFixed(0)}%
+                        </p>
+                        <p className="text-xs font-mono text-muted-foreground">
+                          ${Number(trade.risk_amount || 0).toFixed(2)}
                         </p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       {(() => {
                   const entry = trade.signal?.entry_price || 0;
                   const sl = trade.signal?.stop_loss || 0;
@@ -280,18 +320,18 @@ export const TradeHistorySection = () => {
                           </span>;
                 })()}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>
                         {(trade.pnl || 0) >= 0 ? "+" : ""}$
                         {(trade.pnl || 0).toFixed(2)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       <span className="text-sm text-muted-foreground">
                         {trade.created_at && trade.closed_at ? formatDistanceStrict(new Date(trade.created_at), new Date(trade.closed_at)) : "-"}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       <div>
                         <p className="text-sm">
                           {trade.closed_at ? format(new Date(trade.closed_at), "yyyy-MM-dd") : "-"}
@@ -301,9 +341,9 @@ export const TradeHistorySection = () => {
                         </p>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-left">
                       <div onClick={(e) => e.stopPropagation()}>
-                        <TradeDetailsDialog trade={trade as any} />
+                        <TradeDetailsDialog trade={trade} />
                       </div>
                     </td>
                   </tr>

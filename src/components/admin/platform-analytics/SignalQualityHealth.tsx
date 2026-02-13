@@ -1,13 +1,15 @@
 import { QualityStats } from "@/hooks/useGlobalTradeStats";
-import { Flame, Target, Activity, BarChart3, Zap, Clock } from "lucide-react";
+import { Flame, Target, Activity, BarChart3, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
   qualityStats: QualityStats;
+  avgHoldingHours: number;
   isLoading: boolean;
 }
 
-export const SignalQualityHealth = ({ qualityStats, isLoading }: Props) => {
+export const SignalQualityHealth = ({ qualityStats, avgHoldingHours, isLoading }: Props) => {
+  const safeAvgHoldingHours = Number.isFinite(avgHoldingHours) ? avgHoldingHours : 0;
   if (isLoading) {
     return (
       <div className="glass-card p-6 animate-pulse">
@@ -116,6 +118,34 @@ export const SignalQualityHealth = ({ qualityStats, isLoading }: Props) => {
               />
             </div>
           </div>
+
+          {/* Signal Frequency */}
+          <div className="p-4 rounded-lg bg-secondary/30 mt-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Clock className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">Signal Frequency</span>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Per Day</p>
+                <p className="text-xl font-bold font-mono">
+                  {qualityStats.signalFrequencyPerDay.toFixed(1)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Per Week</p>
+                <p className="text-xl font-bold font-mono">
+                  {qualityStats.signalFrequencyPerWeek.toFixed(0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Per Month</p>
+                <p className="text-xl font-bold font-mono">
+                  {qualityStats.signalFrequencyPerMonth.toFixed(0)}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Streak & Frequency Stats */}
@@ -145,35 +175,41 @@ export const SignalQualityHealth = ({ qualityStats, isLoading }: Props) => {
             </div>
           </div>
 
-          {/* Signal Frequency */}
-          <div className="p-4 rounded-lg bg-secondary/30">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium">Signal Frequency</span>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-4 rounded-lg bg-success/5 border border-success/20">
+              <div className="flex items-center gap-2 mb-2">
+                <Flame className="w-4 h-4 text-success" />
+                <span className="text-xs text-muted-foreground">Best Winning Streak</span>
+              </div>
+              <p className="text-2xl font-bold font-mono text-success">
+                {qualityStats.bestWinStreak.toFixed(0)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Max consecutive wins</p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Per Day</p>
-                <p className="text-xl font-bold font-mono">
-                  {qualityStats.signalFrequencyPerDay.toFixed(1)}
-                </p>
+
+            <div className="p-4 rounded-lg bg-destructive/5 border border-destructive/20">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity className="w-4 h-4 text-destructive" />
+                <span className="text-xs text-muted-foreground">Worst Losing Streak</span>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Per Week</p>
-                <p className="text-xl font-bold font-mono">
-                  {qualityStats.signalFrequencyPerWeek.toFixed(0)}
-                </p>
-              </div>
+              <p className="text-2xl font-bold font-mono text-destructive">
+                {qualityStats.worstLosingStreak.toFixed(0)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Max consecutive losses</p>
             </div>
-            {qualityStats.signalFrequencyPerDay > 5 && (
-              <div className="mt-3 p-2 rounded-lg bg-warning/10 border border-warning/20">
-                <p className="text-xs text-warning flex items-center gap-1">
-                  <Zap className="w-3 h-3" />
-                  High frequency detected - potential overtrading
-                </p>
-              </div>
-            )}
           </div>
+
+          <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+            <div className="flex items-center gap-2 mb-2">
+              <BarChart3 className="w-4 h-4 text-primary" />
+              <span className="text-xs text-muted-foreground">Avg Holding Time</span>
+            </div>
+            <p className="text-2xl font-bold font-mono text-primary">
+              {safeAvgHoldingHours.toFixed(1)}h
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">Average trade duration</p>
+          </div>
+
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, ArrowRight, Shield, LogIn } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,7 +32,7 @@ const Login = () => {
       if (error) {
         toast({
           title: "Login Failed",
-          description: error.message || "Invalid email or password",
+          description: getSafeErrorMessage(error, "Invalid email or password"),
           variant: "destructive"
         });
         setIsLoading(false);

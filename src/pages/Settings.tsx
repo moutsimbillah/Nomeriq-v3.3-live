@@ -36,7 +36,7 @@ const Settings = () => {
   const navigate = useNavigate();
   const { user, subscription, hasActiveSubscription } = useAuth();
   const { adminRole } = useAdminRoleContext();
-  const isSignalProvider = adminRole === "signal_provider_admin";
+  const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const { packages } = useSubscriptionPackages();
   const { activeSubscriptions } = useUserSubscriptions();
 

@@ -11,11 +11,12 @@ import { DateRange } from "react-day-picker";
 import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, filterByTime, sortTrades } from "@/components/filters/TradeFilters";
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
-import { Signal } from "@/types/database";
+import { Signal, UserTrade } from "@/types/database";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { TradeUpdatesDialog } from "@/components/signals/TradeUpdatesDialog";
 import { Button } from "@/components/ui/button";
 import { playNotificationSound } from "@/lib/notificationSound";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 
 const ActiveTrades = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -27,10 +28,7 @@ const ActiveTrades = () => {
     result: 'pending',
     realtime: true,
   });
-  const {
-    profile,
-    user,
-  } = useAuth();
+  const { user } = useAuth();
   const {
     settings
   } = useBrand();
@@ -51,24 +49,36 @@ const ActiveTrades = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Apply filters
-  let filteredTrades = [...trades];
+  const filteredTrades = useMemo(() => {
+    let result = [...trades];
 
-  // Time filter
-  filteredTrades = filterByTime(filteredTrades, timeFilter, dateRange);
+    // Time filter
+    result = filterByTime(result, timeFilter, dateRange);
 
-  // Direction filter
-  if (directionFilter !== 'all') {
-    filteredTrades = filteredTrades.filter(t => t.signal?.direction === directionFilter);
-  }
+    // Direction filter
+    if (directionFilter !== 'all') {
+      result = result.filter(t => t.signal?.direction === directionFilter);
+    }
 
-  // Category filter
-  if (categoryFilter !== 'all') {
-    filteredTrades = filteredTrades.filter(t => t.signal?.category?.toLowerCase() === categoryFilter.toLowerCase());
-  }
+    // Category filter
+    if (categoryFilter !== 'all') {
+      result = result.filter(t => t.signal?.category?.toLowerCase() === categoryFilter.toLowerCase());
+    }
 
-  // Sort
-  filteredTrades = sortTrades(filteredTrades, sortBy);
+    // Sort
+    return sortTrades(result, sortBy);
+  }, [trades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+
+  useEffect(() => {
+    const signalsToPreload = filteredTrades
+      .map((trade) => trade.signal as Signal | null | undefined)
+      .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url));
+
+    signalsToPreload.forEach((signal) => {
+      void preloadSignalAnalysisMedia(signal);
+    });
+  }, [filteredTrades]);
+
   const signalIds = Array.from(new Set(filteredTrades.map((t) => t.signal?.id).filter((id): id is string => !!id)));
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: true });
   const [seenUpdateCounts, setSeenUpdateCounts] = useState<Record<string, number>>({});
@@ -141,15 +151,9 @@ const ActiveTrades = () => {
 
     previousUpdateIdsRef.current = currentIds;
   }, [updatesBySignal, initialUpdatesLoaded, isProvider]);
-  const getOpenRisk = (trade: any) => Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
-  const getTradeRiskPercent = (trade: any) => {
-    const configuredRiskPercent = Number(trade.risk_percent ?? riskPercent ?? 0);
-    const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-    const openRisk = getOpenRisk(trade);
-    if (initialRisk <= 0) return configuredRiskPercent;
-    return configuredRiskPercent * (openRisk / initialRisk);
-  };
-  const getTargetTpFromUpdates = (trade: any) => {
+  const getOpenRisk = (trade: UserTrade) => Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
+  const getTradeRiskPercent = (_trade: UserTrade) => Number(settings?.global_risk_percent || 2);
+  const getTargetTpFromUpdates = (trade: UserTrade) => {
     const signal = trade.signal;
     const updates = updatesBySignal[signal?.id || ""] || [];
     if (updates.length === 0) return signal?.take_profit || 0;
@@ -163,7 +167,7 @@ const ActiveTrades = () => {
       ? Math.min(...tpPrices)
       : Math.max(...tpPrices);
   };
-  const calculateTradeRr = (trade: any) => {
+  const calculateTradeRr = (trade: UserTrade) => {
     const signal = trade.signal;
     const entry = signal?.entry_price || 0;
     const sl = signal?.stop_loss || 0;
@@ -176,10 +180,9 @@ const ActiveTrades = () => {
     }
     return rr;
   };
-  const calculateTradePotentialProfit = (trade: any) => {
+  const calculateTradePotentialProfit = (trade: UserTrade) => {
     return getOpenRisk(trade) * calculateTradeRr(trade);
   };
-  const riskPercent = isProvider ? (settings?.global_risk_percent || 2) : (profile?.custom_risk_percent || settings?.global_risk_percent || 2);
   const totalRisk = filteredTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
   const averageLiveRiskPercent = filteredTrades.length
     ? filteredTrades.reduce((sum, t) => sum + getTradeRiskPercent(t), 0) / filteredTrades.length
@@ -354,7 +357,7 @@ const ActiveTrades = () => {
               </Button>
               <div onClick={(e) => e.stopPropagation()}>
                 <TradeUpdatesDialog
-                  trade={trade as any}
+                  trade={trade}
                   updates={tradeUpdates}
                   hasUnseen={hasUnseenUpdates && !isProvider}
                   unseenCount={unseenCount}
@@ -438,7 +441,7 @@ const ActiveTrades = () => {
               <p className="text-muted-foreground mb-1 text-xs">Updates</p>
               <div className="flex justify-center">
                 <TradeUpdatesDialog
-                  trade={trade as any}
+                  trade={trade}
                   updates={tradeUpdates}
                   hasUnseen={hasUnseenUpdates && !isProvider}
                   unseenCount={unseenCount}

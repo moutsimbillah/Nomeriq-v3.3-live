@@ -77,8 +77,12 @@ const getColorToken = (index: number) => {
   return colors[index % colors.length];
 };
 
-export const PerformanceBySessionDay = () => {
-  const { trades, isLoading } = useProviderAwareTrades({ limit: 1000, realtime: true });
+interface PerformanceBySessionDayProps {
+  adminGlobalView?: boolean;
+}
+
+export const PerformanceBySessionDay = ({ adminGlobalView = false }: PerformanceBySessionDayProps) => {
+  const { trades, isLoading } = useProviderAwareTrades({ limit: 1000, realtime: true, adminGlobalView });
 
   const { dayStats, sessionStats } = useMemo(() => {
     const closedTrades = trades.filter(

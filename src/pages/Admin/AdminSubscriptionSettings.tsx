@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Loader2, Plus, Pencil, Trash2, GripVertical } from "lucide-react";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface EditableFeature {
   id?: string;
@@ -36,6 +37,7 @@ const AdminSubscriptionSettings = () => {
     duration_type: "monthly" | "yearly" | "lifetime";
     duration_months: string;
     availability: "single" | "multiple";
+    stripe_price_id: string;
     categories: SignalCategory[];
     features: EditableFeature[];
   }>({
@@ -47,6 +49,7 @@ const AdminSubscriptionSettings = () => {
     duration_type: "monthly",
     duration_months: "1",
     availability: "single",
+    stripe_price_id: "",
     categories: ["Forex", "Metals", "Crypto", "Indices", "Commodities"],
     features: [],
   });
@@ -62,6 +65,7 @@ const AdminSubscriptionSettings = () => {
       duration_type: "monthly",
       duration_months: "1",
       availability: "single",
+      stripe_price_id: "",
       categories: ["Forex", "Metals", "Crypto", "Indices", "Commodities"],
       features: [],
     });
@@ -79,6 +83,7 @@ const AdminSubscriptionSettings = () => {
       duration_type: pkg.duration_type,
       duration_months: String(pkg.duration_months),
       availability: pkg.availability,
+      stripe_price_id: pkg.stripe_price_id || "",
       categories: (pkg.categories && pkg.categories.length > 0
         ? pkg.categories
         : ["Forex", "Metals", "Crypto", "Indices", "Commodities"]) as SignalCategory[],
@@ -110,6 +115,7 @@ const AdminSubscriptionSettings = () => {
             ? 0
             : Number(formState.duration_months || "1"),
         availability: formState.availability,
+        stripe_price_id: formState.stripe_price_id.trim() || null,
         categories: formState.categories,
       };
 
@@ -163,11 +169,7 @@ const AdminSubscriptionSettings = () => {
       await refetch();
     } catch (err) {
       console.error("Error saving subscription package:", err);
-      const message =
-        typeof err === "object" && err && "message" in err
-          ? String((err as any).message)
-          : "Failed to save subscription package";
-      toast.error(message);
+      toast.error(getSafeErrorMessage(err, "Failed to save subscription package"));
     } finally {
       setIsSaving(false);
     }
@@ -238,7 +240,7 @@ const AdminSubscriptionSettings = () => {
         {error && (
           <div className="glass-card p-6 border-destructive/30 bg-destructive/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <p className="text-sm text-destructive">
-              Failed to load subscription packages. {error.message}
+              {getSafeErrorMessage(error, "Failed to load subscription packages. Please try again.")}
             </p>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               Retry
@@ -303,6 +305,10 @@ const AdminSubscriptionSettings = () => {
                     Features: {pkg.features.length}
                   </span>
                 </div>
+
+                <p className="text-xs text-muted-foreground mb-3">
+                  Stripe Price: {pkg.stripe_price_id || "Not configured"}
+                </p>
 
                 {pkg.categories && pkg.categories.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-3">
@@ -457,6 +463,20 @@ const AdminSubscriptionSettings = () => {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Stripe Price ID</label>
+              <Input
+                value={formState.stripe_price_id}
+                onChange={(e) =>
+                  setFormState((prev) => ({ ...prev, stripe_price_id: e.target.value }))
+                }
+                placeholder="price_12345..."
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Required for Stripe checkout. Leave empty to keep Stripe disabled for this package.
+              </p>
             </div>
 
             <div>

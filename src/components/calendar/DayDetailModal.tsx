@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { X, ChevronDown, ChevronUp, ExternalLink, FileText } from "lucide-react";
+import { X, ChevronDown, ChevronUp, ExternalLink, FileText, Play, Image as ImageIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
+import { resolveAnalysisImageUrl } from "@/lib/signalAnalysisMedia";
 import {
   LineChart,
   Line,
@@ -76,6 +77,111 @@ const StatCard = ({ label, value, isNegative }: StatCardProps) => (
     </p>
   </div>
 );
+
+const extractYouTubeId = (url: string): string | null => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /youtube\.com\/shorts\/([^&\n?#]+)/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+};
+
+const DayTradeAnalysisSection = ({ signal }: { signal: Trade["signal"] }) => {
+  const [resolvedImageUrl, setResolvedImageUrl] = useState<string | null>(null);
+  const [isImageLoading, setIsImageLoading] = useState(false);
+  const hasAnalysis = Boolean(signal?.analysis_notes || signal?.analysis_video_url || signal?.analysis_image_url);
+  const videoId = signal?.analysis_video_url ? extractYouTubeId(signal.analysis_video_url) : null;
+
+  useEffect(() => {
+    const resolveImage = async () => {
+      if (!signal?.analysis_image_url) {
+        setResolvedImageUrl(null);
+        setIsImageLoading(false);
+        return;
+      }
+      setIsImageLoading(true);
+      const url = await resolveAnalysisImageUrl(signal.analysis_image_url);
+      setResolvedImageUrl(url);
+      setIsImageLoading(false);
+    };
+
+    void resolveImage();
+  }, [signal?.analysis_image_url]);
+
+  return (
+    <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Analysis</p>
+      {!hasAnalysis ? (
+        <p className="text-sm text-muted-foreground">No analysis provided.</p>
+      ) : (
+        <div className="space-y-3">
+          {signal?.analysis_notes && (
+            <div className="rounded-md bg-secondary/30 p-3 max-w-full overflow-hidden">
+              <div className="flex items-center gap-2 text-sm font-medium mb-1">
+                <FileText className="w-4 h-4" />
+                Notes
+              </div>
+              <p className="text-sm whitespace-pre-wrap break-words">{signal.analysis_notes}</p>
+            </div>
+          )}
+          {signal?.analysis_video_url && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Play className="w-4 h-4" />
+                Video Analysis
+              </div>
+              {videoId ? (
+                <div className="relative w-full aspect-video rounded-md overflow-hidden border border-border/50">
+                  <iframe
+                    src={`https://www.youtube.com/embed/${videoId}`}
+                    title="Analysis video"
+                    className="absolute inset-0 w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              ) : null}
+              <a
+                href={signal.analysis_video_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                Open in YouTube <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          )}
+          {signal?.analysis_image_url && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <ImageIcon className="w-4 h-4" />
+                Chart/Image
+              </div>
+              <div className="rounded-md overflow-hidden border border-border/50">
+                {isImageLoading || !resolvedImageUrl ? (
+                  <div className="h-48 bg-secondary/30" />
+                ) : (
+                  <img
+                    src={resolvedImageUrl}
+                    alt="Analysis chart"
+                    className="w-full h-auto object-contain max-h-[420px]"
+                    draggable={false}
+                    onContextMenu={(e) => e.preventDefault()}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const DayDetailModal = ({
   isOpen,
@@ -174,7 +280,7 @@ export const DayDetailModal = ({
           if (error) throw error;
           data = (userTrades || []).filter((trade) =>
             allowedCategories.length > 0
-              ? allowedCategories.includes((trade as any).signal?.category || "")
+              ? allowedCategories.includes(trade.signal?.category || "")
               : true
           );
         }
@@ -471,7 +577,7 @@ export const DayDetailModal = ({
                             Entry
                           </th>
                           <th className="px-4 py-3 text-right text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                            TP / SL
+                            Win/Loss
                           </th>
                           <th className="px-4 py-3 text-center text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
                             Time
@@ -525,9 +631,24 @@ export const DayDetailModal = ({
                                 <td className="px-4 py-3 text-right text-sm font-mono">
                                   {signal?.entry_price?.toFixed(2) || "-"}
                                 </td>
-                                <td className="px-4 py-3 text-right text-sm font-mono text-muted-foreground">
-                                  {signal?.take_profit?.toFixed(2) || "-"} /{" "}
-                                  {signal?.stop_loss?.toFixed(2) || "-"}
+                                <td className="px-4 py-3 text-right">
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center justify-center px-2.5 py-0.5 rounded text-[10px] font-medium uppercase",
+                                      trade.result === "win" && "bg-success/20 text-success",
+                                      trade.result === "loss" && "bg-destructive/20 text-destructive",
+                                      trade.result === "breakeven" && "bg-warning/20 text-warning",
+                                      !trade.result && "bg-secondary/40 text-muted-foreground"
+                                    )}
+                                  >
+                                    {trade.result === "win"
+                                      ? "Win"
+                                      : trade.result === "loss"
+                                      ? "Loss"
+                                      : trade.result === "breakeven"
+                                      ? "Breakeven"
+                                      : "-"}
+                                  </span>
                                 </td>
                                 <td className="px-4 py-3 text-center text-sm text-muted-foreground">
                                   {trade.closed_at
@@ -633,44 +754,7 @@ export const DayDetailModal = ({
                                         )}
                                       </div>
 
-                                      <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
-                                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Analysis</p>
-                                        {!signal?.analysis_notes && !signal?.analysis_video_url && !signal?.analysis_image_url ? (
-                                          <p className="text-sm text-muted-foreground">No analysis provided.</p>
-                                        ) : (
-                                          <div className="space-y-2">
-                                            {signal?.analysis_notes && (
-                                              <div className="rounded-md bg-secondary/30 p-3 max-w-full overflow-hidden">
-                                                <div className="flex items-center gap-2 text-sm font-medium mb-1">
-                                                  <FileText className="w-4 h-4" />
-                                                  Notes
-                                                </div>
-                                                <p className="text-sm whitespace-pre-wrap break-words">{signal.analysis_notes}</p>
-                                              </div>
-                                            )}
-                                            {signal?.analysis_video_url && (
-                                              <a
-                                                href={signal.analysis_video_url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                                              >
-                                                Open video analysis <ExternalLink className="w-3 h-3" />
-                                              </a>
-                                            )}
-                                            {signal?.analysis_image_url && (
-                                              <a
-                                                href={signal.analysis_image_url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                                              >
-                                                Open analysis image <ExternalLink className="w-3 h-3" />
-                                              </a>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
+                                      <DayTradeAnalysisSection signal={signal} />
                                     </div>
                                   </td>
                                 </tr>

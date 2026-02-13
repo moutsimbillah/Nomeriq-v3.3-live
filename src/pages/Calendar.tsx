@@ -32,7 +32,11 @@ const Calendar = () => {
     setSelectedDate(null);
   };
 
-  const handleSelectDate = (date: Date) => {
+  const handleSelectDate = (date: Date | null) => {
+    if (!date) {
+      setSelectedDate(null);
+      return;
+    }
     if (selectedDate && isSameDay(selectedDate, date)) {
       setSelectedDate(null);
     } else {

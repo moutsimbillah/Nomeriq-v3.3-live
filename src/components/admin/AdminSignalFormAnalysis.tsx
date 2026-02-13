@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,9 +26,38 @@ export const AdminSignalFormAnalysis = React.memo(function AdminSignalFormAnalys
 }: AdminSignalFormAnalysisProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasAnyContent = formData.analysisVideoUrl || formData.analysisNotes || formData.analysisImageUrl;
+
+  useEffect(() => {
+    const resolvePreview = async () => {
+      const value = (formData.analysisImageUrl || "").trim();
+      if (!value) {
+        setImagePreviewUrl(null);
+        return;
+      }
+
+      if (/^https?:\/\//i.test(value)) {
+        setImagePreviewUrl(value);
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from("signal-analysis")
+        .createSignedUrl(value, 60 * 60);
+
+      if (error || !data?.signedUrl) {
+        setImagePreviewUrl(null);
+        return;
+      }
+
+      setImagePreviewUrl(data.signedUrl);
+    };
+
+    void resolvePreview();
+  }, [formData.analysisImageUrl]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -59,14 +88,9 @@ export const AdminSignalFormAnalysis = React.memo(function AdminSignalFormAnalys
 
       if (error) throw error;
 
-      // Get public URL
-      const { data: publicUrlData } = supabase.storage
-        .from('signal-analysis')
-        .getPublicUrl(filePath);
-
       setFormData((prev: any) => ({
         ...prev,
-        analysisImageUrl: publicUrlData.publicUrl
+        analysisImageUrl: filePath
       }));
 
       toast.success("Image uploaded successfully");
@@ -160,7 +184,7 @@ export const AdminSignalFormAnalysis = React.memo(function AdminSignalFormAnalys
           {formData.analysisImageUrl ? (
             <div className="relative">
               <img
-                src={formData.analysisImageUrl}
+                src={imagePreviewUrl || ""}
                 alt="Analysis preview"
                 className="w-full h-32 object-cover rounded-lg border border-border"
               />

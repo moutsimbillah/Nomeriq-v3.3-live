@@ -70,6 +70,9 @@ export interface Subscription {
   expires_at: string | null;
   package_id?: string | null;
   payment_id?: string | null;
+  provider?: 'manual' | 'stripe';
+  provider_subscription_id?: string | null;
+  provider_customer_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,13 +82,19 @@ export interface Payment {
   user_id: string;
   amount: number;
   currency: string;
-  tx_hash: string;
+  tx_hash: string | null;
   status: PaymentStatus;
   verified_by: string | null;
   verified_at: string | null;
   rejection_reason: string | null;
   created_at: string;
   payment_method: string | null;
+  provider?: 'manual' | 'stripe';
+  provider_payment_id?: string | null;
+  provider_session_id?: string | null;
+  provider_subscription_id?: string | null;
+  provider_customer_id?: string | null;
+  metadata?: Record<string, unknown> | null;
   user_bank_account_name: string | null;
   user_bank_account_number: string | null;
   user_bank_name: string | null;
@@ -102,6 +111,7 @@ export interface SubscriptionPackage {
   duration_type: SubscriptionDurationType;
   duration_months: number;
   availability: SubscriptionPackageAvailability;
+  stripe_price_id?: string | null;
   categories?: SignalCategory[]; // may be null/undefined on older rows
   sort_order: number;
   created_at: string;
@@ -115,6 +125,12 @@ export interface TelegramIntegration {
   chat_id: string;
   categories: SignalCategory[];
   is_enabled: boolean;
+  message_header?: string | null;
+  message_footer?: string | null;
+  message_tags?: string[] | null;
+  include_tp?: boolean;
+  include_sl?: boolean;
+  include_risk?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -234,6 +250,17 @@ export interface ProviderTelegramSettings {
   bot_token: string;
   chat_id: string;
   is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentProviderSettings {
+  id: string;
+  provider: string;
+  stripe_secret_key: string | null;
+  stripe_webhook_secret: string | null;
+  stripe_publishable_key: string | null;
+  stripe_webhook_endpoint: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -7,6 +7,7 @@ import { Eye, EyeOff, ArrowRight, Shield, LogIn } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthModal } from "@/contexts/AuthModalContext";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface LoginFormProps {
     onSwitchToSignup?: () => void;
@@ -33,7 +34,7 @@ export const LoginForm = ({ onSwitchToSignup, onClose }: LoginFormProps) => {
             if (error) {
                 toast({
                     title: "Login Failed",
-                    description: error.message || "Invalid email or password",
+                    description: getSafeErrorMessage(error, "Invalid email or password"),
                     variant: "destructive"
                 });
                 setIsLoading(false);

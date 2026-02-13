@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.global_telegram_settings (
 ALTER TABLE public.global_telegram_settings ENABLE ROW LEVEL SECURITY;
 
 -- Only super admins can view global settings
+DROP POLICY IF EXISTS "Super admins can view global telegram settings" ON public.global_telegram_settings;
 CREATE POLICY "Super admins can view global telegram settings"
 ON public.global_telegram_settings
 FOR SELECT
@@ -24,6 +25,7 @@ USING (
 );
 
 -- Only super admins can insert global settings
+DROP POLICY IF EXISTS "Super admins can insert global telegram settings" ON public.global_telegram_settings;
 CREATE POLICY "Super admins can insert global telegram settings"
 ON public.global_telegram_settings
 FOR INSERT
@@ -36,6 +38,7 @@ WITH CHECK (
 );
 
 -- Only super admins can update global settings
+DROP POLICY IF EXISTS "Super admins can update global telegram settings" ON public.global_telegram_settings;
 CREATE POLICY "Super admins can update global telegram settings"
 ON public.global_telegram_settings
 FOR UPDATE
@@ -48,6 +51,7 @@ USING (
 );
 
 -- Only super admins can delete global settings
+DROP POLICY IF EXISTS "Super admins can delete global telegram settings" ON public.global_telegram_settings;
 CREATE POLICY "Super admins can delete global telegram settings"
 ON public.global_telegram_settings
 FOR DELETE
@@ -60,6 +64,7 @@ USING (
 );
 
 -- Add trigger for updated_at
+DROP TRIGGER IF EXISTS update_global_telegram_settings_updated_at ON public.global_telegram_settings;
 CREATE TRIGGER update_global_telegram_settings_updated_at
 BEFORE UPDATE ON public.global_telegram_settings
 FOR EACH ROW

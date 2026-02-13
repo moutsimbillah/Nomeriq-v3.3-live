@@ -10,11 +10,13 @@ import { DateRange } from "react-day-picker";
 import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, filterByTime, sortTrades } from "@/components/filters/TradeFilters";
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
-import { Signal } from "@/types/database";
+import { Signal, UserTrade } from "@/types/database";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { TradeUpdatesDialog } from "@/components/signals/TradeUpdatesDialog";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { Button } from "@/components/ui/button";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
+import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 
 interface ActiveTradesTableProps {
   adminGlobalView?: boolean;
@@ -31,10 +33,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     realtime: true,
     adminGlobalView,
   });
-  const {
-    profile,
-    user,
-  } = useAuth();
+  const { user } = useAuth();
   const {
     settings
   } = useBrand();
@@ -78,11 +77,25 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     // Sort
     return sortTrades(result, sortBy);
   }, [trades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+  const providerNameMap = useProviderNameMap(
+    adminGlobalView ? filteredTrades.map((t) => t.signal?.created_by || "") : []
+  );
 
   const signalIds = useMemo(
     () => Array.from(new Set(filteredTrades.map((t) => t.signal?.id).filter((id): id is string => !!id))),
     [filteredTrades]
   );
+
+  useEffect(() => {
+    const signalsToPreload = filteredTrades
+      .map((trade) => trade.signal as Signal | null | undefined)
+      .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url));
+
+    signalsToPreload.forEach((signal) => {
+      void preloadSignalAnalysisMedia(signal);
+    });
+  }, [filteredTrades]);
+
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: true });
   const [seenUpdateCounts, setSeenUpdateCounts] = useState<Record<string, number>>({});
   const seenStorageKey = useMemo(
@@ -156,16 +169,10 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     currentIds.forEach((id) => prevUpdateIdsRef.add(id));
   }, [updatesBySignal, isProvider, adminGlobalView, isInitialUpdateLoad, prevUpdateIdsRef]);
 
-  const getOpenRisk = (trade: any) =>
+  const getOpenRisk = (trade: UserTrade) =>
     Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
-  const getTradeRiskPercent = (trade: any) => {
-    const configuredRiskPercent = Number(trade.risk_percent ?? riskPercent ?? 0);
-    const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-    const openRisk = getOpenRisk(trade);
-    if (initialRisk <= 0) return configuredRiskPercent;
-    return configuredRiskPercent * (openRisk / initialRisk);
-  };
-  const getTargetTpFromUpdates = (trade: any) => {
+  const getTradeRiskPercent = (_trade: UserTrade) => Number(settings?.global_risk_percent || 2);
+  const getTargetTpFromUpdates = (trade: UserTrade) => {
     const signal = trade.signal;
     const updates = updatesBySignal[signal?.id || ""] || [];
     if (updates.length === 0) return signal?.take_profit || 0;
@@ -179,7 +186,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
       ? Math.min(...tpPrices)
       : Math.max(...tpPrices);
   };
-  const calculateTradeRr = (trade: any) => {
+  const calculateTradeRr = (trade: UserTrade) => {
     const signal = trade.signal;
     const entry = signal?.entry_price || 0;
     const sl = signal?.stop_loss || 0;
@@ -192,11 +199,9 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     }
     return rr;
   };
-  const calculateTradePotentialProfit = (trade: any) => {
+  const calculateTradePotentialProfit = (trade: UserTrade) => {
     return getOpenRisk(trade) * calculateTradeRr(trade);
   };
-
-  const riskPercent = isProvider ? (settings?.global_risk_percent || 2) : (profile?.custom_risk_percent || settings?.global_risk_percent || 2);
   const totalRisk = filteredTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
   const averageLiveRiskPercent = filteredTrades.length
     ? filteredTrades.reduce((sum, t) => sum + getTradeRiskPercent(t), 0) / filteredTrades.length
@@ -282,7 +287,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
       <div className="glass-card p-4 sm:p-6 shadow-none">
         <p className="text-xs sm:text-sm text-muted-foreground mb-1">Open Positions</p>
-        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : trades.length}</p>
+        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : filteredTrades.length}</p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none">
         <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Risk</p>
@@ -339,16 +344,21 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
                 <div className={cn("p-2 rounded-xl shrink-0", signal?.direction === "BUY" ? "bg-success/20" : "bg-destructive/20")}>
                   {signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 text-success" /> : <ArrowDownRight className="w-4 h-4 text-destructive" />}
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm">{signal?.pair}</h3>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-sm">{signal?.pair}</h3>
                     <Badge variant="outline" className="text-xs">
-                      {signal?.category}
-                    </Badge>
+                          {signal?.category}
+                        </Badge>
+                      </div>
+                      {adminGlobalView && (
+                        <p className="text-xs text-muted-foreground">
+                          Provider: {providerNameMap[signal?.created_by || ""] || "Admin"}
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">{getTimeAgo(trade.created_at)}</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">{getTimeAgo(trade.created_at)}</p>
-                </div>
-              </div>
               <div className={cn("px-3 py-1.5 rounded-lg text-xs font-medium shrink-0", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
                 {signal?.direction}
               </div>
@@ -409,7 +419,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
               </Button>
               <div onClick={(e) => e.stopPropagation()}>
                 <TradeUpdatesDialog
-                  trade={trade as any}
+                  trade={trade}
                   updates={tradeUpdates}
                   hasUnseen={hasUnseenUpdates && !isProvider && !adminGlobalView}
                   unseenCount={unseenCount}
@@ -420,7 +430,12 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
           </div>
 
           {/* Desktop Layout (lg+) */}
-          <div className="hidden lg:grid grid-cols-[repeat(14,minmax(0,1fr))] gap-4 items-center">
+          <div className={cn(
+            "hidden lg:grid gap-4 items-center",
+            adminGlobalView
+              ? "grid-cols-[repeat(15,minmax(0,1fr))]"
+              : "grid-cols-[repeat(14,minmax(0,1fr))]"
+          )}>
             {/* Direction Icon - col-span-1 */}
             <div className={cn("p-2.5 rounded-xl justify-self-start", signal?.direction === "BUY" ? "bg-success/20" : "bg-destructive/20")}>
               {signal?.direction === "BUY" ? <ArrowUpRight className="w-5 h-5 text-success" /> : <ArrowDownRight className="w-5 h-5 text-destructive" />}
@@ -433,6 +448,16 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
                 {signal?.category}
               </Badge>
             </div>
+
+            {adminGlobalView && (
+              <div className="col-span-1 py-2 px-2 rounded-lg border border-border/50 text-center w-full">
+                <p className="text-muted-foreground mb-1 text-xs">Provider</p>
+                <p className="text-sm font-medium truncate">
+                  {providerNameMap[signal?.created_by || ""] || "Admin"}
+                </p>
+              </div>
+            )}
+
 
             {/* Direction Badge - col-span-1 */}
             <div className={cn("col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium w-full", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
@@ -492,7 +517,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
               <p className="text-muted-foreground mb-1 text-xs">Updates</p>
               <div className="flex justify-center">
                 <TradeUpdatesDialog
-                  trade={trade as any}
+                  trade={trade}
                   updates={tradeUpdates}
                   hasUnseen={hasUnseenUpdates && !isProvider && !adminGlobalView}
                   unseenCount={unseenCount}

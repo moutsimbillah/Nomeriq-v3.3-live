@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Sidebar, SidebarContent } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -29,6 +29,7 @@ export const DashboardLayout = ({
   action
 }: DashboardLayoutProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
   return <div className="min-h-screen bg-background flex flex-col">
     {/* Full Width Header - Sticky */}
@@ -104,7 +105,7 @@ export const DashboardLayout = ({
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Page Title & Subtitle */}
         {(title || subtitle || action) && (
-          <div className="px-4 lg:px-8 pt-6 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="px-4 lg:px-8 pt-6 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 user-page-enter user-page-enter-delay-1">
             <div>
               {title && <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold">{title}</h1>}
               {subtitle && <p className="text-muted-foreground mt-1 max-w-2xl">{subtitle}</p>}
@@ -115,7 +116,9 @@ export const DashboardLayout = ({
 
         {/* Content - scrollable */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
-          {children}
+          <div key={location.pathname} className="user-page-enter user-page-enter-delay-2">
+            {children}
+          </div>
         </div>
 
         {/* Footer */}

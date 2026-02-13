@@ -15,7 +15,7 @@ export const SubscriptionReminderPopup = () => {
     user
   } = useAuth();
   const { adminRole } = useAdminRoleContext();
-  const isSignalProvider = adminRole === "signal_provider_admin";
+  const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const navigate = useNavigate();
   const location = useLocation();
   const {

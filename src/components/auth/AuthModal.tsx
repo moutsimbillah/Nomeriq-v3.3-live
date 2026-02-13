@@ -50,7 +50,7 @@ export const AuthModal = () => {
     };
 
     return (
-        <div className={`fixed inset-0 z-[100] flex justify-center p-4 ${view === 'signup' ? 'items-start pt-32' : 'items-center'}`}>{/* Only signup modal gets extra top padding */}
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-200"
@@ -59,7 +59,7 @@ export const AuthModal = () => {
 
             {/* Modal */}
             <div className="relative w-full max-w-md transform transition-all duration-300 ease-out">
-                <div className="bg-background/95 backdrop-blur-xl border border-border/50 rounded-3xl shadow-2xl overflow-hidden opacity-100 scale-100">
+                <div className="bg-background/95 backdrop-blur-xl border border-border/50 rounded-3xl shadow-2xl overflow-hidden opacity-100 scale-100 max-h-[calc(100vh-2rem)] overflow-y-auto">
                     {/* Header */}
                     <div className="flex items-center justify-between px-6 py-4 border-b border-border/50">
                         <h2 className="text-lg font-semibold">{getTitle()}</h2>

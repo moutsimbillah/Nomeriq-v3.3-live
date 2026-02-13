@@ -1,4 +1,4 @@
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { useProviderAwareSignals } from "@/hooks/useProviderAwareSignals";
@@ -9,6 +9,12 @@ import { format, parseISO, subMonths, subWeeks, subYears } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, TrendingDown, Wallet, Target, ArrowUpRight, ArrowDownRight, Shield, AlertTriangle, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type Period = "1W" | "1M" | "3M" | "1Y" | "ALL";
 
@@ -26,31 +32,52 @@ const calculateRR = (signal: any): number => {
   return 1;
 };
 
-export const EquityChart = () => {
+const hasSameDayCollisions = (dates: Date[]) => {
+  const seen = new Set<string>();
+  for (const d of dates) {
+    const key = format(d, "yyyy-MM-dd");
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
+};
+
+interface EquityChartProps {
+  adminGlobalView?: boolean;
+}
+
+export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
   const { profile, user } = useAuth();
-  const { trades } = useProviderAwareTrades({ limit: 1000, realtime: true });
-  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000 });
+  const { trades } = useProviderAwareTrades({ limit: 1000, realtime: true, adminGlobalView });
+  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000, adminGlobalView });
   const { isProvider, isLoading: roleLoading } = useAdminRole();
   const { settings } = useBrand();
   const [period, setPeriod] = useState<Period>("1Y");
   const [currentBalance, setCurrentBalance] = useState<number>(0);
+  const providerScopedMode = isProvider && !adminGlobalView;
+
+  const getValidStartingBalance = (candidate: number | null | undefined) =>
+    typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
+      ? candidate
+      : null;
 
   // Regular users use live profile balance; providers use a fixed starting balance simulation
   const globalRiskPercent = settings?.global_risk_percent || 2;
 
-  // Fetch and subscribe to profile balance changes (regular user mode)
+  // Fetch profile balance for regular user mode only.
   useEffect(() => {
+    if (adminGlobalView) return;
     if (profile?.account_balance !== undefined) {
       setCurrentBalance(profile.account_balance || 0);
     }
-  }, [profile?.account_balance]);
+  }, [profile?.account_balance, adminGlobalView]);
 
   // Use unique channel name for balance updates
   const balanceChannelRef = useRef(`equity_balance_${Math.random().toString(36).substring(7)}`);
 
   // Subscribe to profile updates for real-time balance changes
   useEffect(() => {
-    if (!user || (isProvider && !roleLoading)) return;
+    if (!user || adminGlobalView || (providerScopedMode && !roleLoading)) return;
     const channel = supabase
       .channel(balanceChannelRef.current)
       .on(
@@ -75,15 +102,18 @@ export const EquityChart = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, isProvider, roleLoading]);
+  }, [user, providerScopedMode, roleLoading, adminGlobalView]);
 
   // Provider mode: FIXED starting balance (configured capital) + simulated current balance from signals
   // Regular users: actual trade history
   const { startingBalance, totalPnL, effectiveCurrentBalance } = useMemo(() => {
-    if (isProvider && !roleLoading) {
+    if (providerScopedMode && !roleLoading) {
       // Use the user's configured capital as the fixed starting point.
       // (This is what users expect when they set their starting balance.)
-      const fixedStarting = profile?.starting_balance ?? profile?.account_balance ?? 1000;
+      const fixedStarting =
+        getValidStartingBalance(profile?.starting_balance) ??
+        getValidStartingBalance(profile?.account_balance) ??
+        1000;
 
       // Providers ALWAYS use the global risk %.
       const riskPercent = settings?.global_risk_percent;
@@ -112,20 +142,39 @@ export const EquityChart = () => {
       };
     }
 
+    // Admin global mode: derive equity from all closed trade P&L.
+    if (adminGlobalView) {
+      const closedTrades = trades.filter((t) => t.result === "win" || t.result === "loss" || t.result === "breakeven");
+      const tradePnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+      const fixedStarting =
+        getValidStartingBalance(profile?.account_balance) ??
+        getValidStartingBalance(profile?.starting_balance) ??
+        1000;
+      const simulatedCurrent = fixedStarting + tradePnL;
+
+      return {
+        startingBalance: fixedStarting,
+        totalPnL: Number.isFinite(tradePnL) ? tradePnL : 0,
+        effectiveCurrentBalance: Number.isFinite(simulatedCurrent) ? simulatedCurrent : fixedStarting,
+      };
+    }
+
     // Regular user mode: Use actual profile balance and trade history
     const tradePnL = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const persistedStarting = profile?.starting_balance;
-    const calcStartingBalance =
-      typeof persistedStarting === "number"
-        ? persistedStarting
-        : currentBalance - tradePnL;
+    const persistedStarting = getValidStartingBalance(profile?.starting_balance);
+    const derivedStarting = currentBalance - tradePnL;
+    const safeDerivedStarting =
+      Number.isFinite(derivedStarting) && derivedStarting > 0
+        ? derivedStarting
+        : getValidStartingBalance(currentBalance) ?? 1000;
+    const calcStartingBalance = persistedStarting ?? safeDerivedStarting;
 
     return {
       startingBalance: calcStartingBalance,
       totalPnL: tradePnL,
       effectiveCurrentBalance: currentBalance,
     };
-  }, [isProvider, roleLoading, signals, trades, currentBalance, settings?.global_risk_percent, profile?.account_balance, profile?.starting_balance]);
+  }, [providerScopedMode, roleLoading, signals, trades, currentBalance, settings?.global_risk_percent, profile?.account_balance, profile?.starting_balance, adminGlobalView]);
 
   const chartData = useMemo(() => {
     const now = new Date();
@@ -149,7 +198,7 @@ export const EquityChart = () => {
         break;
     }
 
-    if (isProvider && !roleLoading) {
+    if (providerScopedMode && !roleLoading) {
       // Provider mode: Build chart from signals using FIXED starting balance + global risk %.
       const riskPercent = settings?.global_risk_percent;
       const RISK = typeof riskPercent === "number" ? riskPercent / 100 : 0;
@@ -178,10 +227,14 @@ export const EquityChart = () => {
       }
 
       let balance = balanceAtStart;
-      const data = [{ date: format(startDate, "MMM dd"), value: Math.round(balance * 100) / 100 }];
 
       // Only apply signals inside the period.
       const periodSignals = allClosedSignals.filter((s) => parseISO(s.closed_at!) >= startDate);
+      const showTimeOnAxis = hasSameDayCollisions(
+        periodSignals.map((s) => parseISO(s.closed_at!))
+      );
+      const axisFormat = showTimeOnAxis ? "MMM dd HH:mm" : "MMM dd";
+      const data = [{ date: format(startDate, axisFormat), value: Math.round(balance * 100) / 100 }];
 
       for (const s of periodSignals) {
         if (s.status === "tp_hit") {
@@ -191,7 +244,7 @@ export const EquityChart = () => {
         }
 
         data.push({
-          date: format(parseISO(s.closed_at!), "MMM dd"),
+          date: format(parseISO(s.closed_at!), axisFormat),
           value: Math.round(balance * 100) / 100,
         });
       }
@@ -214,32 +267,42 @@ export const EquityChart = () => {
       const filteredPnL = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
       const periodStartBalance = effectiveCurrentBalance - filteredPnL;
 
+      const showTimeOnAxis = hasSameDayCollisions(
+        filteredTrades.map((t) => new Date(t.created_at))
+      );
+      const axisFormat = showTimeOnAxis ? "MMM dd HH:mm" : "MMM dd";
+
       // Build cumulative balance from trades
       let balance = periodStartBalance;
-      const data = [{ date: format(startDate, "MMM dd"), value: balance }];
+      const data = [{ date: format(startDate, axisFormat), value: balance }];
       
       filteredTrades.forEach(trade => {
         balance += trade.pnl || 0;
         data.push({
-          date: format(new Date(trade.created_at), "MMM dd"),
+          date: format(new Date(trade.created_at), axisFormat),
           value: Math.round(balance * 100) / 100
         });
       });
       
       return data;
     }
-  }, [trades, signals, period, startingBalance, effectiveCurrentBalance, isProvider, roleLoading, globalRiskPercent, profile?.account_balance]);
+  }, [trades, signals, period, startingBalance, effectiveCurrentBalance, providerScopedMode, roleLoading, globalRiskPercent, profile?.account_balance]);
 
   const growth = startingBalance > 0 ? ((effectiveCurrentBalance - startingBalance) / startingBalance) * 100 : 0;
   const pnlAmount = effectiveCurrentBalance - startingBalance;
-  const hasNoActivity = isProvider ? signals.filter(s => ['tp_hit', 'sl_hit', 'breakeven'].includes(s.status)).length === 0 : trades.length === 0;
+  const hasNoActivity = providerScopedMode ? signals.filter(s => ['tp_hit', 'sl_hit', 'breakeven'].includes(s.status)).length === 0 : trades.length === 0;
   const isPositive = growth >= 0;
 
   // Calculate Account Health Meter
   const accountHealth = useMemo(() => {
-    if (isProvider && !roleLoading) {
+    if (providerScopedMode && !roleLoading) {
       // Provider mode: Calculate health from signals using actual balance
-      const providerBalance = startingBalance > 0 ? startingBalance : (profile?.starting_balance ?? profile?.account_balance ?? 1000);
+      const providerBalance =
+        startingBalance > 0
+          ? startingBalance
+          : getValidStartingBalance(profile?.starting_balance) ??
+            getValidStartingBalance(profile?.account_balance) ??
+            1000;
       const RISK_PERCENT = globalRiskPercent / 100;
       
       const closedSignals = signals
@@ -386,9 +449,10 @@ export const EquityChart = () => {
         equitySlope,
       };
     }
-  }, [trades, signals, effectiveCurrentBalance, startingBalance, isProvider, roleLoading, globalRiskPercent, profile?.account_balance]);
+  }, [trades, signals, effectiveCurrentBalance, startingBalance, providerScopedMode, roleLoading, globalRiskPercent, profile?.account_balance]);
 
   return (
+    <TooltipProvider>
     <div className="glass-card p-6 shadow-none h-full flex flex-col">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
@@ -431,76 +495,91 @@ export const EquityChart = () => {
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {/* Starting Balance */}
-        <div className="p-4 rounded-xl bg-secondary/30 border border-border/50">
-          <div className="flex items-center gap-2 mb-2">
-            <Wallet className="w-4 h-4 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Starting Balance</span>
-          </div>
-          <p className="text-2xl font-bold font-mono">
-            ${(startingBalance > 0 ? startingBalance : effectiveCurrentBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="p-4 rounded-xl bg-secondary/30 border border-border/50">
+              <div className="flex items-center gap-2 mb-2">
+                <Wallet className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Starting Balance</span>
+              </div>
+              <p className="text-2xl font-bold font-mono">
+                ${(startingBalance > 0 ? startingBalance : effectiveCurrentBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Balance at the beginning of this equity calculation period.</TooltipContent>
+        </Tooltip>
 
         {/* Current Balance */}
-        <div className={cn(
-          "p-4 rounded-xl border",
-          isPositive 
-            ? "bg-success/5 border-success/20" 
-            : "bg-destructive/5 border-destructive/20"
-        )}>
-          <div className="flex items-center gap-2 mb-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current Balance</span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <p className={cn(
-              "text-2xl font-bold font-mono",
-              isPositive ? "text-success" : "text-destructive"
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className={cn(
+              "p-4 rounded-xl border",
+              isPositive 
+                ? "bg-success/5 border-success/20" 
+                : "bg-destructive/5 border-destructive/20"
             )}>
-              ${effectiveCurrentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </p>
-            <span className={cn(
-              "text-xs font-medium flex items-center gap-0.5",
-              isPositive ? "text-success" : "text-destructive"
-            )}>
-              {isPositive ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-              {isPositive ? "+" : ""}{pnlAmount.toFixed(2)}
-            </span>
-          </div>
-        </div>
+              <div className="flex items-center gap-2 mb-2">
+                <Target className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current Balance</span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <p className={cn(
+                  "text-2xl font-bold font-mono",
+                  isPositive ? "text-success" : "text-destructive"
+                )}>
+                  ${effectiveCurrentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <span className={cn(
+                  "text-xs font-medium flex items-center gap-0.5",
+                  isPositive ? "text-success" : "text-destructive"
+                )}>
+                  {isPositive ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                  {isPositive ? "+" : ""}{pnlAmount.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Latest account balance including closed and currently reflected PnL.</TooltipContent>
+        </Tooltip>
 
         {/* Total Growth */}
-        <div className={cn(
-          "p-4 rounded-xl border",
-          isPositive 
-            ? "bg-success/5 border-success/20" 
-            : "bg-destructive/5 border-destructive/20"
-        )}>
-          <div className="flex items-center gap-2 mb-2">
-            {isPositive ? (
-              <TrendingUp className="w-4 h-4 text-success" />
-            ) : (
-              <TrendingDown className="w-4 h-4 text-destructive" />
-            )}
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Growth</span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <p className={cn(
-              "text-2xl font-bold font-mono",
-              isPositive ? "text-success" : "text-destructive"
-            )}>
-              {isPositive ? "+" : ""}{growth.toFixed(2)}%
-            </p>
-            <span className={cn(
-              "text-xs font-medium px-1.5 py-0.5 rounded-full",
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className={cn(
+              "p-4 rounded-xl border",
               isPositive 
-                ? "bg-success/20 text-success" 
-                : "bg-destructive/20 text-destructive"
+                ? "bg-success/5 border-success/20" 
+                : "bg-destructive/5 border-destructive/20"
             )}>
-              {isPositive ? "Profit" : "Loss"}
-            </span>
-          </div>
-        </div>
+              <div className="flex items-center gap-2 mb-2">
+                {isPositive ? (
+                  <TrendingUp className="w-4 h-4 text-success" />
+                ) : (
+                  <TrendingDown className="w-4 h-4 text-destructive" />
+                )}
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Growth</span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <p className={cn(
+                  "text-2xl font-bold font-mono",
+                  isPositive ? "text-success" : "text-destructive"
+                )}>
+                  {isPositive ? "+" : ""}{growth.toFixed(2)}%
+                </p>
+                <span className={cn(
+                  "text-xs font-medium px-1.5 py-0.5 rounded-full",
+                  isPositive 
+                    ? "bg-success/20 text-success" 
+                    : "bg-destructive/20 text-destructive"
+                )}>
+                  {isPositive ? "Profit" : "Loss"}
+                </span>
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>Percentage return from Starting Balance to Current Balance.</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Chart */}
@@ -537,7 +616,20 @@ export const EquityChart = () => {
                 axisLine={false}
                 tickLine={false}
                 dy={10}
+                interval="preserveStartEnd"
+                minTickGap={36}
                 tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                tickFormatter={(value) => {
+                  const text = String(value ?? "");
+                  // Compact format for dense intra-day labels: "09 14:52" instead of "Feb 09 14:52".
+                  const match = text.match(/^([A-Za-z]{3}\s+\d{2})\s+(\d{2}:\d{2})$/);
+                  if (match) {
+                    const [, day, time] = match;
+                    const dayNum = day.split(/\s+/)[1] || day;
+                    return `${dayNum} ${time}`;
+                  }
+                  return text;
+                }}
               />
               <YAxis
                 axisLine={false}
@@ -547,7 +639,7 @@ export const EquityChart = () => {
                 tickFormatter={value => `$${(value / 1000).toFixed(1)}k`}
                 width={50}
               />
-              <Tooltip
+              <RechartsTooltip
                 content={({ active, payload, label }) => {
                   if (active && payload && payload.length) {
                     const value = payload[0].value as number;
@@ -633,61 +725,92 @@ export const EquityChart = () => {
 
         {/* Health Factors */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="p-3 rounded-lg bg-secondary/50">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Current Drawdown</p>
-            <p className={cn(
-              "text-sm font-bold font-mono",
-              accountHealth.currentDrawdown > 15 ? "text-destructive" : 
-              accountHealth.currentDrawdown > 5 ? "text-warning" : "text-success"
-            )}>
-              {accountHealth.currentDrawdown.toFixed(1)}%
-            </p>
-          </div>
-          <div className="p-3 rounded-lg bg-secondary/50">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Max Drawdown</p>
-            <p className={cn(
-              "text-sm font-bold font-mono",
-              accountHealth.maxDrawdown > 15 ? "text-destructive" :
-              accountHealth.maxDrawdown > 5 ? "text-warning" : "text-success"
-            )}>
-              {accountHealth.maxDrawdown.toFixed(1)}%
-            </p>
-          </div>
-          <div className="p-3 rounded-lg bg-secondary/50">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Consecutive Losses</p>
-            <p className={cn(
-              "text-sm font-bold font-mono",
-              accountHealth.consecutiveLosses >= 3 ? "text-destructive" : 
-              accountHealth.consecutiveLosses >= 2 ? "text-warning" : "text-success"
-            )}>
-              {accountHealth.consecutiveLosses}
-            </p>
-          </div>
-          <div className="p-3 rounded-lg bg-secondary/50">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Risk Exposure</p>
-            <p className={cn(
-              "text-sm font-bold font-mono",
-              accountHealth.riskExposurePercent > 10 ? "text-destructive" : 
-              accountHealth.riskExposurePercent > 5 ? "text-warning" : "text-success"
-            )}>
-              {accountHealth.riskExposurePercent.toFixed(1)}%
-            </p>
-          </div>
-          <div className="p-3 rounded-lg bg-secondary/50">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Equity Slope</p>
-            <p className={cn(
-              "text-sm font-bold font-mono flex items-center gap-1",
-              accountHealth.equitySlope >= 0 ? "text-success" : "text-destructive"
-            )}>
-              {accountHealth.equitySlope >= 0 ? (
-                <><ArrowUpRight className="w-3 h-3" /> Positive</>
-              ) : (
-                <><ArrowDownRight className="w-3 h-3" /> Negative</>
-              )}
-            </p>
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="p-3 rounded-lg bg-secondary/50">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Current Drawdown</p>
+                <p className={cn(
+                  "text-sm font-bold font-mono",
+                  accountHealth.currentDrawdown > 15 ? "text-destructive" : 
+                  accountHealth.currentDrawdown > 5 ? "text-warning" : "text-success"
+                )}>
+                  {accountHealth.currentDrawdown.toFixed(1)}%
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>How far current equity is below its latest peak.</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="p-3 rounded-lg bg-secondary/50">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Max Drawdown</p>
+                <p className={cn(
+                  "text-sm font-bold font-mono",
+                  accountHealth.maxDrawdown > 15 ? "text-destructive" :
+                  accountHealth.maxDrawdown > 5 ? "text-warning" : "text-success"
+                )}>
+                  {accountHealth.maxDrawdown.toFixed(1)}%
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Largest peak-to-trough drop recorded in the selected history.</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="p-3 rounded-lg bg-secondary/50">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Consecutive Losses</p>
+                <p className={cn(
+                  "text-sm font-bold font-mono",
+                  accountHealth.consecutiveLosses >= 3 ? "text-destructive" : 
+                  accountHealth.consecutiveLosses >= 2 ? "text-warning" : "text-success"
+                )}>
+                  {accountHealth.consecutiveLosses}
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Number of losses in a row from most recent closed trades.</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="p-3 rounded-lg bg-secondary/50">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Risk Exposure</p>
+                <p className={cn(
+                  "text-sm font-bold font-mono",
+                  accountHealth.riskExposurePercent > 10 ? "text-destructive" : 
+                  accountHealth.riskExposurePercent > 5 ? "text-warning" : "text-success"
+                )}>
+                  {accountHealth.riskExposurePercent.toFixed(1)}%
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Open risk currently deployed relative to account equity.</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="p-3 rounded-lg bg-secondary/50">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Equity Slope</p>
+                <p className={cn(
+                  "text-sm font-bold font-mono flex items-center gap-1",
+                  accountHealth.equitySlope >= 0 ? "text-success" : "text-destructive"
+                )}>
+                  {accountHealth.equitySlope >= 0 ? (
+                    <><ArrowUpRight className="w-3 h-3" /> Positive</>
+                  ) : (
+                    <><ArrowDownRight className="w-3 h-3" /> Negative</>
+                  )}
+                </p>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Short-term direction of recent equity movement.</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 };
+

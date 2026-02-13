@@ -30,7 +30,7 @@ interface TradeClosedNotificationModalProps {
 }
 
 export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificationModalProps) => {
-  const { user, subscription, isAdmin, isLoading: authLoading, profile } = useAuth();
+  const { user, subscription, isAdmin, isLoading: authLoading } = useAuth();
   const { settings } = useBrand();
   const { allowedCategories } = useUserSubscriptionCategories();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -99,8 +99,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     lastSyncAtRef.current = saved || fallback;
   }, [user?.id]);
 
-  // Get risk percent from user profile or global settings
-  const riskPercent = profile?.custom_risk_percent || settings?.global_risk_percent || 2;
+  // Use global risk percent for all users
+  const riskPercent = settings?.global_risk_percent || 2;
 
   // Fetch user's trade for the signal
   const fetchUserTrade = async (signalId: string) => {

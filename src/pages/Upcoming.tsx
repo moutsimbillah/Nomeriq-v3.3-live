@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, Loader2, FileText } from "lucide-react";
@@ -9,6 +9,7 @@ import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, 
 import { useProviderAwareSignals } from "@/hooks/useProviderAwareSignals";
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 
 type UpcomingStatusFilter = 'all' | 'waiting' | 'preparing' | 'near_entry';
 
@@ -31,44 +32,68 @@ const Upcoming = () => {
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
 
-  // Filter for upcoming signals client-side (matching dashboard behavior)
-  const filteredUpcoming = allSignals.filter(s => 
-    (s.signal_type === 'upcoming' || s.status === 'upcoming' || s.upcoming_status) && 
-    s.status !== 'closed' && 
-    s.status !== 'cancelled'
-  );
+  const filteredTrades = useMemo(() => {
+    // Filter for upcoming signals client-side (matching dashboard behavior)
+    const filteredUpcoming = allSignals.filter(s =>
+      (s.signal_type === 'upcoming' || s.status === 'upcoming' || s.upcoming_status) &&
+      s.status !== 'closed' &&
+      s.status !== 'cancelled'
+    );
 
-  // Apply filters
-  let filteredTrades = [...filteredUpcoming];
+    let result = [...filteredUpcoming];
+    result = filterByTime(result, timeFilter, dateRange);
 
-  // Time filter
-  filteredTrades = filterByTime(filteredTrades, timeFilter, dateRange);
-
-  // Direction filter
-  if (directionFilter !== 'all') {
-    filteredTrades = filteredTrades.filter(t => t.direction === directionFilter);
-  }
-
-  // Category filter
-  if (categoryFilter !== 'all') {
-    filteredTrades = filteredTrades.filter(t => t.category?.toLowerCase() === categoryFilter.toLowerCase());
-  }
-
-  // Sort
-  filteredTrades = [...filteredTrades].sort((a, b) => {
-    switch (sortBy) {
-      case 'newest':
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      case 'oldest':
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-      case 'pair-asc':
-        return (a.pair || '').localeCompare(b.pair || '');
-      case 'pair-desc':
-        return (b.pair || '').localeCompare(a.pair || '');
-      default:
-        return 0;
+    if (directionFilter !== 'all') {
+      result = result.filter(t => t.direction === directionFilter);
     }
-  });
+
+    if (categoryFilter !== 'all') {
+      result = result.filter(t => t.category?.toLowerCase() === categoryFilter.toLowerCase());
+    }
+
+    const getPotential = (s: Signal) => {
+      const entry = Number(s.entry_price ?? 0);
+      const tp = Number(s.take_profit ?? 0);
+      return Math.abs(tp - entry);
+    };
+    const getRisk = (s: Signal) => {
+      const entry = Number(s.entry_price ?? 0);
+      const sl = Number(s.stop_loss ?? 0);
+      return Math.abs(entry - sl);
+    };
+
+    return [...result].sort((a, b) => {
+      switch (sortBy) {
+        case 'newest':
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        case 'oldest':
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case 'pair-asc':
+          return (a.pair || '').localeCompare(b.pair || '');
+        case 'pair-desc':
+          return (b.pair || '').localeCompare(a.pair || '');
+        case 'pnl-high':
+          return getPotential(b) - getPotential(a);
+        case 'pnl-low':
+          return getPotential(a) - getPotential(b);
+        case 'risk-high':
+          return getRisk(b) - getRisk(a);
+        case 'risk-low':
+          return getRisk(a) - getRisk(b);
+        default:
+          return 0;
+      }
+    });
+  }, [allSignals, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+
+  useEffect(() => {
+    filteredTrades
+      .filter((signal) => Boolean(signal.analysis_image_url))
+      .forEach((signal) => {
+        void preloadSignalAnalysisMedia(signal);
+      });
+  }, [filteredTrades]);
+
   const getStatusDisplay = (status: string | null) => {
     switch (status) {
       case 'near_entry':

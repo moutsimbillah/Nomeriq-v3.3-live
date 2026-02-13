@@ -4,7 +4,7 @@ import { useAdminRole } from "@/hooks/useAdminRole";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, Target, Flame, BarChart3 } from "lucide-react";
+import { TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
 import { useMemo } from "react";
 
 interface PairStats {
@@ -91,18 +91,23 @@ const getCategoryTheme = (category: string) => {
   };
 };
 
-export const PerformanceAnalytics = () => {
-  const { trades, isLoading } = useProviderAwareTrades({ realtime: true, limit: 1000 });
-  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000 });
+interface PerformanceAnalyticsProps {
+  adminGlobalView?: boolean;
+}
+
+export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAnalyticsProps) => {
+  const { trades, isLoading } = useProviderAwareTrades({ realtime: true, limit: 1000, adminGlobalView });
+  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000, adminGlobalView });
   const { isProvider, isLoading: roleLoading } = useAdminRole();
   const { profile } = useAuth();
   const { settings } = useBrand();
   const globalRiskPercent = settings?.global_risk_percent || 2;
   const accountBalance = profile?.account_balance || 0;
+  const providerScopedMode = isProvider && !adminGlobalView;
 
   // For providers, calculate simulated P&L per signal using actual balance
   const { closedTrades, closedSignalsWithPnL } = useMemo(() => {
-    if (isProvider && !roleLoading) {
+    if (providerScopedMode && !roleLoading) {
       // Provider mode: Use signals with simulated P&L based on actual balance
       const providerBalance = profile?.account_balance || 1000;
       const RISK_PERCENT = globalRiskPercent / 100;
@@ -149,14 +154,14 @@ export const PerformanceAnalytics = () => {
         closedSignalsWithPnL: []
       };
     }
-  }, [trades, signals, isProvider, roleLoading, globalRiskPercent, profile?.account_balance]);
+  }, [trades, signals, providerScopedMode, roleLoading, globalRiskPercent, profile?.account_balance]);
 
   // Calculate Best Performing Pairs
   const pairStatsMap = new Map<string, PairStats>();
   closedTrades.forEach((trade: any) => {
     // For providers, the trade object is a signal with added pnl/result
     // For regular users, trade.signal contains the signal data
-    const pair = isProvider ? (trade.pair || "Unknown") : (trade.signal?.pair || "Unknown");
+    const pair = providerScopedMode ? (trade.pair || "Unknown") : (trade.signal?.pair || "Unknown");
     const existing = pairStatsMap.get(pair) || {
       pair,
       wins: 0,
@@ -191,7 +196,7 @@ export const PerformanceAnalytics = () => {
   // Calculate Category Performance
   const categoryStatsMap = new Map<string, CategoryStats>();
   closedTrades.forEach((trade: any) => {
-    const category = isProvider ? (trade.category || "Unknown") : (trade.signal?.category || "Unknown");
+    const category = providerScopedMode ? (trade.category || "Unknown") : (trade.signal?.category || "Unknown");
     const existing = categoryStatsMap.get(category) || {
       category,
       wins: 0,
@@ -225,7 +230,7 @@ export const PerformanceAnalytics = () => {
     });
 
   // Calculate starting balance for drawdown calculations using actual balance
-  const effectiveStartBalance = isProvider ? (profile?.account_balance || 1000) : accountBalance;
+  const effectiveStartBalance = providerScopedMode ? (profile?.account_balance || 1000) : accountBalance;
 
   // Calculate Max Drawdown & Recovery based on account balance
   let runningBalance = effectiveStartBalance - closedTrades.reduce((sum, t: any) => sum + (t.pnl || 0), 0);
@@ -287,75 +292,6 @@ export const PerformanceAnalytics = () => {
     }
   });
   const avgRR = rrCount > 0 ? totalRR / rrCount : 0;
-
-  // Calculate Streak Tracking
-  let currentWinStreak = 0;
-  let bestWinStreak = 0;
-  let currentLossStreak = 0;
-  let tempWinStreak = 0;
-  let tempLossStreak = 0;
-
-  sortedTrades.forEach((trade: any) => {
-    if (trade.result === "win") {
-      tempWinStreak++;
-      tempLossStreak = 0;
-      if (tempWinStreak > bestWinStreak) bestWinStreak = tempWinStreak;
-    } else if (trade.result === "loss") {
-      tempLossStreak++;
-      tempWinStreak = 0;
-    }
-  });
-
-  // Current streaks (from the end)
-  for (let i = sortedTrades.length - 1; i >= 0; i--) {
-    if (sortedTrades[i].result === "win") {
-      currentWinStreak++;
-    } else {
-      break;
-    }
-  }
-  for (let i = sortedTrades.length - 1; i >= 0; i--) {
-    if (sortedTrades[i].result === "loss") {
-      currentLossStreak++;
-    } else {
-      break;
-    }
-  }
-
-  // Calculate Signal Quality Score (0-100)
-  // Based on: Win Rate (40%), R:R Quality (30%), Consistency (30%)
-  const winRateScore = Math.min(100, (closedTrades.length > 0 
-    ? (closedTrades.filter((t: any) => t.result === "win").length / closedTrades.length) * 100 
-    : 0));
-  
-  const rrScore = Math.min(100, avgRR > 0 ? (avgRR / 3) * 100 : 0); // 3:1 R:R = 100%
-  
-  // Consistency: Lower variance = higher score
-  const pnlValues = closedTrades.map((t: any) => t.pnl || 0);
-  const avgPnl = pnlValues.length > 0 ? pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length : 0;
-  const variance = pnlValues.length > 0 
-    ? pnlValues.reduce((sum, val) => sum + Math.pow(val - avgPnl, 2), 0) / pnlValues.length 
-    : 0;
-  const stdDev = Math.sqrt(variance);
-  const consistencyScore = Math.max(0, Math.min(100, 100 - (stdDev / (Math.abs(avgPnl) + 1)) * 10));
-  
-  const signalQualityScore = closedTrades.length >= 3 
-    ? (winRateScore * 0.4) + (rrScore * 0.3) + (consistencyScore * 0.3)
-    : 0;
-  
-  const getScoreColor = (score: number) => {
-    if (score >= 70) return "text-success";
-    if (score >= 40) return "text-warning";
-    return "text-destructive";
-  };
-  
-  const getScoreLabel = (score: number) => {
-    if (score >= 80) return "Excellent";
-    if (score >= 60) return "Good";
-    if (score >= 40) return "Average";
-    if (score >= 20) return "Below Avg";
-    return "Poor";
-  };
 
   if (isLoading) {
     return (
@@ -603,51 +539,6 @@ export const PerformanceAnalytics = () => {
               </div>
             </div>
 
-            <div className="p-4 rounded-lg bg-secondary/30">
-              <div className="flex items-center gap-2 mb-3">
-                <Flame className="w-4 h-4 text-warning" />
-                <p className="text-sm font-medium">Streak Tracking</p>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div>
-                  <p className="text-xs text-muted-foreground">Current Win</p>
-                  <p className="text-lg font-bold text-success">{currentWinStreak}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Best Win</p>
-                  <p className="text-lg font-bold text-success">{bestWinStreak}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Current Loss</p>
-                  <p className="text-lg font-bold text-destructive">{currentLossStreak}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Signal Quality Score */}
-            <div className="p-4 rounded-lg bg-secondary/30">
-              <p className="text-sm text-muted-foreground mb-2">Signal Quality Score</p>
-              <div className="flex items-center justify-between mb-2">
-                <span className={cn("text-2xl font-bold font-mono", getScoreColor(signalQualityScore))}>
-                  {signalQualityScore.toFixed(0)}
-                </span>
-                <span className={cn("text-sm font-medium px-2 py-1 rounded-full bg-secondary", getScoreColor(signalQualityScore))}>
-                  {getScoreLabel(signalQualityScore)}
-                </span>
-              </div>
-              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    signalQualityScore >= 70 ? "bg-success" : signalQualityScore >= 40 ? "bg-warning" : "bg-destructive"
-                  )}
-                  style={{ width: `${Math.min(signalQualityScore, 100)}%` }}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                {closedTrades.length < 3 ? "Min. 3 trades required" : "Based on win rate, R:R & consistency"}
-              </p>
-            </div>
           </div>
         )}
       </div>

@@ -1,10 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Loader2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
-import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { format, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
 import { DateRange } from "react-day-picker";
@@ -13,24 +12,22 @@ import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { Signal } from "@/types/database";
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
+import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 
 const History = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
   const {
     trades,
     isLoading,
-    totalCount,
-    isProvider,
   } = useProviderAwareTrades({
     realtime: true,
     limit: 1000,
   });
-  const { profile } = useAuth();
   const { settings } = useBrand();
 
   // Global risk percent for consistent display
   // Providers should always use the configured global provider risk.
-  const globalRiskPercent = isProvider ? (settings?.global_risk_percent || 2) : (profile?.custom_risk_percent || settings?.global_risk_percent || 2);
+  const globalRiskPercent = settings?.global_risk_percent || 2;
 
   // Filter states
   const [sortBy, setSortBy] = useState<SortOption>('newest');
@@ -44,7 +41,12 @@ const History = () => {
   let closedTrades = trades.filter(t => t.result === 'win' || t.result === 'loss' || t.result === 'breakeven');
 
   // Apply filters
-  closedTrades = filterByTime(closedTrades, timeFilter, dateRange);
+  closedTrades = filterByTime(
+    closedTrades,
+    timeFilter,
+    dateRange,
+    (t) => new Date(t.closed_at || t.created_at)
+  );
 
   // Direction filter
   if (directionFilter !== 'all') {
@@ -63,11 +65,22 @@ const History = () => {
 
   // Sort
   closedTrades = sortTrades(closedTrades, sortBy);
+
+  useEffect(() => {
+    closedTrades
+      .map((trade) => trade.signal as Signal | null | undefined)
+      .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url))
+      .forEach((signal) => {
+        void preloadSignalAnalysisMedia(signal);
+      });
+  }, [closedTrades]);
+
   const wins = closedTrades.filter(t => t.result === "win").length;
   const losses = closedTrades.filter(t => t.result === "loss").length;
   const breakevens = closedTrades.filter(t => t.result === "breakeven").length;
   const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100).toFixed(1) : "0";
+  const decidedTrades = wins + losses;
+  const winRate = decidedTrades > 0 ? (wins / decidedTrades * 100).toFixed(1) : "0";
   return <DashboardLayout title="Trade History">
     {/* Summary Cards */}
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
@@ -124,28 +137,28 @@ const History = () => {
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 SL / TP
               </th>
-              <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Result
               </th>
-              <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 R:R
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Risk
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Potential Profit
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Duration
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 P&L
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Closed At
               </th>
-              <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                 Details
               </th>
             </tr>
@@ -196,12 +209,12 @@ const History = () => {
                       </p>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-center">
+                  <td className="px-6 py-4 text-left">
                     <Badge variant="outline" className={cn(trade.result === "win" ? "border-success/30 text-success bg-success/10" : trade.result === "breakeven" ? "border-warning/30 text-warning bg-warning/10" : "border-destructive/30 text-destructive bg-destructive/10")}>
                       {trade.result === "win" ? "Win" : trade.result === "breakeven" ? "Breakeven" : "Loss"}
                     </Badge>
                   </td>
-                  <td className="px-6 py-4 text-center">
+                  <td className="px-6 py-4 text-left">
                     {(() => {
                       const entry = trade.signal?.entry_price || 0;
                       const sl = trade.signal?.stop_loss || 0;
@@ -215,13 +228,13 @@ const History = () => {
                       return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
                     })()}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     <div>
                       <p className="text-sm font-mono">{globalRiskPercent}%</p>
                       <p className="text-xs text-muted-foreground">${trade.risk_amount.toFixed(2)}</p>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     {(() => {
                       const entry = trade.signal?.entry_price || 0;
                       const sl = trade.signal?.stop_loss || 0;
@@ -236,7 +249,7 @@ const History = () => {
                       return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
                     })()}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     {(() => {
                       if (!trade.created_at || !trade.closed_at) return <span className="text-muted-foreground">-</span>;
                       const start = new Date(trade.created_at);
@@ -253,12 +266,12 @@ const History = () => {
                       return <span className="font-mono text-sm text-secondary-foreground">{duration}</span>;
                     })()}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>
                       {(trade.pnl || 0) >= 0 ? "+" : ""}${(trade.pnl || 0).toFixed(2)}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     <div>
                       <p className="text-sm">
                         {trade.closed_at ? format(new Date(trade.closed_at), 'yyyy-MM-dd') : '-'}
@@ -268,9 +281,9 @@ const History = () => {
                       </p>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-left">
                     <div onClick={(e) => e.stopPropagation()}>
-                      <TradeDetailsDialog trade={trade as any} />
+                      <TradeDetailsDialog trade={trade} />
                     </div>
                   </td>
                 </tr>

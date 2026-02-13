@@ -3,6 +3,7 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -16,11 +17,13 @@ import {
   ToggleRight,
   Send,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { TelegramIntegration, SignalCategory } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 type EditableIntegration = Omit<TelegramIntegration, "id" | "created_at" | "updated_at"> & {
   id?: string;
@@ -33,6 +36,14 @@ const CATEGORY_OPTIONS: SignalCategory[] = [
   "Indices",
   "Commodities",
 ];
+const DEFAULT_MESSAGE = "Trade responsibly!";
+const DEFAULT_HEADER = "";
+
+const getOrderedCategories = (categories?: SignalCategory[]) => {
+  const source = categories && categories.length > 0 ? categories : CATEGORY_OPTIONS;
+  const unique = Array.from(new Set(source)) as SignalCategory[];
+  return CATEGORY_OPTIONS.filter((cat) => unique.includes(cat));
+};
 
 const AdminTelegramIntegrations = () => {
   const [integrations, setIntegrations] = useState<TelegramIntegration[]>([]);
@@ -49,6 +60,8 @@ const AdminTelegramIntegrations = () => {
     chat_id: "",
     categories: CATEGORY_OPTIONS,
     is_enabled: true,
+    message_header: DEFAULT_HEADER,
+    message_footer: DEFAULT_MESSAGE,
   });
 
   const loadIntegrations = async () => {
@@ -85,6 +98,8 @@ const AdminTelegramIntegrations = () => {
       chat_id: "",
       categories: CATEGORY_OPTIONS,
       is_enabled: true,
+      message_header: DEFAULT_HEADER,
+      message_footer: DEFAULT_MESSAGE,
     });
     setIsDialogOpen(true);
   };
@@ -101,6 +116,8 @@ const AdminTelegramIntegrations = () => {
           ? integration.categories
           : CATEGORY_OPTIONS) as SignalCategory[],
       is_enabled: integration.is_enabled,
+      message_header: integration.message_header ?? DEFAULT_HEADER,
+      message_footer: integration.message_footer ?? DEFAULT_MESSAGE,
     });
     setIsDialogOpen(true);
   };
@@ -156,20 +173,46 @@ const AdminTelegramIntegrations = () => {
         chat_id: formState.chat_id.trim(),
         categories: formState.categories,
         is_enabled: formState.is_enabled,
+        message_header: (formState.message_header || "").trim() || null,
+        message_footer: (formState.message_footer || "").trim() || DEFAULT_MESSAGE,
       };
 
-      if (editingIntegration) {
-        const { error } = await supabase
-          .from("telegram_integrations")
-          .update(payload)
-          .eq("id", editingIntegration.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("telegram_integrations")
-          .insert(payload);
-        if (error) throw error;
+      const saveWithPayload = async (data: typeof payload) => {
+        if (editingIntegration) {
+          return supabase
+            .from("telegram_integrations")
+            .update(data)
+            .eq("id", editingIntegration.id);
+        }
+        return supabase.from("telegram_integrations").insert(data);
+      };
+
+      let { error } = await saveWithPayload(payload);
+
+      const isMissingHeaderColumnError =
+        !!error &&
+        ((error as { code?: string }).code === "42703" ||
+          /message_header/i.test(
+            `${(error as { message?: string }).message || ""} ${(error as { details?: string }).details || ""}`
+          ));
+
+      if (isMissingHeaderColumnError) {
+        const fallbackPayload = {
+          name: payload.name,
+          bot_token: payload.bot_token,
+          chat_id: payload.chat_id,
+          categories: payload.categories,
+          is_enabled: payload.is_enabled,
+          message_footer: payload.message_footer,
+        };
+        const fallbackResult = await saveWithPayload(fallbackPayload as typeof payload);
+        error = fallbackResult.error;
+        if (!error) {
+          toast.warning("Saved without header message. Please run latest Telegram migration.");
+        }
       }
+
+      if (error) throw error;
 
       toast.success(
         editingIntegration
@@ -181,9 +224,27 @@ const AdminTelegramIntegrations = () => {
       await loadIntegrations();
     } catch (err) {
       console.error("Error saving Telegram integration:", err);
-      toast.error("Failed to save Telegram integration");
+      toast.error(getSafeErrorMessage(err, "Failed to save Telegram integration. Please try again."));
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteIntegration = async (integration: TelegramIntegration) => {
+    const ok = confirm(`Delete "${integration.name}" integration? This cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase
+        .from("telegram_integrations")
+        .delete()
+        .eq("id", integration.id);
+      if (error) throw error;
+      toast.success("Telegram integration deleted");
+      await loadIntegrations();
+    } catch (err) {
+      console.error("Error deleting Telegram integration:", err);
+      toast.error("Failed to delete Telegram integration");
     }
   };
 
@@ -228,11 +289,7 @@ const AdminTelegramIntegrations = () => {
       toast.success("Test successful. Message sent to Telegram.");
     } catch (err) {
       console.error("Telegram test failed:", err);
-      toast.error(
-        err instanceof Error
-          ? `Test failed: ${err.message}`
-          : "Test failed. Please verify token/chat ID and bot permissions."
-      );
+      toast.error(getSafeErrorMessage(err, "Test failed. Please verify token/chat ID and bot permissions."));
     } finally {
       setIsTesting(false);
     }
@@ -299,6 +356,9 @@ const AdminTelegramIntegrations = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
                       Chat ID
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Footer Message
+                    </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wide">
                       Status
                     </th>
@@ -314,24 +374,47 @@ const AdminTelegramIntegrations = () => {
                         <div className="font-medium">{integration.name}</div>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {(integration.categories ?? CATEGORY_OPTIONS).map(
-                            (cat) => (
-                              <Badge
-                                key={cat}
-                                variant="outline"
-                                className="text-2xs px-2 py-0.5"
-                              >
-                                {cat}
-                              </Badge>
-                            )
-                          )}
-                        </div>
+                        {(() => {
+                          const orderedCategories = getOrderedCategories(integration.categories);
+                          const isAllCategories =
+                            orderedCategories.length === CATEGORY_OPTIONS.length;
+
+                          return isAllCategories ? (
+                            <Badge
+                              variant="outline"
+                              className="px-2.5 py-1 text-[11px] border-primary/30 text-primary bg-primary/10"
+                            >
+                              All Categories
+                            </Badge>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5 max-w-[220px]">
+                              {orderedCategories.map((cat) => (
+                                <Badge
+                                  key={cat}
+                                  variant="outline"
+                                  className="px-2 py-0.5 text-[11px] border-border/70 text-foreground/90"
+                                >
+                                  {cat}
+                                </Badge>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-mono text-xs">
                           {integration.chat_id}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1 max-w-[260px]">
+                          <p className="text-[10px] text-muted-foreground truncate">
+                            Header: {(integration.message_header || "").trim() || "Default"}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground truncate">
+                            Footer: {(integration.message_footer || "").trim() || "No message set"}
+                          </p>
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <Badge
@@ -365,6 +448,14 @@ const AdminTelegramIntegrations = () => {
                             onClick={() => openEditDialog(integration)}
                           >
                             <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteIntegration(integration)}
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>
                       </td>
@@ -447,6 +538,46 @@ const AdminTelegramIntegrations = () => {
                   })}
                 </div>
               </div>
+
+              <div className="rounded-lg border border-border/60 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Message Template</p>
+                  <p className="text-xs text-muted-foreground">
+                    Header overrides the default signal title. Footer is appended to all alerts.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Header Message</label>
+                  <Input
+                    value={formState.message_header || ""}
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        message_header: e.target.value,
+                      }))
+                    }
+                    placeholder="Leave empty to use default (e.g. NEW TRADING SIGNAL)"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Footer Message</label>
+                  <Textarea
+                    value={formState.message_footer || ""}
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        message_footer: e.target.value,
+                      }))
+                    }
+                    placeholder={DEFAULT_MESSAGE}
+                    className="min-h-[70px]"
+                  />
+                </div>
+
+              </div>
+
               <div className="flex items-center justify-between pt-2">
                 <div className="flex items-center gap-2 text-sm">
                   <span

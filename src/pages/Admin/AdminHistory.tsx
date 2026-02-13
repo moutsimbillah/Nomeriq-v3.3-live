@@ -10,6 +10,8 @@ import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, 
 import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { Signal } from "@/types/database";
+import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
+import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 
 const AdminHistory = () => {
     const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -32,9 +34,17 @@ const AdminHistory = () => {
 
     // Filter closed trades only (win, loss, or breakeven)
     let closedTrades = trades.filter(t => t.result === 'win' || t.result === 'loss' || t.result === 'breakeven');
+    const providerNameMap = useProviderNameMap(
+      closedTrades.map((t) => t.signal?.created_by || "")
+    );
 
     // Apply filters
-    closedTrades = filterByTime(closedTrades, timeFilter, dateRange);
+    closedTrades = filterByTime(
+        closedTrades,
+        timeFilter,
+        dateRange,
+        (t) => new Date(t.closed_at || t.created_at)
+    );
 
     // Direction filter
     if (directionFilter !== 'all') {
@@ -58,7 +68,8 @@ const AdminHistory = () => {
     const losses = closedTrades.filter(t => t.result === "loss").length;
     const breakevens = closedTrades.filter(t => t.result === "breakeven").length;
     const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const winRate = closedTrades.length > 0 ? (wins / closedTrades.length * 100).toFixed(1) : "0";
+    const decidedTrades = wins + losses;
+    const winRate = decidedTrades > 0 ? (wins / decidedTrades * 100).toFixed(1) : "0";
 
     return (
         <AdminLayout title="Global Trade History">
@@ -128,6 +139,9 @@ const AdminHistory = () => {
                                         Pair
                                     </th>
                                     <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                        Provider
+                                    </th>
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Direction
                                     </th>
                                     <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
@@ -136,26 +150,29 @@ const AdminHistory = () => {
                                     <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         SL / TP
                                     </th>
-                                    <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Result
                                     </th>
-                                    <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         R:R
                                     </th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Risk
                                     </th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Potential Profit
                                     </th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Duration
                                     </th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         P&L
                                     </th>
-                                    <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                                         Closed At
+                                    </th>
+                                    <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                                        Details
                                     </th>
                                 </tr>
                             </thead>
@@ -183,6 +200,11 @@ const AdminHistory = () => {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">
+                                                <span className="text-sm text-muted-foreground">
+                                                    {providerNameMap[trade.signal?.created_by || ""] || "Admin"}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4">
                                                 <div className={cn("inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium w-20", trade.signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
                                                     {trade.signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 shrink-0" /> : <ArrowDownRight className="w-4 h-4 shrink-0" />}
                                                     {trade.signal?.direction}
@@ -205,12 +227,12 @@ const AdminHistory = () => {
                                                     </p>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-center">
+                                            <td className="px-6 py-4 text-left">
                                                 <Badge variant="outline" className={cn(trade.result === "win" ? "border-success/30 text-success bg-success/10" : trade.result === "breakeven" ? "border-warning/30 text-warning bg-warning/10" : "border-destructive/30 text-destructive bg-destructive/10")}>
                                                     {trade.result === "win" ? "Win" : trade.result === "breakeven" ? "Breakeven" : "Loss"}
                                                 </Badge>
                                             </td>
-                                            <td className="px-6 py-4 text-center">
+                                            <td className="px-6 py-4 text-left">
                                                 {(() => {
                                                     const entry = trade.signal?.entry_price || 0;
                                                     const sl = trade.signal?.stop_loss || 0;
@@ -224,13 +246,17 @@ const AdminHistory = () => {
                                                     return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
                                                 })()}
                                             </td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-left">
                                                 <div>
-                                                    {/* In global view, we show the actual risk taken by the user, or we could show risk percent if available in trade data, but trade.risk_amount is the actual dollar risk */}
-                                                    <p className="text-xs text-muted-foreground">${trade.risk_amount.toFixed(2)}</p>
+                                                    <p className="text-sm font-mono font-semibold text-foreground">
+                                                        {Number(trade.risk_percent || 0).toFixed(0)}%
+                                                    </p>
+                                                    <p className="text-xs font-mono text-muted-foreground">
+                                                        ${Number(trade.risk_amount || 0).toFixed(2)}
+                                                    </p>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-left">
                                                 {(() => {
                                                     const entry = trade.signal?.entry_price || 0;
                                                     const sl = trade.signal?.stop_loss || 0;
@@ -245,7 +271,7 @@ const AdminHistory = () => {
                                                     return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
                                                 })()}
                                             </td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-left">
                                                 {(() => {
                                                     if (!trade.created_at || !trade.closed_at) return <span className="text-muted-foreground">-</span>;
                                                     const start = new Date(trade.created_at);
@@ -262,12 +288,12 @@ const AdminHistory = () => {
                                                     return <span className="font-mono text-sm text-secondary-foreground">{duration}</span>;
                                                 })()}
                                             </td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-left">
                                                 <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>
                                                     {(trade.pnl || 0) >= 0 ? "+" : ""}${(trade.pnl || 0).toFixed(2)}
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-left">
                                                 <div>
                                                     <p className="text-sm">
                                                         {trade.closed_at ? format(new Date(trade.closed_at), 'yyyy-MM-dd') : '-'}
@@ -275,6 +301,11 @@ const AdminHistory = () => {
                                                     <p className="text-xs text-muted-foreground">
                                                         {trade.closed_at ? format(new Date(trade.closed_at), 'HH:mm') : ''}
                                                     </p>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-left">
+                                                <div onClick={(e) => e.stopPropagation()}>
+                                                    <TradeDetailsDialog trade={trade} />
                                                 </div>
                                             </td>
                                         </tr>

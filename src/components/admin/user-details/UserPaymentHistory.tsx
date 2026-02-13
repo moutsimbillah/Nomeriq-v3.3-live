@@ -11,12 +11,14 @@ interface Payment {
   id: string;
   amount: number;
   currency: string;
-  tx_hash: string;
+  tx_hash: string | null;
   status: string;
   created_at: string;
   verified_at: string | null;
   rejection_reason: string | null;
   payment_method?: string | null;
+  provider_session_id?: string | null;
+  provider_payment_id?: string | null;
   user_bank_account_name?: string | null;
   user_bank_account_number?: string | null;
   user_bank_name?: string | null;
@@ -234,6 +236,11 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                         </div>
                       </div>
                     </>
+                  ) : selectedPayment.payment_method === "stripe" ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Provider</p>
+                      <p className="text-sm font-medium">Stripe Checkout</p>
+                    </div>
                   ) : (
                     <>
                       <div>
@@ -242,15 +249,17 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                           {settings?.wallet_address || 'N/A'}
                         </code>
                       </div>
-                      <a
-                        href={`https://tronscan.org/#/transaction/${selectedPayment.tx_hash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-primary hover:underline text-sm"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        View on TronScan
-                      </a>
+                      {selectedPayment.tx_hash && selectedPayment.payment_method === "usdt_trc20" && (
+                        <a
+                          href={`https://tronscan.org/#/transaction/${selectedPayment.tx_hash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-primary hover:underline text-sm"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          View on TronScan
+                        </a>
+                      )}
                     </>
                   )}
                 </div>
@@ -267,13 +276,36 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                     <p className="text-xs text-muted-foreground mb-1">Transaction Hash / Reference</p>
                     <div className="flex items-center gap-2">
                       <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all flex-1">
-                        {selectedPayment.tx_hash}
+                        {selectedPayment.tx_hash || '-'}
                       </code>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => copyHash(selectedPayment.tx_hash)}>
-                        {copiedHash === selectedPayment.tx_hash ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-                      </Button>
+                      {selectedPayment.tx_hash && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0"
+                          onClick={() => selectedPayment.tx_hash && copyHash(selectedPayment.tx_hash)}
+                        >
+                          {copiedHash === selectedPayment.tx_hash ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                        </Button>
+                      )}
                     </div>
                   </div>
+                  {selectedPayment.payment_method === "stripe" && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Stripe Session ID</p>
+                        <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
+                          {selectedPayment.provider_session_id || "-"}
+                        </code>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Stripe Payment ID</p>
+                        <code className="text-xs bg-background px-2 py-1 rounded font-mono break-all block">
+                          {selectedPayment.provider_payment_id || "-"}
+                        </code>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Submitted On</p>
                     <p className="text-sm font-medium">

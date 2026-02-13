@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useBrand } from "@/contexts/BrandContext";
 import { LogoIcon } from "@/components/icons/TradingIcons";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -17,6 +17,7 @@ interface AuthLayoutProps {
 export const AuthLayout = ({ children }: AuthLayoutProps) => {
   const { settings, isLoading } = useBrand();
   const { theme } = useTheme();
+  const location = useLocation();
 
   const isDark = theme === 'dark';
 
@@ -46,7 +47,7 @@ export const AuthLayout = ({ children }: AuthLayoutProps) => {
       </div>
 
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 px-4 pt-4">
+      <header className="fixed top-0 left-0 right-0 z-50 px-4 pt-4 user-page-enter user-page-enter-delay-1">
         <nav className="nav-float mx-auto max-w-6xl bg-background/80 backdrop-blur-xl border border-border/50 px-6 py-3 flex items-center justify-between gap-8 shadow-2xl dark:bg-slate-900/80 dark:border-white/10 rounded-2xl">
           <div className="flex items-center space-x-2">
             <Link to="/" className="flex items-center gap-2 group">
@@ -85,7 +86,7 @@ export const AuthLayout = ({ children }: AuthLayoutProps) => {
       {/* Main Content */}
       <main className="relative z-10 min-h-screen pt-24 px-4 flex items-center justify-center">
         <div className="w-full max-w-3xl mx-auto">
-          <section className="w-full max-w-xl mx-auto">
+          <section key={location.pathname} className="w-full max-w-xl mx-auto user-page-enter user-page-enter-delay-2">
             {children}
           </section>
         </div>

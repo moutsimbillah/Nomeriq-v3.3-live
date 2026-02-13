@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -7,7 +7,8 @@ import { Signal, UserTrade } from "@/types/database";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { format, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
-import { FileText, ExternalLink } from "lucide-react";
+import { FileText, ExternalLink, Image as ImageIcon, Play } from "lucide-react";
+import { resolveAnalysisImageUrl } from "@/lib/signalAnalysisMedia";
 
 interface TradeDetailsDialogProps {
   trade: UserTrade;
@@ -37,6 +38,18 @@ const getDuration = (createdAt?: string, closedAt?: string | null) => {
   if (days > 0) return `${days}d ${hours % 24}h`;
   if (hours > 0) return `${hours}h ${minutes % 60}m`;
   return `${minutes}m`;
+};
+
+const extractYouTubeId = (url: string): string | null => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /youtube\.com\/shorts\/([^&\n?#]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
 };
 
 export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
@@ -70,10 +83,30 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
   }, [signal, updates]);
 
   const rr = useMemo(() => calculateRr(signal, currentTargetTp), [signal, currentTargetTp]);
+  const [resolvedImageUrl, setResolvedImageUrl] = useState<string | null>(null);
+  const [isImageLoading, setIsImageLoading] = useState(false);
 
   const potentialProfit = (trade.risk_amount || 0) * rr;
   const duration = getDuration(trade.created_at, trade.closed_at);
   const hasAnalysis = Boolean(signal?.analysis_notes || signal?.analysis_video_url || signal?.analysis_image_url);
+  const videoId = signal?.analysis_video_url ? extractYouTubeId(signal.analysis_video_url) : null;
+
+  useEffect(() => {
+    const resolveImage = async () => {
+      if (!signal?.analysis_image_url) {
+        setResolvedImageUrl(null);
+        setIsImageLoading(false);
+        return;
+      }
+
+      setIsImageLoading(true);
+      const url = await resolveAnalysisImageUrl(signal.analysis_image_url);
+      setResolvedImageUrl(url);
+      setIsImageLoading(false);
+    };
+
+    void resolveImage();
+  }, [signal?.analysis_image_url]);
 
   return (
     <Dialog>
@@ -186,24 +219,52 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
                     </div>
                   )}
                   {signal?.analysis_video_url && (
-                    <a
-                      href={signal.analysis_video_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                    >
-                      Open video analysis <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Play className="w-4 h-4" />
+                        Video Analysis
+                      </div>
+                      {videoId ? (
+                        <div className="relative w-full aspect-video rounded-md overflow-hidden border border-border/50">
+                          <iframe
+                            src={`https://www.youtube.com/embed/${videoId}`}
+                            title="Analysis video"
+                            className="absolute inset-0 w-full h-full"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        </div>
+                      ) : null}
+                      <a
+                        href={signal.analysis_video_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        Open in YouTube <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   )}
                   {signal?.analysis_image_url && (
-                    <a
-                      href={signal.analysis_image_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                    >
-                      Open analysis image <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <ImageIcon className="w-4 h-4" />
+                        Chart/Image
+                      </div>
+                      <div className="rounded-md overflow-hidden border border-border/50">
+                        {isImageLoading || !resolvedImageUrl ? (
+                          <div className="h-48 bg-secondary/30" />
+                        ) : (
+                          <img
+                            src={resolvedImageUrl}
+                            alt="Analysis chart"
+                            className="w-full h-auto object-contain max-h-[420px]"
+                            draggable={false}
+                            onContextMenu={(e) => e.preventDefault()}
+                          />
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

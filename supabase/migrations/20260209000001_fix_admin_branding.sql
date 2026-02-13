@@ -53,11 +53,13 @@ VALUES ('brand-assets', 'brand-assets', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Allow public access to brand assets
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
 CREATE POLICY "Public Access"
 ON storage.objects FOR SELECT
 USING ( bucket_id = 'brand-assets' );
 
 -- Allow admins to upload/update/delete brand assets
+DROP POLICY IF EXISTS "Admin Upload" ON storage.objects;
 CREATE POLICY "Admin Upload"
 ON storage.objects FOR INSERT
 WITH CHECK (
@@ -67,6 +69,7 @@ WITH CHECK (
   )
 );
 
+DROP POLICY IF EXISTS "Admin Update" ON storage.objects;
 CREATE POLICY "Admin Update"
 ON storage.objects FOR UPDATE
 USING (
@@ -76,6 +79,7 @@ USING (
   )
 );
 
+DROP POLICY IF EXISTS "Admin Delete" ON storage.objects;
 CREATE POLICY "Admin Delete"
 ON storage.objects FOR DELETE
 USING (

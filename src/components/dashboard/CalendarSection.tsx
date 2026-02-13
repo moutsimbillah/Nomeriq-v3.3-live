@@ -9,7 +9,11 @@ import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { format, addMonths, subMonths, isSameDay } from "date-fns";
 import { cn } from "@/lib/utils";
 type ViewMode = "daily" | "monthly";
-export const CalendarSection = () => {
+interface CalendarSectionProps {
+  adminGlobalView?: boolean;
+}
+
+export const CalendarSection = ({ adminGlobalView = false }: CalendarSectionProps) => {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [viewMode, setViewMode] = useState<ViewMode>("daily");
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -21,7 +25,7 @@ export const CalendarSection = () => {
     stats,
     isLoading,
     profitLossRatio
-  } = useCalendarTrades(currentMonth);
+  } = useCalendarTrades(currentMonth, { adminGlobalView });
   const handlePrevMonth = () => {
     setCurrentMonth(subMonths(currentMonth, 1));
     setSelectedDate(null);
@@ -30,7 +34,11 @@ export const CalendarSection = () => {
     setCurrentMonth(addMonths(currentMonth, 1));
     setSelectedDate(null);
   };
-  const handleSelectDate = (date: Date) => {
+  const handleSelectDate = (date: Date | null) => {
+    if (!date) {
+      setSelectedDate(null);
+      return;
+    }
     if (selectedDate && isSameDay(selectedDate, date)) {
       setSelectedDate(null);
     } else {

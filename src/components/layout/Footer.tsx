@@ -15,36 +15,28 @@ export const Footer = () => {
   ].filter((link) => !!link.url);
 
   const currentYear = new Date().getFullYear();
-  const copyrightName = settings?.copyright_name || "nomeriq"; // Default to nomeriq as seen in screenshot
+  const copyrightName = settings?.copyright_name || "nomeriq";
   const disclaimerText = settings?.disclaimer_text ||
     "Trading involves substantial risk and is not suitable for every investor. Past performance is not indicative of future results.";
 
   return (
     <footer className="w-full py-8 px-6 border-t border-border bg-background">
       <div className="max-w-[1400px] mx-auto flex flex-col items-center gap-6">
-
-        {/* Top Row: Risk Warning */}
         <p className="text-[10px] leading-relaxed text-center text-muted-foreground max-w-4xl">
           {disclaimerText}
         </p>
 
-        {/* Bottom Row: Branding, Socials, Contact */}
         <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground w-full">
-
-          {/* Brand & Copyright */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
               <BrandedLogo className="h-5 w-auto" />
             </div>
           </div>
 
-          <span>•</span>
-
+          <span>|</span>
           <span>© {currentYear} {copyrightName}</span>
+          <span>|</span>
 
-          <span>•</span>
-
-          {/* Social Icons */}
           <div className="flex items-center gap-4">
             {socialLinks.map((link, index) => (
               <a
@@ -62,8 +54,7 @@ export const Footer = () => {
 
           <div className="h-4 w-px bg-border mx-2" />
 
-          {/* Contact */}
-          {settings?.support_email && (
+          {settings?.support_email ? (
             <a
               href={`mailto:${settings.support_email}`}
               className="hover:text-primary transition-colors flex items-center gap-2"
@@ -71,8 +62,7 @@ export const Footer = () => {
               <Mail className="w-4 h-4" />
               <span>Contact</span>
             </a>
-          )}
-          {!settings?.support_email && (
+          ) : (
             <div className="flex items-center gap-2">
               <Mail className="w-4 h-4" />
               <span>Contact</span>

@@ -8,9 +8,12 @@ import { Search, Eye, Trash2, Mail, Phone, User, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUsers } from "@/hooks/useUsers";
 import { supabase } from "@/integrations/supabase/client";
+import { useBrand } from "@/contexts/BrandContext";
 import { toast } from "sonner";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 const AdminUsers = () => {
   const navigate = useNavigate();
+  const { settings } = useBrand();
   const [searchQuery, setSearchQuery] = useState("");
   const {
     users,
@@ -50,13 +53,13 @@ const AdminUsers = () => {
       refetch();
     } catch (err) {
       console.error('Error deleting user:', err);
-      toast.error(err instanceof Error ? err.message : "Failed to delete user");
+      toast.error(getSafeErrorMessage(err, "Failed to delete user"));
     }
   };
   const getSubscriptionStatus = (user: typeof users[0]) => {
     if (!user.subscription) return 'inactive';
     const sub = user.subscription;
-    if (sub.status === 'active' && sub.expires_at && new Date(sub.expires_at) > new Date()) {
+    if (sub.status === 'active' && (!sub.expires_at || new Date(sub.expires_at) > new Date())) {
       return 'active';
     }
     if (sub.status === 'pending') return 'pending';
@@ -160,7 +163,7 @@ const AdminUsers = () => {
                   </p>
                 </td>
                 <td className="px-6 py-4 text-center">
-                  <span className="text-sm">{user.custom_risk_percent || '-'}%</span>
+                  <span className="text-sm">{settings?.global_risk_percent ?? 2}%</span>
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">

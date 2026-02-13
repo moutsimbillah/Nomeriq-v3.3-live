@@ -16,6 +16,8 @@ import { toast } from "sonner";
 import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
 import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
+import { getSafeErrorMessage } from "@/lib/error-sanitizer";
+import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 const AdminSignals = () => {
   // Admins should never receive user-facing popups.
@@ -31,6 +33,9 @@ const AdminSignals = () => {
   } = useAuth();
   const visibleSignals = signals.filter(
     (s) => s.signal_type === "upcoming" || s.status === "active"
+  );
+  const providerNameMap = useProviderNameMap(
+    visibleSignals.map((s) => s.created_by || "")
   );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSignalId, setEditingSignalId] = useState<string | null>(null);
@@ -163,7 +168,7 @@ const AdminSignals = () => {
         });
 
         if (res.ok === false) {
-          toast.error(`Telegram send failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
         }
       }
 
@@ -267,7 +272,7 @@ const AdminSignals = () => {
         });
 
         if (res.ok === false) {
-          toast.error(`Telegram send failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
         }
       }
 
@@ -323,7 +328,7 @@ const AdminSignals = () => {
           },
         });
         if (res.ok === false) {
-          toast.error(`Telegram close event failed: ${res.error}`);
+          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram close update right now."));
         }
       }
       toast.success(`Signal marked as ${status.replace('_', ' ')}`);
@@ -432,7 +437,7 @@ const AdminSignals = () => {
 
   // Form extracted into a standalone component to prevent unmount/mount on each keystroke.
 
-  return <AdminLayout title="Signal Management">
+  return <AdminLayout title="Live Trades">
     {/* Header Actions */}
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-4 text-muted-foreground">
@@ -441,7 +446,7 @@ const AdminSignals = () => {
       </div>
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
         <DialogTrigger asChild>
-          <Button variant="gradient" onClick={resetForm}>
+          <Button variant="gradient" onClick={resetForm} className="text-white hover:text-white [&_svg]:text-white">
             <Plus className="w-4 h-4 mr-2" />
             Create Signal
           </Button>
@@ -481,6 +486,7 @@ const AdminSignals = () => {
           <thead>
             <tr className="border-b border-border/50 bg-secondary/30">
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Pair</th>
+              <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Provider</th>
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Type</th>
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Direction</th>
               <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Entry</th>
@@ -499,6 +505,11 @@ const AdminSignals = () => {
                 </div>
               </td>
               <td className="px-6 py-4">
+                <span className="text-sm text-muted-foreground">
+                  {providerNameMap[signal.created_by || ""] || "Admin"}
+                </span>
+              </td>
+              <td className="px-6 py-4">
                 <Badge variant="outline" className={signal.signal_type === 'upcoming' ? 'border-warning/30 text-warning bg-warning/10' : 'border-primary/30 text-primary bg-primary/10'}>
                   {signal.signal_type === 'upcoming' ? 'Upcoming' : 'Signal'}
                 </Badge>
@@ -513,9 +524,10 @@ const AdminSignals = () => {
                 <span className="font-mono text-sm">{signal.entry_price ?? '—'}</span>
               </td>
               <td className="px-6 py-4">
-                <div className="space-y-1">
-                  <p className="text-xs"><span className="text-destructive font-mono">{signal.stop_loss ?? '—'}</span></p>
-                  <p className="text-xs"><span className="text-success font-mono">{signal.take_profit ?? '—'}</span></p>
+                <div className="text-xs font-mono whitespace-nowrap">
+                  <span className="text-destructive">{signal.stop_loss ?? "-"}</span>
+                  <span className="text-muted-foreground mx-1">/</span>
+                  <span className="text-success">{signal.take_profit ?? "-"}</span>
                 </div>
               </td>
               <td className="px-6 py-4 text-center">

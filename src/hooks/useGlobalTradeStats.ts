@@ -133,9 +133,12 @@ export interface QualityStats {
   qualityScore: number;
   avgWinStreak: number;
   avgLossStreak: number;
+  bestWinStreak: number;
+  worstLosingStreak: number;
   consistencyIndex: number;
   signalFrequencyPerDay: number;
   signalFrequencyPerWeek: number;
+  signalFrequencyPerMonth: number;
 }
 
 export interface TradeDistribution {
@@ -555,11 +558,15 @@ export const useGlobalTradeStats = () => {
     
     const avgWinStreak = winStreaks.length > 0 ? winStreaks.reduce((a, b) => a + b, 0) / winStreaks.length : 0;
     const avgLossStreak = lossStreaks.length > 0 ? lossStreaks.reduce((a, b) => a + b, 0) / lossStreaks.length : 0;
+    const bestWinStreak = winStreaks.length > 0 ? Math.max(...winStreaks) : 0;
+    const worstLosingStreak = lossStreaks.length > 0 ? Math.max(...lossStreaks) : 0;
     
     // Signal frequency
     const now = new Date();
     const lastWeek = subWeeks(now, 1);
+    const lastMonth = subMonths(now, 1);
     const signalsThisWeek = signals.filter(s => parseISO(s.created_at) >= lastWeek).length;
+    const signalsThisMonth = signals.filter(s => parseISO(s.created_at) >= lastMonth).length;
     
     // Quality score
     const wins = closedSignals.filter(s => s.status === 'tp_hit').length;
@@ -574,9 +581,12 @@ export const useGlobalTradeStats = () => {
       qualityScore: Math.min(100, qualityScore),
       avgWinStreak,
       avgLossStreak,
+      bestWinStreak,
+      worstLosingStreak,
       consistencyIndex: Math.max(0, 100 - (avgLossStreak * 15)),
       signalFrequencyPerDay: signalsThisWeek / 7,
       signalFrequencyPerWeek: signalsThisWeek,
+      signalFrequencyPerMonth: signalsThisMonth,
     };
   }, [signals, calculateRR]);
 
