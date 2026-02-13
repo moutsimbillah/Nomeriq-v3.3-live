@@ -4,8 +4,10 @@ import { useAdminRole } from "@/hooks/useAdminRole";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, Target, BarChart3 } from "lucide-react";
+import { TrendingUp, Target, BarChart3, Flame, Activity, Clock } from "lucide-react";
 import { useMemo } from "react";
+import { calculateWinRatePercent } from "@/lib/kpi-math";
+import { calculateSignalRr } from "@/lib/trade-math";
 
 interface PairStats {
   pair: string;
@@ -28,16 +30,7 @@ interface CategoryStats {
 
 // Calculate R:R for a signal
 const calculateRR = (signal: any): number => {
-  const entry = signal?.entry_price || 0;
-  const sl = signal?.stop_loss || 0;
-  const tp = signal?.take_profit || 0;
-  
-  if (signal?.direction === 'BUY' && entry - sl !== 0) {
-    return Math.abs((tp - entry) / (entry - sl));
-  } else if (signal?.direction === 'SELL' && sl - entry !== 0) {
-    return Math.abs((entry - tp) / (sl - entry));
-  }
-  return 1;
+  return calculateSignalRr({ signal });
 };
 
 const COLORS = [
@@ -96,8 +89,8 @@ interface PerformanceAnalyticsProps {
 }
 
 export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAnalyticsProps) => {
-  const { trades, isLoading } = useProviderAwareTrades({ realtime: true, limit: 1000, adminGlobalView });
-  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000, adminGlobalView });
+  const { trades, isLoading } = useProviderAwareTrades({ realtime: true, fetchAll: true, adminGlobalView });
+  const { signals } = useProviderAwareSignals({ realtime: true, fetchAll: true, adminGlobalView });
   const { isProvider, isLoading: roleLoading } = useAdminRole();
   const { profile } = useAuth();
   const { settings } = useBrand();
@@ -176,9 +169,7 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
     if (trade.result === "loss") existing.losses++;
     existing.totalPnL += trade.pnl || 0;
     existing.winRate =
-      existing.totalTrades > 0
-        ? (existing.wins / existing.totalTrades) * 100
-        : 0;
+      calculateWinRatePercent(existing.wins, existing.losses);
 
     pairStatsMap.set(pair, existing);
   });
@@ -213,9 +204,7 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
     if (trade.result === "breakeven") existing.breakeven++;
     existing.totalPnL += trade.pnl || 0;
     existing.winRate =
-      existing.totalTrades > 0
-        ? (existing.wins / existing.totalTrades) * 100
-        : 0;
+      calculateWinRatePercent(existing.wins, existing.losses);
 
     categoryStatsMap.set(category, existing);
   });
@@ -229,43 +218,11 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
       return b.totalTrades - a.totalTrades;
     });
 
-  // Calculate starting balance for drawdown calculations using actual balance
-  const effectiveStartBalance = providerScopedMode ? (profile?.account_balance || 1000) : accountBalance;
-
-  // Calculate Max Drawdown & Recovery based on account balance
-  let runningBalance = effectiveStartBalance - closedTrades.reduce((sum, t: any) => sum + (t.pnl || 0), 0);
-  let peak = runningBalance;
-  let maxDrawdown = 0;
-  let maxDrawdownPercent = 0;
-  let currentDrawdown = 0;
-
   const sortedTrades = [...closedTrades].sort(
     (a: any, b: any) =>
       new Date(a.closed_at || a.created_at).getTime() -
       new Date(b.closed_at || b.created_at).getTime()
   );
-
-  sortedTrades.forEach((trade: any) => {
-    runningBalance += trade.pnl || 0;
-    if (runningBalance > peak) {
-      peak = runningBalance;
-      currentDrawdown = 0;
-    } else {
-      currentDrawdown = peak - runningBalance;
-      if (currentDrawdown > maxDrawdown) {
-        maxDrawdown = currentDrawdown;
-      }
-    }
-  });
-
-  // Calculate drawdown percentage based on account balance
-  maxDrawdownPercent = effectiveStartBalance > 0 ? (maxDrawdown / effectiveStartBalance) * 100 : 0;
-  const currentDrawdownPercent = effectiveStartBalance > 0 ? (currentDrawdown / effectiveStartBalance) * 100 : 0;
-
-  // Recovery calculation
-  const recoveryFromDrawdown = maxDrawdown > 0 
-    ? Math.max(0, Math.min(100, ((maxDrawdown - currentDrawdown) / maxDrawdown) * 100))
-    : 100;
 
   // Calculate Expected Value (EV) per Trade
   const totalPnL = closedTrades.reduce((sum, t: any) => sum + (t.pnl || 0), 0);
@@ -292,6 +249,94 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
     }
   });
   const avgRR = rrCount > 0 ? totalRR / rrCount : 0;
+
+  // Quality and streak metrics for Signal Quality & System Health
+  const winRatePercent = calculateWinRatePercent(
+    closedTrades.filter((t: any) => t.result === "win").length,
+    closedTrades.filter((t: any) => t.result === "loss").length
+  );
+  const rrScore = Math.min(100, avgRR > 0 ? (avgRR / 3) * 100 : 0);
+  const pnlValues = closedTrades.map((t: any) => Number(t.pnl || 0));
+  const avgPnl = pnlValues.length > 0 ? pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length : 0;
+  const variance = pnlValues.length > 0
+    ? pnlValues.reduce((sum, val) => sum + Math.pow(val - avgPnl, 2), 0) / pnlValues.length
+    : 0;
+  const stdDev = Math.sqrt(variance);
+  const consistencyIndex = Math.max(0, Math.min(100, 100 - (stdDev / (Math.abs(avgPnl) + 1)) * 10));
+  const qualityScore = closedTrades.length >= 3
+    ? (winRatePercent * 0.4) + (rrScore * 0.3) + (consistencyIndex * 0.3)
+    : 0;
+
+  let bestWinStreak = 0;
+  let worstLosingStreak = 0;
+  let currentWinStreak = 0;
+  let currentLossStreak = 0;
+  let tempWin = 0;
+  let tempLoss = 0;
+  const winRuns: number[] = [];
+  const lossRuns: number[] = [];
+
+  sortedTrades.forEach((trade: any) => {
+    if (trade.result === "win") {
+      tempWin += 1;
+      if (tempLoss > 0) lossRuns.push(tempLoss);
+      tempLoss = 0;
+      bestWinStreak = Math.max(bestWinStreak, tempWin);
+    } else if (trade.result === "loss") {
+      tempLoss += 1;
+      if (tempWin > 0) winRuns.push(tempWin);
+      tempWin = 0;
+      worstLosingStreak = Math.max(worstLosingStreak, tempLoss);
+    }
+  });
+  if (tempWin > 0) winRuns.push(tempWin);
+  if (tempLoss > 0) lossRuns.push(tempLoss);
+
+  for (let i = sortedTrades.length - 1; i >= 0; i--) {
+    if (sortedTrades[i].result === "win") currentWinStreak++;
+    else break;
+  }
+  for (let i = sortedTrades.length - 1; i >= 0; i--) {
+    if (sortedTrades[i].result === "loss") currentLossStreak++;
+    else break;
+  }
+
+  const avgWinStreak = winRuns.length > 0 ? winRuns.reduce((a, b) => a + b, 0) / winRuns.length : 0;
+  const avgLossStreak = lossRuns.length > 0 ? lossRuns.reduce((a, b) => a + b, 0) / lossRuns.length : 0;
+
+  const holdingHours = sortedTrades
+    .map((t: any) => {
+      const opened = new Date(t.created_at).getTime();
+      const closed = new Date(t.closed_at || t.created_at).getTime();
+      return Math.max(0, (closed - opened) / (1000 * 60 * 60));
+    });
+  const avgHoldingHours = holdingHours.length > 0
+    ? holdingHours.reduce((a, b) => a + b, 0) / holdingHours.length
+    : 0;
+  const firstTradeTime = sortedTrades.length > 0
+    ? new Date(sortedTrades[0].closed_at || sortedTrades[0].created_at).getTime()
+    : 0;
+  const lastTradeTime = sortedTrades.length > 0
+    ? new Date(sortedTrades[sortedTrades.length - 1].closed_at || sortedTrades[sortedTrades.length - 1].created_at).getTime()
+    : 0;
+  const elapsedDays = sortedTrades.length > 0
+    ? Math.max(1, Math.floor((lastTradeTime - firstTradeTime) / (1000 * 60 * 60 * 24)) + 1)
+    : 1;
+  const signalFrequencyPerDay = closedTrades.length / elapsedDays;
+  const signalFrequencyPerWeek = signalFrequencyPerDay * 7;
+  const signalFrequencyPerMonth = signalFrequencyPerDay * 30;
+
+  const qualityBadgeClass = qualityScore >= 70
+    ? "bg-success/20 text-success"
+    : qualityScore >= 40
+      ? "bg-warning/20 text-warning"
+      : "bg-destructive/20 text-destructive";
+
+  const qualityBarClass = qualityScore >= 70
+    ? "bg-success"
+    : qualityScore >= 40
+      ? "bg-warning"
+      : "bg-destructive";
 
   if (isLoading) {
     return (
@@ -450,95 +495,138 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
         )}
       </div>
 
-      <div className="glass-card p-6 shadow-none">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-lg bg-destructive/10">
-            <TrendingDown className="w-5 h-5 text-destructive" />
+      {/* Signal Quality & System Health */}
+      <div className="glass-card p-6 shadow-none md:col-span-2 lg:col-span-2">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="p-2 rounded-lg bg-warning/10">
+            <Flame className="w-5 h-5 text-warning" />
           </div>
-          <h3 className="text-lg font-semibold">Max Drawdown & Recovery</h3>
+          <div>
+            <h3 className="text-lg font-semibold">Signal Quality & System Health</h3>
+            <p className="text-sm text-muted-foreground">Performance consistency metrics</p>
+          </div>
         </div>
+
         {closedTrades.length === 0 ? (
           <p className="text-sm text-muted-foreground">No trade history yet</p>
         ) : (
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-secondary/30">
-              <p className="text-sm text-muted-foreground mb-1">Max Drawdown</p>
-              <div className="flex items-baseline gap-2">
-                <p className="text-2xl font-bold text-destructive">
-                  -{maxDrawdownPercent.toFixed(1)}%
-                </p>
-                <span className="text-sm text-muted-foreground">
-                  (${maxDrawdown.toFixed(2)})
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="p-5 rounded-xl bg-secondary/30 border border-border/50">
+              <div className="flex items-center justify-between mb-4">
+                <span className="font-medium">Signal Quality Score</span>
+                <span className={cn("px-2.5 py-1 rounded-full text-xs font-semibold", qualityBadgeClass)}>
+                  {qualityScore >= 80 ? "Excellent" : qualityScore >= 60 ? "Good" : qualityScore >= 40 ? "Average" : "Needs Improvement"}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                of ${effectiveStartBalance.toFixed(0)} account
-              </p>
-            </div>
-            <div className="p-4 rounded-lg bg-secondary/30">
-              <p className="text-sm text-muted-foreground mb-1">Current Drawdown</p>
-              <div className="flex items-baseline gap-2">
-                <p className={cn(
-                  "text-xl font-bold",
-                  currentDrawdown > 0 ? "text-destructive" : "text-success"
-                )}>
-                  -{currentDrawdownPercent.toFixed(1)}%
-                </p>
-                <span className="text-sm text-muted-foreground">
-                  (${currentDrawdown.toFixed(2)})
-                </span>
-              </div>
-            </div>
-            <div className="p-4 rounded-lg bg-secondary/30">
-              <p className="text-sm text-muted-foreground mb-1">Recovery Progress</p>
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-success rounded-full transition-all"
-                    style={{ width: `${Math.min(recoveryFromDrawdown, 100)}%` }}
-                  />
+              <div className="flex items-center gap-4 mb-4">
+                <span className="text-4xl font-bold font-mono">{qualityScore.toFixed(0)}</span>
+                <div className="flex-1">
+                  <div className="h-3 bg-muted rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full transition-all", qualityBarClass)} style={{ width: `${Math.min(qualityScore, 100)}%` }} />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">Based on win rate, R:R quality & consistency</p>
                 </div>
-                <span className="text-sm font-mono text-success">
-                  {recoveryFromDrawdown.toFixed(0)}%
-                </span>
               </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Expected Value & Streaks */}
-      <div className="glass-card p-6 shadow-none">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-lg bg-primary/10">
-            <Target className="w-5 h-5 text-primary" />
-          </div>
-          <h3 className="text-lg font-semibold">Expected Value (EV) per Trade</h3>
-        </div>
-        {closedTrades.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No trade history yet</p>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-4 rounded-lg bg-secondary/30">
-                <p className="text-sm text-muted-foreground mb-1">Avg EV</p>
-                <p
-                  className={cn(
-                    "text-xl font-bold font-mono",
-                    avgPnLPerTrade >= 0 ? "text-success" : "text-destructive"
-                  )}
-                >
-                  {avgPnLPerTrade >= 0 ? "+" : ""}${avgPnLPerTrade.toFixed(2)}
-                </p>
+            <div className="p-3 rounded-lg bg-secondary/50">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Consistency Index</span>
+                <span className="font-mono font-semibold">{consistencyIndex.toFixed(0)}%</span>
               </div>
-              <div className="p-4 rounded-lg bg-secondary/30">
-                <p className="text-sm text-muted-foreground mb-1">Avg R:R</p>
-                <p className="text-xl font-bold font-mono text-primary">
-                  1:{avgRR.toFixed(1)}
-                </p>
+              <div className="mt-2 h-2 bg-muted rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-success" style={{ width: `${Math.max(0, Math.min(100, consistencyIndex))}%` }} />
               </div>
             </div>
 
+            <div className="p-4 rounded-lg bg-secondary/30 border border-border/50 mt-4">
+              <div className="flex items-center gap-2 mb-4">
+                <Clock className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Signal Frequency</span>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Per Day</p>
+                  <p className="text-xl font-bold font-mono">{signalFrequencyPerDay.toFixed(1)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Per Week</p>
+                  <p className="text-xl font-bold font-mono">{signalFrequencyPerWeek.toFixed(0)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Per Month</p>
+                  <p className="text-xl font-bold font-mono">{signalFrequencyPerMonth.toFixed(0)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-lg bg-primary/5 border border-primary/20 mt-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <span className="text-xs text-muted-foreground">Avg Holding Time</span>
+              </div>
+              <p className="text-2xl font-bold font-mono text-primary">{avgHoldingHours.toFixed(1)}h</p>
+              <p className="text-xs text-muted-foreground mt-1">Average trade duration</p>
+            </div>
+          </div>
+
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <Target className="w-4 h-4 text-primary" />
+                  <span className="text-xs text-muted-foreground">Expected Value (EV) per Trade</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-secondary/40">
+                    <p className="text-xs text-muted-foreground mb-1">Avg EV</p>
+                    <p className={cn("text-2xl font-bold font-mono", avgPnLPerTrade >= 0 ? "text-success" : "text-destructive")}>
+                      {avgPnLPerTrade >= 0 ? "+" : ""}${avgPnLPerTrade.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/40">
+                    <p className="text-xs text-muted-foreground mb-1">Avg R:R</p>
+                    <p className="text-2xl font-bold font-mono text-primary">1:{avgRR.toFixed(1)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 items-stretch">
+                <div className="h-full min-h-[118px] p-4 rounded-lg bg-success/5 border border-success/20 flex flex-col">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Flame className="w-4 h-4 text-success" />
+                    <span className="text-xs text-muted-foreground">Avg Win Streak</span>
+                  </div>
+                  <p className="text-2xl font-bold font-mono text-success">{avgWinStreak.toFixed(1)}</p>
+                  <p className="text-xs text-muted-foreground mt-auto pt-1">Consecutive wins</p>
+                </div>
+                <div className="h-full min-h-[118px] p-4 rounded-lg bg-destructive/5 border border-destructive/20 flex flex-col">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Activity className="w-4 h-4 text-destructive" />
+                    <span className="text-xs text-muted-foreground">Avg Loss Streak</span>
+                  </div>
+                  <p className="text-2xl font-bold font-mono text-destructive">{avgLossStreak.toFixed(1)}</p>
+                  <p className="text-xs text-muted-foreground mt-auto pt-1">Consecutive losses</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 items-stretch">
+                <div className="h-full min-h-[118px] p-4 rounded-lg bg-success/5 border border-success/20 flex flex-col">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Flame className="w-4 h-4 text-success" />
+                    <span className="text-xs text-muted-foreground">Best Winning Streak</span>
+                  </div>
+                  <p className="text-2xl font-bold font-mono text-success">{bestWinStreak.toFixed(0)}</p>
+                  <p className="text-xs text-muted-foreground mt-auto pt-1">Max consecutive wins</p>
+                </div>
+                <div className="h-full min-h-[118px] p-4 rounded-lg bg-destructive/5 border border-destructive/20 flex flex-col">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Activity className="w-4 h-4 text-destructive" />
+                    <span className="text-xs text-muted-foreground">Worst Losing Streak</span>
+                  </div>
+                  <p className="text-2xl font-bold font-mono text-destructive">{worstLosingStreak.toFixed(0)}</p>
+                  <p className="text-xs text-muted-foreground mt-auto pt-1">Max consecutive losses</p>
+                </div>
+              </div>
+
+            </div>
           </div>
         )}
       </div>

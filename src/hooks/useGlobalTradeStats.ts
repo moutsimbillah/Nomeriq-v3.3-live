@@ -16,6 +16,7 @@ import {
   eachDayOfInterval,
   differenceInHours
 } from 'date-fns';
+import { calculateWinRatePercent } from '@/lib/kpi-math';
 
 interface Signal {
   id: string;
@@ -164,8 +165,10 @@ export const useGlobalTradeStats = () => {
   const [customRange, setCustomRange] = useState<DateRange | null>(null);
   
   const channelRef = useRef(`global_stats_${Math.random().toString(36).substring(7)}`);
+  const requestSeqRef = useRef(0);
 
   const fetchData = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
     try {
       const [signalsRes, tradesRes, profilesRes, settingsRes] = await Promise.all([
         supabase.from('signals').select('*').eq('signal_type', 'signal').order('created_at', { ascending: false }),
@@ -176,6 +179,7 @@ export const useGlobalTradeStats = () => {
 
       if (signalsRes.error) throw signalsRes.error;
       if (tradesRes.error) throw tradesRes.error;
+      if (requestId !== requestSeqRef.current) return;
       
       setSignals(signalsRes.data || []);
       setTrades((tradesRes.data as Trade[]) || []);
@@ -188,9 +192,12 @@ export const useGlobalTradeStats = () => {
       (profilesRes.data || []).forEach(p => profileMap.set(p.user_id, p));
       setProfiles(profileMap);
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       console.error('Error fetching global stats:', err);
     } finally {
-      setIsLoading(false);
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -280,7 +287,7 @@ export const useGlobalTradeStats = () => {
       totalWins: tradeWins,
       totalLosses: tradeLosses,
       totalBreakeven: tradeBreakeven,
-      globalWinRate: closedTrades.length > 0 ? (tradeWins / closedTrades.length) * 100 : 0,
+      globalWinRate: calculateWinRatePercent(tradeWins, tradeLosses),
       avgRR: rrCount > 0 ? totalRR / rrCount : 0,
       totalPlatformPnL: totalPnL,
       avgPnLPerTrade: closedTrades.length > 0 ? totalPnL / closedTrades.length : 0,
@@ -323,7 +330,7 @@ export const useGlobalTradeStats = () => {
       if (rr > 0) { totalRR += rr; rrCount++; }
     });
     
-    const winRate = periodSignals.length > 0 ? (wins / periodSignals.length) * 100 : 0;
+    const winRate = calculateWinRatePercent(wins, losses);
     const avgRR = rrCount > 0 ? totalRR / rrCount : 0;
     
     // Expected Value: (Win% * Avg Win) - (Loss% * Avg Loss)
@@ -371,7 +378,8 @@ export const useGlobalTradeStats = () => {
       const profile = profiles.get(userId);
       const closedSignals = data.signals.filter(s => ['tp_hit', 'sl_hit', 'breakeven'].includes(s.status));
       const wins = data.signals.filter(s => s.status === 'tp_hit').length;
-      const winRate = closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0;
+      const losses = data.signals.filter(s => s.status === 'sl_hit').length;
+      const winRate = calculateWinRatePercent(wins, losses);
       
       let totalRR = 0;
       let rrCount = 0;
@@ -433,7 +441,7 @@ export const useGlobalTradeStats = () => {
         wins,
         losses,
         breakeven,
-        winRate: closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0,
+        winRate: calculateWinRatePercent(wins, losses),
         totalPnL: data.pnl,
         avgRR: rrCount > 0 ? totalRR / rrCount : 0,
       };
@@ -477,7 +485,7 @@ export const useGlobalTradeStats = () => {
         wins,
         losses,
         breakeven,
-        winRate: closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0,
+        winRate: calculateWinRatePercent(wins, losses),
         totalPnL: data.pnl,
         avgRR: rrCount > 0 ? totalRR / rrCount : 0,
       };
@@ -570,7 +578,8 @@ export const useGlobalTradeStats = () => {
     
     // Quality score
     const wins = closedSignals.filter(s => s.status === 'tp_hit').length;
-    const winRate = closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0;
+    const losses = closedSignals.filter(s => s.status === 'sl_hit').length;
+    const winRate = calculateWinRatePercent(wins, losses);
     let totalRR = 0;
     closedSignals.forEach(s => { totalRR += calculateRR(s); });
     const avgRR = closedSignals.length > 0 ? totalRR / closedSignals.length : 0;

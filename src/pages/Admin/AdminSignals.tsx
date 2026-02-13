@@ -16,8 +16,16 @@ import { toast } from "sonner";
 import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
 import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
+import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
+import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
+import {
+  computeLiveSignalMetrics,
+  computeUpcomingSignalMetrics,
+  isLiveSignal,
+  isUpcomingSignal,
+} from "@/lib/admin-metrics";
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 const AdminSignals = () => {
   // Admins should never receive user-facing popups.
@@ -28,12 +36,16 @@ const AdminSignals = () => {
   } = useSignals({
     realtime: true
   });
+  const { updatesBySignal } = useSignalTakeProfitUpdates({
+    signalIds: signals.map((s) => s.id),
+    realtime: true,
+  });
   const {
     user
   } = useAuth();
-  const visibleSignals = signals.filter(
-    (s) => s.signal_type === "upcoming" || s.status === "active"
-  );
+  const visibleSignals = signals.filter((s) => isLiveSignal(s) || isUpcomingSignal(s));
+  const liveMetrics = computeLiveSignalMetrics(visibleSignals);
+  const upcomingMetrics = computeUpcomingSignalMetrics(visibleSignals);
   const providerNameMap = useProviderNameMap(
     visibleSignals.map((s) => s.created_by || "")
   );
@@ -176,7 +188,7 @@ const AdminSignals = () => {
       setIsCreateOpen(false);
       resetForm();
       refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error creating signal:', err);
       toast.error("Failed to create signal. Please try again.");
     } finally {
@@ -441,8 +453,18 @@ const AdminSignals = () => {
     {/* Header Actions */}
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-4 text-muted-foreground">
-        <span>{signals.filter(s => s.status === "active" && s.signal_type === "signal").length} active signals</span>
-        <span className="text-warning">{signals.filter(s => s.signal_type === "upcoming").length} upcoming</span>
+        <span className="inline-flex items-center gap-1.5">
+          <MetricInfoTooltip
+            label={`${liveMetrics.liveSignalCount} active signals`}
+            description="Live Trades shows live signal count, not user trade count."
+          />
+        </span>
+        <span className="text-warning inline-flex items-center gap-1.5">
+          <MetricInfoTooltip
+            label={`${upcomingMetrics.upcomingSignalCount} upcoming`}
+            description="Upcoming count is based on upcoming signals, not executed trades."
+          />
+        </span>
       </div>
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
         <DialogTrigger asChild>
@@ -497,7 +519,9 @@ const AdminSignals = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/30">
-            {visibleSignals.map(signal => <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
+            {visibleSignals.map(signal => {
+              const hasPublishedTpUpdates = (updatesBySignal[signal.id]?.length || 0) > 0;
+              return <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
               <td className="px-6 py-4">
                 <div>
                   <p className="font-semibold">{signal.pair}</p>
@@ -538,7 +562,7 @@ const AdminSignals = () => {
               <td className="px-6 py-4 text-center">
                 {signal.signal_type === "signal" ? (
                   <SignalTakeProfitUpdatesDialog
-                    signal={signal as any}
+                    signal={signal}
                     currentUserId={user?.id || ""}
                     disabled={signal.status !== "active"}
                   />
@@ -579,13 +603,34 @@ const AdminSignals = () => {
                     </DialogContent>
                   </Dialog>}
                   {signal.status === "active" && signal.signal_type === "signal" && <>
-                    <Button size="sm" variant="outline" className="border-success/30 text-success hover:bg-success/10" onClick={() => updateStatus(signal.id, "tp_hit")}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={hasPublishedTpUpdates}
+                      title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                      className="border-success/30 text-success hover:bg-success/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => updateStatus(signal.id, "tp_hit")}
+                    >
                       <CheckCircle2 className="w-4 h-4" />
                     </Button>
-                    <Button size="sm" variant="outline" className="border-warning/30 text-warning hover:bg-warning/10" onClick={() => updateStatus(signal.id, "breakeven")}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={hasPublishedTpUpdates}
+                      title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                      className="border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => updateStatus(signal.id, "breakeven")}
+                    >
                       <MinusCircle className="w-4 h-4" />
                     </Button>
-                    <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => updateStatus(signal.id, "sl_hit")}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={hasPublishedTpUpdates}
+                      title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                      className="border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => updateStatus(signal.id, "sl_hit")}
+                    >
                       <XCircle className="w-4 h-4" />
                     </Button>
                   </>}
@@ -618,7 +663,8 @@ const AdminSignals = () => {
                   )}
                 </div>
               </td>
-            </tr>)}
+            </tr>;
+            })}
           </tbody>
         </table>
       </div>}

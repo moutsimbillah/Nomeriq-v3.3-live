@@ -13,6 +13,7 @@ import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAna
 import { Signal } from "@/types/database";
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
+import { calculateDisplayedPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
 
 const History = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -21,7 +22,7 @@ const History = () => {
     isLoading,
   } = useProviderAwareTrades({
     realtime: true,
-    limit: 1000,
+    fetchAll: true,
   });
   const { settings } = useBrand();
 
@@ -215,18 +216,9 @@ const History = () => {
                     </Badge>
                   </td>
                   <td className="px-6 py-4 text-left">
-                    {(() => {
-                      const entry = trade.signal?.entry_price || 0;
-                      const sl = trade.signal?.stop_loss || 0;
-                      const tp = trade.signal?.take_profit || 0;
-                      let rr = 0;
-                      if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                        rr = Math.abs((tp - entry) / (entry - sl));
-                      } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                        rr = Math.abs((entry - tp) / (sl - entry));
-                      }
-                      return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
-                    })()}
+                    <span className="font-mono text-sm text-secondary-foreground">
+                      1:{calculateSignalRr(trade).toFixed(1)}
+                    </span>
                   </td>
                   <td className="px-6 py-4 text-left">
                     <div>
@@ -235,19 +227,9 @@ const History = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-left">
-                    {(() => {
-                      const entry = trade.signal?.entry_price || 0;
-                      const sl = trade.signal?.stop_loss || 0;
-                      const tp = trade.signal?.take_profit || 0;
-                      let rr = 0;
-                      if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                        rr = Math.abs((tp - entry) / (entry - sl));
-                      } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                        rr = Math.abs((entry - tp) / (sl - entry));
-                      }
-                      const potentialProfit = trade.risk_amount * rr;
-                      return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
-                    })()}
+                    <span className="font-mono font-semibold text-success">
+                      +${calculateDisplayedPotentialProfit(trade).toFixed(2)}
+                    </span>
                   </td>
                   <td className="px-6 py-4 text-left">
                     {(() => {

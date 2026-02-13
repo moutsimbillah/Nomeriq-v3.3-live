@@ -17,6 +17,8 @@ import { playNotificationSound } from "@/lib/notificationSound";
 import { Button } from "@/components/ui/button";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
+import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
+import { computeOpenTradeMetrics } from "@/lib/admin-metrics";
 
 interface ActiveTradesTableProps {
   adminGlobalView?: boolean;
@@ -61,6 +63,9 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
   const filteredTrades = useMemo(() => {
     let result = [...trades];
 
+    // Keep Active Trades aligned with Live Trades: only currently live signals
+    result = result.filter((t) => t.signal?.status === 'active' && (t.signal?.signal_type || 'signal') === 'signal');
+
     // Time filter
     result = filterByTime(result, timeFilter, dateRange);
 
@@ -77,24 +82,38 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     // Sort
     return sortTrades(result, sortBy);
   }, [trades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+  const displayTrades = useMemo(() => {
+    if (!adminGlobalView && !isProvider) return filteredTrades;
+
+    const uniqueBySignal = new Map<string, UserTrade>();
+    filteredTrades.forEach((trade) => {
+      const signalId = trade.signal?.id;
+      if (!signalId) return;
+      if (!uniqueBySignal.has(signalId)) {
+        uniqueBySignal.set(signalId, trade);
+      }
+    });
+
+    return Array.from(uniqueBySignal.values());
+  }, [filteredTrades, adminGlobalView, isProvider]);
   const providerNameMap = useProviderNameMap(
-    adminGlobalView ? filteredTrades.map((t) => t.signal?.created_by || "") : []
+    adminGlobalView ? displayTrades.map((t) => t.signal?.created_by || "") : []
   );
 
   const signalIds = useMemo(
-    () => Array.from(new Set(filteredTrades.map((t) => t.signal?.id).filter((id): id is string => !!id))),
-    [filteredTrades]
+    () => Array.from(new Set(displayTrades.map((t) => t.signal?.id).filter((id): id is string => !!id))),
+    [displayTrades]
   );
 
   useEffect(() => {
-    const signalsToPreload = filteredTrades
+    const signalsToPreload = displayTrades
       .map((trade) => trade.signal as Signal | null | undefined)
       .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url));
 
     signalsToPreload.forEach((signal) => {
       void preloadSignalAnalysisMedia(signal);
     });
-  }, [filteredTrades]);
+  }, [displayTrades]);
 
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: true });
   const [seenUpdateCounts, setSeenUpdateCounts] = useState<Record<string, number>>({});
@@ -202,14 +221,10 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
   const calculateTradePotentialProfit = (trade: UserTrade) => {
     return getOpenRisk(trade) * calculateTradeRr(trade);
   };
-  const totalRisk = filteredTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
-  const averageLiveRiskPercent = filteredTrades.length
-    ? filteredTrades.reduce((sum, t) => sum + getTradeRiskPercent(t), 0) / filteredTrades.length
-    : 0;
-
-  // Calculate total potential profit
-  const totalPotentialProfit = filteredTrades.reduce((sum, t) => sum + calculateTradePotentialProfit(t), 0);
-  const unrealizedPnL = filteredTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const openTradeMetrics = computeOpenTradeMetrics(displayTrades, {
+    getRiskPercent: getTradeRiskPercent,
+    getTargetTp: getTargetTpFromUpdates,
+  });
   const getSignalStatus = (status: string) => {
     switch (status) {
       case 'active':
@@ -287,29 +302,49 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
       <div className="glass-card p-4 sm:p-6 shadow-none">
         <p className="text-xs sm:text-sm text-muted-foreground mb-1">Open Positions</p>
-        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : filteredTrades.length}</p>
+        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : displayTrades.length}</p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none">
-        <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Risk</p>
+        <p className="text-xs sm:text-sm text-muted-foreground mb-1">
+          <MetricInfoTooltip
+            label="Total Risk"
+            description="Sum of open risk exposure from pending trades."
+          />
+        </p>
         <p className="text-xl sm:text-3xl font-bold text-red-700">
-          {isLoading ? "..." : `$${totalRisk.toFixed(2)}`}
+          {isLoading ? "..." : `$${openTradeMetrics.totalRisk.toFixed(2)}`}
         </p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none">
-        <p className="text-xs sm:text-sm text-muted-foreground mb-1">Potential Profit</p>
+        <p className="text-xs sm:text-sm text-muted-foreground mb-1">
+          <MetricInfoTooltip
+            label="Potential Profit"
+            description="Model estimate from configured risk and target R:R."
+          />
+        </p>
         <p className="text-xl sm:text-3xl font-bold text-success">
-          {isLoading ? "..." : `+$${totalPotentialProfit.toFixed(2)}`}
+          {isLoading ? "..." : `+$${openTradeMetrics.totalPotentialProfit.toFixed(2)}`}
         </p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none">
-        <p className="text-xs sm:text-sm text-muted-foreground mb-1">Unrealized P&L</p>
-        <p className={cn("text-xl sm:text-3xl font-bold text-secondary-foreground", unrealizedPnL >= 0 ? "text-success" : "text-destructive")}>
-          {unrealizedPnL >= 0 ? "+" : ""}${unrealizedPnL.toFixed(2)}
+        <p className="text-xs sm:text-sm text-muted-foreground mb-1">
+          <MetricInfoTooltip
+            label="Unrealized P&L"
+            description="Fixed at 0.00 until real-time market pricing is enabled."
+          />
+        </p>
+        <p className={cn("text-xl sm:text-3xl font-bold text-secondary-foreground", openTradeMetrics.unrealizedPnL >= 0 ? "text-success" : "text-destructive")}>
+          {openTradeMetrics.unrealizedPnL >= 0 ? "+" : ""}${openTradeMetrics.unrealizedPnL.toFixed(2)}
         </p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none col-span-2 sm:col-span-1">
-        <p className="text-xs sm:text-sm text-muted-foreground mb-1">Avg. Risk/Trade</p>
-        <p className="text-xl sm:text-3xl font-bold text-red-700">{averageLiveRiskPercent.toFixed(2)}%</p>
+        <p className="text-xs sm:text-sm text-muted-foreground mb-1">
+          <MetricInfoTooltip
+            label="Avg. Risk/Trade"
+            description="Average configured risk percent across open trades."
+          />
+        </p>
+        <p className="text-xl sm:text-3xl font-bold text-red-700">{openTradeMetrics.averageRiskPercent.toFixed(2)}%</p>
       </div>
     </div>
 
@@ -320,7 +355,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
       <p>No active trades</p>
       <p className="text-sm mt-2">{trades.length > 0 ? "Try adjusting your filters" : "New signals will appear here automatically"}</p>
     </div> : <div className="grid gap-4">
-      {filteredTrades.map(trade => {
+      {displayTrades.map(trade => {
         const signal = trade.signal;
         const rr = calculateTradeRr(trade);
         const potentialProfit = calculateTradePotentialProfit(trade);
@@ -553,3 +588,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     </div>}
   </div>;
 };
+
+
+
+

@@ -16,6 +16,7 @@ import {
   isWithinInterval,
   eachDayOfInterval,
 } from 'date-fns';
+import { calculateWinRatePercent } from '@/lib/kpi-math';
 
 // Extended trade type with nested signal
 interface TradeWithSignal extends UserTrade {
@@ -229,7 +230,7 @@ export const useProviderTradeStats = () => {
       if (rr > 0) { totalRR += rr; rrCount++; }
     });
 
-    const winRate = closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0;
+    const winRate = calculateWinRatePercent(wins, losses);
     const avgRR = rrCount > 0 ? totalRR / rrCount : 0;
     
     // Quality score based on win rate and R:R
@@ -286,7 +287,7 @@ export const useProviderTradeStats = () => {
       if (rr > 0) { totalRR += rr; rrCount++; }
     });
     
-    const winRate = periodSignals.length > 0 ? (wins / periodSignals.length) * 100 : 0;
+    const winRate = calculateWinRatePercent(wins, losses);
     const avgRR = rrCount > 0 ? totalRR / rrCount : 0;
 
     return {
@@ -340,7 +341,7 @@ export const useProviderTradeStats = () => {
         wins,
         losses,
         breakeven,
-        winRate: closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0,
+        winRate: calculateWinRatePercent(wins, losses),
         totalPnL: data.pnl,
         avgRR: rrCount > 0 ? totalRR / rrCount : 0,
       };

@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format, startOfWeek, endOfWeek, subWeeks, isWithinInterval, parseISO } from "date-fns";
+import { calculateWinRatePercent } from "@/lib/kpi-math";
+import { calculateSignalRr } from "@/lib/trade-math";
 
 type PeriodType = "this_week" | "last_week" | "custom";
 
@@ -17,7 +19,7 @@ interface DateRange {
 }
 
 export const WeeklyTradesAnalytics = () => {
-  const { trades, isLoading } = useTrades({ realtime: true, limit: 1000 });
+  const { trades, isLoading } = useTrades({ realtime: true, fetchAll: true });
   const { profile } = useAuth();
   const accountBalance = profile?.account_balance || 0;
 
@@ -79,7 +81,7 @@ export const WeeklyTradesAnalytics = () => {
     const wins = filteredTrades.filter((t) => t.result === "win").length;
     const losses = filteredTrades.filter((t) => t.result === "loss").length;
     const breakeven = filteredTrades.filter((t) => t.result === "breakeven").length;
-    const winRate = (wins / filteredTrades.length) * 100;
+    const winRate = calculateWinRatePercent(wins, losses);
 
     // Calculate growth based on account balance at start of period
     const startBalance = accountBalance - netPnL;
@@ -89,15 +91,7 @@ export const WeeklyTradesAnalytics = () => {
     let totalRR = 0;
     let rrCount = 0;
     filteredTrades.forEach((trade) => {
-      const entry = trade.signal?.entry_price || 0;
-      const sl = trade.signal?.stop_loss || 0;
-      const tp = trade.signal?.take_profit || 0;
-      let rr = 0;
-      if (trade.signal?.direction === "BUY" && entry - sl !== 0) {
-        rr = Math.abs((tp - entry) / (entry - sl));
-      } else if (trade.signal?.direction === "SELL" && sl - entry !== 0) {
-        rr = Math.abs((entry - tp) / (sl - entry));
-      }
+      const rr = calculateSignalRr(trade);
       if (rr > 0) {
         totalRR += rr;
         rrCount++;

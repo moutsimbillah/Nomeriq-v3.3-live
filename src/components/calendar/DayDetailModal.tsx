@@ -9,6 +9,10 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import {
+  calculateDisplayedPotentialProfit,
+  calculateSignalRrForTarget,
+} from "@/lib/trade-math";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
@@ -54,6 +58,7 @@ interface DayDetailModalProps {
   date: Date;
   dayPnl: number;
   dayTrades: number;
+  adminGlobalView?: boolean;
 }
 
 interface StatCardProps {
@@ -189,12 +194,14 @@ export const DayDetailModal = ({
   date,
   dayPnl,
   dayTrades,
+  adminGlobalView = false,
 }: DayDetailModalProps) => {
   const { user, isAdmin } = useAuth();
   const { allowedCategories } = useUserSubscriptionCategories();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProvider, setIsProvider] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
 
   const signalIds = useMemo(
@@ -208,6 +215,7 @@ export const DayDetailModal = ({
     const fetchAdminRole = async () => {
       if (!user || !isAdmin) {
         setIsProvider(false);
+        setRoleLoading(false);
         return;
       }
 
@@ -224,6 +232,8 @@ export const DayDetailModal = ({
       } catch (err) {
         console.error('Error fetching admin role:', err);
         setIsProvider(false);
+      } finally {
+        setRoleLoading(false);
       }
     };
 
@@ -232,7 +242,7 @@ export const DayDetailModal = ({
 
   useEffect(() => {
     const fetchTrades = async () => {
-      if (!user || !isOpen) return;
+      if (!user || !isOpen || roleLoading) return;
 
       setIsLoading(true);
       try {
@@ -243,7 +253,24 @@ export const DayDetailModal = ({
 
         let data: Trade[] = [];
 
-        if (isProvider) {
+        if (adminGlobalView && isAdmin) {
+          // Super admin global day view: include all closed trades for that day.
+          const { data: globalTrades, error } = await supabase
+            .from("user_trades")
+            .select(
+              `
+              *,
+              signal:signals(id, pair, direction, entry_price, take_profit, stop_loss, category, created_by, analysis_notes, analysis_video_url, analysis_image_url)
+            `
+            )
+            .gte("closed_at", startOfDay.toISOString())
+            .lte("closed_at", endOfDay.toISOString())
+            .not("result", "eq", "pending")
+            .order("closed_at", { ascending: true });
+
+          if (error) throw error;
+          data = globalTrades || [];
+        } else if (isProvider) {
           // For providers: fetch ALL trades from signals they created
           const { data: providerTrades, error } = await supabase
             .from("user_trades")
@@ -294,7 +321,7 @@ export const DayDetailModal = ({
     };
 
     fetchTrades();
-  }, [user, date, isOpen, isProvider, allowedCategories]);
+  }, [user, date, isOpen, isProvider, allowedCategories, adminGlobalView, isAdmin, roleLoading]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -335,6 +362,13 @@ export const DayDetailModal = ({
     };
   }, [trades]);
 
+  const resolvedDayPnl = useMemo(() => {
+    if (isLoading) return dayPnl;
+    return trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  }, [isLoading, dayPnl, trades]);
+
+  const resolvedDayTrades = isLoading ? dayTrades : trades.length;
+
   // Build P&L progression data
   const chartData = useMemo(() => {
     let cumulative = 0;
@@ -366,18 +400,6 @@ export const DayDetailModal = ({
     return `${diffMins}m`;
   };
 
-  const calculateRr = (trade: Trade, targetTp: number) => {
-    const entry = Number(trade.signal?.entry_price || 0);
-    const sl = Number(trade.signal?.stop_loss || 0);
-    if (!entry || !sl || !trade.signal) return 0;
-    if (trade.signal.direction === "BUY") {
-      if (entry - sl === 0) return 0;
-      return Math.abs((targetTp - entry) / (entry - sl));
-    }
-    if (sl - entry === 0) return 0;
-    return Math.abs((entry - targetTp) / (sl - entry));
-  };
-
   const getCurrentTp = (trade: Trade) => {
     const signal = trade.signal;
     if (!signal) return 0;
@@ -404,12 +426,15 @@ export const DayDetailModal = ({
                     <DialogTitle
                       className={cn(
                         "text-2xl font-bold font-mono tracking-tight",
-                        dayPnl >= 0 ? "text-success" : "text-destructive"
+                        resolvedDayPnl >= 0 ? "text-success" : "text-destructive"
                       )}
                     >
-                      {dayPnl >= 0 ? "+" : ""}${dayPnl.toFixed(2)}
+                      {resolvedDayPnl >= 0 ? "+" : ""}${resolvedDayPnl.toFixed(2)}
                     </DialogTitle>
                     <span className="text-xs text-muted-foreground uppercase tracking-wider">Net P&L</span>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">
+                      {resolvedDayTrades} trade{resolvedDayTrades === 1 ? "" : "s"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -426,11 +451,17 @@ export const DayDetailModal = ({
         <ScrollArea className="max-h-[calc(90vh-80px)]">
           <div className="p-6">
 
-            {isLoading ? (
-              <div className="flex items-center justify-center h-64">
-                <div className="animate-pulse text-muted-foreground">
-                  Loading trades...
+            {isLoading || roleLoading ? (
+              <div className="space-y-4 animate-pulse">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="h-64 rounded-xl bg-secondary/30" />
+                  <div className="grid grid-cols-2 gap-3">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="h-20 rounded-lg bg-secondary/30" />
+                    ))}
+                  </div>
                 </div>
+                <div className="h-56 rounded-xl bg-secondary/30" />
               </div>
             ) : trades.length === 0 ? (
               <div className="flex items-center justify-center h-64">
@@ -462,7 +493,7 @@ export const DayDetailModal = ({
                               <stop
                                 offset="0%"
                                 stopColor={
-                                  dayPnl >= 0
+                                  resolvedDayPnl >= 0
                                     ? "hsl(var(--success))"
                                     : "hsl(var(--destructive))"
                                 }
@@ -471,7 +502,7 @@ export const DayDetailModal = ({
                               <stop
                                 offset="100%"
                                 stopColor={
-                                  dayPnl >= 0
+                                  resolvedDayPnl >= 0
                                     ? "hsl(var(--success))"
                                     : "hsl(var(--destructive))"
                                 }
@@ -501,7 +532,7 @@ export const DayDetailModal = ({
                             type="monotone"
                             dataKey="pnl"
                             stroke={
-                              dayPnl >= 0
+                              resolvedDayPnl >= 0
                                 ? "hsl(var(--success))"
                                 : "hsl(var(--destructive))"
                             }
@@ -509,7 +540,7 @@ export const DayDetailModal = ({
                             fill="url(#pnlGradient)"
                             dot={{
                               fill:
-                                dayPnl >= 0
+                                resolvedDayPnl >= 0
                                   ? "hsl(var(--success))"
                                   : "hsl(var(--destructive))",
                               strokeWidth: 0,
@@ -599,8 +630,13 @@ export const DayDetailModal = ({
                           const signal = trade.signal;
                           const updates = signal?.id ? (updatesBySignal[signal.id] || []) : [];
                           const currentTp = getCurrentTp(trade);
-                          const rr = calculateRr(trade, currentTp);
-                          const potentialProfit = (trade.risk_amount || 0) * rr;
+                          const rr = calculateSignalRrForTarget(trade.signal, currentTp);
+                          const potentialProfit = calculateDisplayedPotentialProfit({
+                            ...trade,
+                            signal: trade.signal
+                              ? { ...trade.signal, take_profit: currentTp }
+                              : trade.signal,
+                          });
                           let remainingPercent = 100;
 
                           return (
@@ -737,7 +773,10 @@ export const DayDetailModal = ({
                                             {updates.map((u) => {
                                               const closePercent = Math.max(0, Math.min(remainingPercent, Number(u.close_percent || 0)));
                                               remainingPercent = Math.max(0, remainingPercent - closePercent);
-                                              const updateRr = calculateRr(trade, Number(u.tp_price));
+                                              const updateRr = calculateSignalRrForTarget(
+                                                trade.signal,
+                                                Number(u.tp_price)
+                                              );
                                               const baseRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
                                               const realizedProfit = baseRisk * (closePercent / 100) * updateRr;
                                               return (

@@ -4,6 +4,7 @@ import { UserTrade, Signal } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserSubscriptionCategories } from './useSubscriptionPackages';
 import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
+import { calculateWinRatePercent } from '@/lib/kpi-math';
 
 interface TradeWithSignal extends UserTrade {
   signal: Signal;
@@ -14,10 +15,11 @@ interface UseTradesOptions {
   limit?: number;
   page?: number;
   realtime?: boolean;
+  fetchAll?: boolean;
 }
 
 export const useTrades = (options: UseTradesOptions = {}) => {
-  const { result, limit = 20, page = 1, realtime = true } = options;
+  const { result, limit = 20, page = 1, realtime = true, fetchAll = false } = options;
   const [trades, setTrades] = useState<TradeWithSignal[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,6 +33,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
   
   // Track if we've loaded data at least once to prevent loading flicker on realtime updates
   const hasLoadedOnceRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
   const fetchTrades = useCallback(async (isRealtimeUpdate = false) => {
     if (!userId) {
@@ -43,6 +46,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
       setIsLoading(true);
     }
 
+    const requestId = ++requestSeqRef.current;
     try {
       let countQuery = supabase
         .from('user_trades')
@@ -54,46 +58,69 @@ export const useTrades = (options: UseTradesOptions = {}) => {
       }
 
       const { count } = await countQuery;
+      if (requestId !== requestSeqRef.current) return;
       setTotalCount(count || 0);
 
-      const offset = (page - 1) * limit;
-      
-      let query = supabase
-        .from('user_trades')
-        .select(`
-          *,
-          signal:signals(*)
-        `)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
+      const buildQuery = () => {
+        let query = supabase
+          .from('user_trades')
+          .select(`
+            *,
+            signal:signals(*)
+          `)
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
 
-      if (result) {
-        query = query.eq('result', result);
+        if (result) {
+          query = query.eq('result', result);
+        }
+
+        return query;
+      };
+
+      let rawTrades: TradeWithSignal[] = [];
+      if (fetchAll) {
+        const batchSize = 500;
+        let offset = 0;
+        const expectedTotal = typeof count === 'number' ? count : Number.MAX_SAFE_INTEGER;
+        while (offset < expectedTotal || offset === 0) {
+          const { data, error: fetchError } = await buildQuery().range(offset, offset + batchSize - 1);
+          if (fetchError) throw fetchError;
+          const rows = (data as TradeWithSignal[]) || [];
+          if (rows.length === 0) break;
+          rawTrades = [...rawTrades, ...rows];
+          if (rows.length < batchSize) break;
+          offset += batchSize;
+          if (requestId !== requestSeqRef.current) return;
+        }
+      } else {
+        const offset = (page - 1) * limit;
+        const { data, error: fetchError } = await buildQuery().range(offset, offset + limit - 1);
+        if (fetchError) throw fetchError;
+        rawTrades = (data as TradeWithSignal[]) || [];
       }
 
-      const { data, error: fetchError } = await query;
-
-      if (fetchError) throw fetchError;
-      
-      const rawTrades = (data as TradeWithSignal[]) || [];
       const filteredTrades =
         allowedCategories.length > 0
           ? rawTrades.filter((t) => allowedCategories.includes(t.signal?.category as any))
           : rawTrades;
 
+      if (requestId !== requestSeqRef.current) return;
       setTrades(filteredTrades);
       setError(null);
       hasLoadedOnceRef.current = true;
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       setError(err as Error);
       if (!shouldSuppressQueryErrorLog(err)) {
         console.error('Error fetching trades:', err);
       }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
-  }, [userId, result, limit, page, allowedCategories]);
+  }, [userId, result, limit, page, allowedCategories, fetchAll]);
 
   useEffect(() => {
     fetchTrades(false);
@@ -122,7 +149,7 @@ export const useTrades = (options: UseTradesOptions = {}) => {
     }
   }, [fetchTrades, realtime, userId]);
 
-  const totalPages = Math.ceil(totalCount / limit);
+  const totalPages = fetchAll ? 1 : Math.ceil(totalCount / limit);
 
   return { trades, isLoading, error, refetch: fetchTrades, totalCount, totalPages };
 };
@@ -146,6 +173,7 @@ export const useTradeStats = () => {
   
   // Track if we've loaded data at least once to prevent loading flicker on realtime updates
   const hasLoadedOnceRef = useRef(false);
+  const requestSeqRef = useRef(0);
 
   const fetchStats = useCallback(async (isRealtimeUpdate = false) => {
     if (!userId) {
@@ -158,6 +186,7 @@ export const useTradeStats = () => {
       setIsLoading(true);
     }
 
+    const requestId = ++requestSeqRef.current;
     try {
       const { data, error } = await supabase
         .from('user_trades')
@@ -165,6 +194,7 @@ export const useTradeStats = () => {
         .eq('user_id', userId);
 
       if (error) throw error;
+      if (requestId !== requestSeqRef.current) return;
 
       const trades = data || [];
       const wins = trades.filter(t => t.result === 'win').length;
@@ -172,8 +202,7 @@ export const useTradeStats = () => {
       const breakeven = trades.filter(t => t.result === 'breakeven').length;
       const pending = trades.filter(t => t.result === 'pending').length;
       const totalPnL = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-      const closedTrades = wins + losses;
-      const winRate = closedTrades > 0 ? (wins / closedTrades) * 100 : 0;
+      const winRate = calculateWinRatePercent(wins, losses);
 
       setStats({
         totalTrades: trades.length,
@@ -186,11 +215,14 @@ export const useTradeStats = () => {
       });
       hasLoadedOnceRef.current = true;
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       if (!shouldSuppressQueryErrorLog(err)) {
         console.error('Error fetching trade stats:', err);
       }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [userId]);
 

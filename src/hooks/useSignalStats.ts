@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { format, startOfWeek, endOfWeek, subWeeks, isWithinInterval, parseISO } from 'date-fns';
+import { calculateWinRatePercent } from '@/lib/kpi-math';
 
 interface Signal {
   id: string;
@@ -74,7 +75,7 @@ export const useSignalStats = () => {
     const wins = signals.filter(s => s.status === 'tp_hit').length;
     const losses = signals.filter(s => s.status === 'sl_hit').length;
     const breakeven = signals.filter(s => s.status === 'breakeven').length;
-    const winRate = closedSignals.length > 0 ? (wins / closedSignals.length) * 100 : 0;
+    const winRate = calculateWinRatePercent(wins, losses);
 
     // Calculate average R:R
     let totalRR = 0;
@@ -138,7 +139,7 @@ export const useSignalWeeklyAnalytics = () => {
     const wins = filteredSignals.filter(s => s.status === 'tp_hit').length;
     const losses = filteredSignals.filter(s => s.status === 'sl_hit').length;
     const breakeven = filteredSignals.filter(s => s.status === 'breakeven').length;
-    const winRate = (wins / filteredSignals.length) * 100;
+    const winRate = calculateWinRatePercent(wins, losses);
 
     // Calculate average R:R
     let totalRR = 0;

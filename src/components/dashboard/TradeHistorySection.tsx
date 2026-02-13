@@ -13,6 +13,8 @@ import { Signal } from "@/types/database";
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
+import { calculateDisplayedPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
+import { calculateWinRatePercent } from "@/lib/kpi-math";
 
 const PAGE_SIZE = 10;
 
@@ -36,7 +38,7 @@ export const TradeHistorySection = ({ adminGlobalView = false }: TradeHistorySec
     isLoading
   } = useProviderAwareTrades({
     realtime: true,
-    limit: 1000,
+    fetchAll: true,
     adminGlobalView,
   });
 
@@ -103,8 +105,7 @@ export const TradeHistorySection = ({ adminGlobalView = false }: TradeHistorySec
   const losses = filteredTrades.filter(t => t.result === "loss").length;
   const breakevens = filteredTrades.filter(t => t.result === "breakeven").length;
   const totalPnL = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-  const decidedTrades = wins + losses;
-  const winRate = decidedTrades > 0 ? (wins / decidedTrades * 100).toFixed(1) : "0";
+  const winRate = calculateWinRatePercent(wins, losses).toFixed(1);
   return <div className="space-y-6">
       {/* Section Header */}
       <div className="flex flex-col gap-4">
@@ -278,20 +279,9 @@ export const TradeHistorySection = ({ adminGlobalView = false }: TradeHistorySec
                       </Badge>
                     </td>
                     <td className="px-6 py-4 text-left">
-                      {(() => {
-                  const entry = trade.signal?.entry_price || 0;
-                  const sl = trade.signal?.stop_loss || 0;
-                  const tp = trade.signal?.take_profit || 0;
-                  let rr = 0;
-                  if (trade.signal?.direction === "BUY" && entry - sl !== 0) {
-                    rr = Math.abs((tp - entry) / (entry - sl));
-                  } else if (trade.signal?.direction === "SELL" && sl - entry !== 0) {
-                    rr = Math.abs((entry - tp) / (sl - entry));
-                  }
-                  return <span className="font-mono text-sm text-secondary-foreground">
-                            1:{rr.toFixed(1)}
-                          </span>;
-                })()}
+                      <span className="font-mono text-sm text-secondary-foreground">
+                        1:{calculateSignalRr(trade).toFixed(1)}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-left">
                       <div>
@@ -304,21 +294,9 @@ export const TradeHistorySection = ({ adminGlobalView = false }: TradeHistorySec
                       </div>
                     </td>
                     <td className="px-6 py-4 text-left">
-                      {(() => {
-                  const entry = trade.signal?.entry_price || 0;
-                  const sl = trade.signal?.stop_loss || 0;
-                  const tp = trade.signal?.take_profit || 0;
-                  let rr = 0;
-                  if (trade.signal?.direction === "BUY" && entry - sl !== 0) {
-                    rr = Math.abs((tp - entry) / (entry - sl));
-                  } else if (trade.signal?.direction === "SELL" && sl - entry !== 0) {
-                    rr = Math.abs((entry - tp) / (sl - entry));
-                  }
-                  const potentialProfit = trade.risk_amount * rr;
-                  return <span className="font-mono font-semibold text-success">
-                            +${potentialProfit.toFixed(2)}
-                          </span>;
-                })()}
+                      <span className="font-mono font-semibold text-success">
+                        +${calculateDisplayedPotentialProfit(trade).toFixed(2)}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-left">
                       <span className={cn("font-mono font-semibold", (trade.pnl || 0) >= 0 ? "text-success" : "text-destructive")}>

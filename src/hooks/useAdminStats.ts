@@ -66,13 +66,29 @@ export const useAdminStats = () => {
         const signals = signalsResult.data || [];
         const activeSignals = signals.filter(s => s.status === 'active').length;
         const totalSignals = signals.length;
-        
-        // Calculate win rate from closed signals
-        const closedSignals = signals.filter(s => s.status === 'tp_hit' || s.status === 'sl_hit');
-        const wins = signals.filter(s => s.status === 'tp_hit').length;
-        const winRate = closedSignals.length > 0 
-          ? Math.round((wins / closedSignals.length) * 100) 
-          : 0;
+
+        // Canonical win rate from trade KPIs (wins / (wins + losses)).
+        let winRate = 0;
+        const { data: kpiData, error: kpiError } = await (supabase.rpc as any)(
+          'get_trade_kpis',
+          {
+            p_user_id: null,
+            p_provider_id: null,
+            p_categories: null,
+          },
+        );
+        if (!kpiError) {
+          const row = Array.isArray(kpiData) ? kpiData[0] : kpiData;
+          const parsed = Number(row?.win_rate_percent ?? 0);
+          winRate = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+        } else {
+          // Fallback while migration/function is not yet deployed.
+          const closedSignals = signals.filter(s => s.status === 'tp_hit' || s.status === 'sl_hit');
+          const wins = signals.filter(s => s.status === 'tp_hit').length;
+          winRate = closedSignals.length > 0
+            ? Math.round((wins / closedSignals.length) * 100)
+            : 0;
+        }
 
         const globalRisk = settingsResult.data?.global_risk_percent || 2;
 

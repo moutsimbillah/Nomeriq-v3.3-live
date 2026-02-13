@@ -1,5 +1,6 @@
 import { format, getWeek, isSameDay, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
+import { CheckCircle2 } from "lucide-react";
 interface DayData {
   date: Date;
   trades: number;
@@ -81,11 +82,27 @@ export const CalendarGrid = ({
               onSelectDate(null);
               return;
             }
-            onSelectDate(day.date);
             onOpenDayModal(day.date);
-          }} className={cn("min-h-[80px] p-2 border-r cursor-pointer transition-all duration-200 hover:bg-secondary/40 border-secondary-foreground border-solid opacity-100 rounded-xl mx-px my-px px-[9px] py-[7px] border-0", !day.isCurrentMonth && "opacity-40", hasData && isProfit && "bg-success/10", hasData && isLoss && "bg-destructive/10", isSelected && "ring-2 ring-success ring-inset", isCurrentDay && !isSelected && "ring-1 ring-primary/50 ring-inset")}>
+          }} className={cn(
+            "relative min-h-[80px] p-2 border-r cursor-pointer transition-all duration-200 hover:bg-secondary/40 border-secondary-foreground border-solid opacity-100 rounded-xl mx-px my-px px-[9px] py-[7px] border-0",
+            !day.isCurrentMonth && "opacity-40",
+            hasData && isProfit && "bg-success/10",
+            hasData && isLoss && "bg-destructive/10",
+            isSelected && "ring-2 ring-primary ring-inset bg-primary/20 border border-primary/50 shadow-[0_0_0_1px_rgba(59,130,246,0.35),0_0_20px_rgba(59,130,246,0.2)]",
+            isCurrentDay && !isSelected && "ring-1 ring-primary/50 ring-inset"
+          )}>
+                  {isSelected && (
+                    <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary/25 border border-primary/40">
+                      <CheckCircle2 className="w-2.5 h-2.5 text-primary" />
+                    </span>
+                  )}
                   <div className="flex flex-col h-full">
-                    <span className={cn("text-sm font-medium mb-1 text-center", !day.isCurrentMonth && "text-muted-foreground", isCurrentDay && "text-primary font-bold")}>
+                    <span className={cn(
+                      "text-sm font-medium mb-1 text-center",
+                      !day.isCurrentMonth && "text-muted-foreground",
+                      isCurrentDay && "text-primary font-bold",
+                      isSelected && "text-primary font-bold"
+                    )}>
                       {format(day.date, "d")}
                     </span>
 

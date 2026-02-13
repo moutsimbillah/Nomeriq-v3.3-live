@@ -38,6 +38,9 @@ export const CalendarAnalyticsPanel = ({
   onOpenDayModal,
   isLoading
 }: CalendarAnalyticsPanelProps) => {
+  const formatSignedCurrency = (value: number) =>
+    `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
+
   if (isLoading) {
     return <div className="space-y-4 animate-pulse">
         <div className="grid grid-cols-2 gap-3">
@@ -95,8 +98,11 @@ export const CalendarAnalyticsPanel = ({
           <p className="text-[10px] text-muted-foreground">Best Day</p>
         </div>
         {stats.bestDay ? <>
-            <p className="text-xl font-bold font-mono text-success">
-              +${stats.bestDay.pnl.toFixed(2)}
+            <p className={cn(
+              "text-xl font-bold font-mono",
+              stats.bestDay.pnl >= 0 ? "text-success" : "text-destructive"
+            )}>
+              {formatSignedCurrency(stats.bestDay.pnl)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {format(parseISO(stats.bestDay.date), "MMMM d, yyyy")}
@@ -118,8 +124,11 @@ export const CalendarAnalyticsPanel = ({
           <p className="text-[10px] text-muted-foreground">Worst Day</p>
         </div>
         {stats.worstDay ? <>
-            <p className="text-xl font-bold font-mono text-destructive">
-              -${Math.abs(stats.worstDay.pnl).toFixed(2)}
+            <p className={cn(
+              "text-xl font-bold font-mono",
+              stats.worstDay.pnl >= 0 ? "text-success" : "text-destructive"
+            )}>
+              {formatSignedCurrency(stats.worstDay.pnl)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {format(parseISO(stats.worstDay.date), "MMMM d, yyyy")}

@@ -12,6 +12,9 @@ import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAna
 import { Signal } from "@/types/database";
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
+import { computeClosedTradeMetrics } from "@/lib/admin-metrics";
+import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
+import { calculateDisplayedPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
 
 const AdminHistory = () => {
     const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -20,7 +23,7 @@ const AdminHistory = () => {
         isLoading,
     } = useProviderAwareTrades({
         realtime: true,
-        limit: 1000,
+        fetchAll: true,
         adminGlobalView: true
     });
 
@@ -64,12 +67,7 @@ const AdminHistory = () => {
     // Sort
     closedTrades = sortTrades(closedTrades, sortBy);
 
-    const wins = closedTrades.filter(t => t.result === "win").length;
-    const losses = closedTrades.filter(t => t.result === "loss").length;
-    const breakevens = closedTrades.filter(t => t.result === "breakeven").length;
-    const totalPnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const decidedTrades = wins + losses;
-    const winRate = decidedTrades > 0 ? (wins / decidedTrades * 100).toFixed(1) : "0";
+    const metrics = computeClosedTradeMetrics(closedTrades);
 
     return (
         <AdminLayout title="Global Trade History">
@@ -77,28 +75,38 @@ const AdminHistory = () => {
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
                 <div className="glass-card p-6 shadow-none">
                     <p className="text-sm text-muted-foreground mb-1">Total Trades</p>
-                    <p className="text-3xl font-bold">{isLoading ? "..." : closedTrades.length}</p>
+                    <p className="text-3xl font-bold">{isLoading ? "..." : metrics.totalClosedTrades}</p>
                 </div>
                 <div className="glass-card p-6 shadow-none">
-                    <p className="text-sm text-muted-foreground mb-1">Win Rate</p>
-                    <p className="text-3xl font-bold text-success">{isLoading ? "..." : `${winRate}%`}</p>
+                    <p className="text-sm text-muted-foreground mb-1">
+                        <MetricInfoTooltip
+                            label="Win Rate"
+                            description="Wins divided by (Wins + Losses). Breakeven is excluded."
+                        />
+                    </p>
+                    <p className="text-3xl font-bold text-success">{isLoading ? "..." : `${metrics.winRate.toFixed(1)}%`}</p>
                 </div>
                 <div className="glass-card p-6 shadow-none">
                     <p className="text-sm text-muted-foreground mb-1">Wins / Losses</p>
                     <p className="text-3xl font-bold">
-                        <span className="text-success">{isLoading ? "..." : wins}</span>
+                        <span className="text-success">{isLoading ? "..." : metrics.wins}</span>
                         <span className="text-muted-foreground mx-2">/</span>
-                        <span className="text-destructive">{isLoading ? "..." : losses}</span>
+                        <span className="text-destructive">{isLoading ? "..." : metrics.losses}</span>
                     </p>
                 </div>
                 <div className="glass-card p-6 shadow-none">
                     <p className="text-sm text-muted-foreground mb-1">Breakeven</p>
-                    <p className="text-3xl font-bold text-warning">{isLoading ? "..." : breakevens}</p>
+                    <p className="text-3xl font-bold text-warning">{isLoading ? "..." : metrics.breakeven}</p>
                 </div>
                 <div className="glass-card p-6 shadow-none">
-                    <p className="text-sm text-muted-foreground mb-1">Total Platform P&L</p>
-                    <p className={cn("text-3xl font-bold", totalPnL >= 0 ? "text-success" : "text-destructive")}>
-                        {isLoading ? "..." : `${totalPnL >= 0 ? "+" : ""}$${totalPnL.toFixed(2)}`}
+                    <p className="text-sm text-muted-foreground mb-1">
+                        <MetricInfoTooltip
+                            label="Total Platform P&L"
+                            description="Sum of realized P&L from closed trades."
+                        />
+                    </p>
+                    <p className={cn("text-3xl font-bold", metrics.totalPnL >= 0 ? "text-success" : "text-destructive")}>
+                        {isLoading ? "..." : `${metrics.totalPnL >= 0 ? "+" : ""}$${metrics.totalPnL.toFixed(2)}`}
                     </p>
                 </div>
             </div>
@@ -233,18 +241,9 @@ const AdminHistory = () => {
                                                 </Badge>
                                             </td>
                                             <td className="px-6 py-4 text-left">
-                                                {(() => {
-                                                    const entry = trade.signal?.entry_price || 0;
-                                                    const sl = trade.signal?.stop_loss || 0;
-                                                    const tp = trade.signal?.take_profit || 0;
-                                                    let rr = 0;
-                                                    if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                                                        rr = Math.abs((tp - entry) / (entry - sl));
-                                                    } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                                                        rr = Math.abs((entry - tp) / (sl - entry));
-                                                    }
-                                                    return <span className="font-mono text-sm text-secondary-foreground">1:{rr.toFixed(1)}</span>;
-                                                })()}
+                                                <span className="font-mono text-sm text-secondary-foreground">
+                                                    1:{calculateSignalRr(trade).toFixed(1)}
+                                                </span>
                                             </td>
                                             <td className="px-6 py-4 text-left">
                                                 <div>
@@ -257,19 +256,9 @@ const AdminHistory = () => {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-left">
-                                                {(() => {
-                                                    const entry = trade.signal?.entry_price || 0;
-                                                    const sl = trade.signal?.stop_loss || 0;
-                                                    const tp = trade.signal?.take_profit || 0;
-                                                    let rr = 0;
-                                                    if (trade.signal?.direction === 'BUY' && entry - sl !== 0) {
-                                                        rr = Math.abs((tp - entry) / (entry - sl));
-                                                    } else if (trade.signal?.direction === 'SELL' && sl - entry !== 0) {
-                                                        rr = Math.abs((entry - tp) / (sl - entry));
-                                                    }
-                                                    const potentialProfit = trade.risk_amount * rr;
-                                                    return <span className="font-mono font-semibold text-success">+${potentialProfit.toFixed(2)}</span>;
-                                                })()}
+                                                <span className="font-mono font-semibold text-success">
+                                                    +${calculateDisplayedPotentialProfit(trade).toFixed(2)}
+                                                </span>
                                             </td>
                                             <td className="px-6 py-4 text-left">
                                                 {(() => {

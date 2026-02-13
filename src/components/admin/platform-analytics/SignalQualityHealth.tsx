@@ -5,10 +5,12 @@ import { cn } from "@/lib/utils";
 interface Props {
   qualityStats: QualityStats;
   avgHoldingHours: number;
+  avgExpectedValue: number;
+  avgRR: number;
   isLoading: boolean;
 }
 
-export const SignalQualityHealth = ({ qualityStats, avgHoldingHours, isLoading }: Props) => {
+export const SignalQualityHealth = ({ qualityStats, avgHoldingHours, avgExpectedValue, avgRR, isLoading }: Props) => {
   const safeAvgHoldingHours = Number.isFinite(avgHoldingHours) ? avgHoldingHours : 0;
   if (isLoading) {
     return (
@@ -150,6 +152,30 @@ export const SignalQualityHealth = ({ qualityStats, avgHoldingHours, isLoading }
 
         {/* Streak & Frequency Stats */}
         <div className="space-y-4">
+          <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+            <div className="flex items-center gap-2 mb-3">
+              <Target className="w-4 h-4 text-primary" />
+              <span className="text-xs text-muted-foreground">Expected Value (EV) per Trade</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-lg bg-secondary/40">
+                <p className="text-xs text-muted-foreground mb-1">Avg EV</p>
+                <p className={cn(
+                  "text-2xl font-bold font-mono",
+                  avgExpectedValue >= 0 ? "text-success" : "text-destructive"
+                )}>
+                  {avgExpectedValue >= 0 ? "+" : ""}${avgExpectedValue.toFixed(2)}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-secondary/40">
+                <p className="text-xs text-muted-foreground mb-1">Avg R:R</p>
+                <p className="text-2xl font-bold font-mono text-primary">
+                  1:{avgRR.toFixed(1)}
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Streak Stats */}
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 rounded-lg bg-success/5 border border-success/20">

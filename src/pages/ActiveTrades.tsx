@@ -52,6 +52,9 @@ const ActiveTrades = () => {
   const filteredTrades = useMemo(() => {
     let result = [...trades];
 
+    // Keep Active Trades aligned with Live Trades: only currently live signals
+    result = result.filter((t) => t.signal?.status === 'active' && (t.signal?.signal_type || 'signal') === 'signal');
+
     // Time filter
     result = filterByTime(result, timeFilter, dateRange);
 
@@ -68,18 +71,32 @@ const ActiveTrades = () => {
     // Sort
     return sortTrades(result, sortBy);
   }, [trades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
+  const displayTrades = useMemo(() => {
+    if (!isProvider) return filteredTrades;
+
+    const uniqueBySignal = new Map<string, UserTrade>();
+    filteredTrades.forEach((trade) => {
+      const signalId = trade.signal?.id;
+      if (!signalId) return;
+      if (!uniqueBySignal.has(signalId)) {
+        uniqueBySignal.set(signalId, trade);
+      }
+    });
+
+    return Array.from(uniqueBySignal.values());
+  }, [filteredTrades, isProvider]);
 
   useEffect(() => {
-    const signalsToPreload = filteredTrades
+    const signalsToPreload = displayTrades
       .map((trade) => trade.signal as Signal | null | undefined)
       .filter((signal): signal is Signal => Boolean(signal?.analysis_image_url));
 
     signalsToPreload.forEach((signal) => {
       void preloadSignalAnalysisMedia(signal);
     });
-  }, [filteredTrades]);
+  }, [displayTrades]);
 
-  const signalIds = Array.from(new Set(filteredTrades.map((t) => t.signal?.id).filter((id): id is string => !!id)));
+  const signalIds = Array.from(new Set(displayTrades.map((t) => t.signal?.id).filter((id): id is string => !!id)));
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: true });
   const [seenUpdateCounts, setSeenUpdateCounts] = useState<Record<string, number>>({});
   const seenStorageKey = useMemo(
@@ -183,14 +200,14 @@ const ActiveTrades = () => {
   const calculateTradePotentialProfit = (trade: UserTrade) => {
     return getOpenRisk(trade) * calculateTradeRr(trade);
   };
-  const totalRisk = filteredTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
-  const averageLiveRiskPercent = filteredTrades.length
-    ? filteredTrades.reduce((sum, t) => sum + getTradeRiskPercent(t), 0) / filteredTrades.length
+  const totalRisk = displayTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
+  const averageLiveRiskPercent = displayTrades.length
+    ? displayTrades.reduce((sum, t) => sum + getTradeRiskPercent(t), 0) / displayTrades.length
     : 0;
 
   // Calculate total potential profit
-  const totalPotentialProfit = filteredTrades.reduce((sum, t) => sum + calculateTradePotentialProfit(t), 0);
-  const unrealizedPnL = filteredTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const totalPotentialProfit = displayTrades.reduce((sum, t) => sum + calculateTradePotentialProfit(t), 0);
+  const unrealizedPnL = 0;
   const getSignalStatus = (status: string) => {
     switch (status) {
       case 'active':
@@ -228,7 +245,7 @@ const ActiveTrades = () => {
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
       <div className="glass-card p-4 sm:p-6 shadow-none">
         <p className="text-xs sm:text-base text-muted-foreground mb-1">Open Positions</p>
-        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : filteredTrades.length}</p>
+        <p className="text-xl sm:text-3xl font-bold">{isLoading ? "..." : displayTrades.length}</p>
       </div>
       <div className="glass-card p-4 sm:p-6 shadow-none">
         <p className="text-xs sm:text-base text-muted-foreground mb-1">Total Risk</p>
@@ -260,11 +277,11 @@ const ActiveTrades = () => {
     {/* Trades Grid */}
     {isLoading ? <div className="flex items-center justify-center py-12">
       <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-    </div> : filteredTrades.length === 0 ? <div className="glass-card p-12 text-center text-muted-foreground shadow-none">
+    </div> : displayTrades.length === 0 ? <div className="glass-card p-12 text-center text-muted-foreground shadow-none">
       <p>No active trades</p>
       <p className="text-sm mt-2">New signals will appear here automatically</p>
     </div> : <div className="grid gap-4 my-[24px]">
-      {filteredTrades.map(trade => {
+      {displayTrades.map(trade => {
         const signal = trade.signal;
         const rr = calculateTradeRr(trade);
         const potentialProfit = calculateTradePotentialProfit(trade);
@@ -485,3 +502,6 @@ const ActiveTrades = () => {
   </DashboardLayout>;
 };
 export default ActiveTrades;
+
+
+

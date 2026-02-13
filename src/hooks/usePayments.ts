@@ -30,8 +30,10 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const requestSeqRef = useRef(0);
 
   const fetchPayments = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
     setIsLoading(true);
     try {
       // Get count
@@ -47,6 +49,7 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
       }
 
       const { count } = await countQuery;
+      if (requestId !== requestSeqRef.current) return;
       setTotalCount(count || 0);
 
       // Get payments
@@ -139,6 +142,7 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
           };
         }) as PaymentWithUser[];
 
+        if (requestId !== requestSeqRef.current) return;
         setPayments(paymentsWithUsers);
       } else {
         const paymentsWithStatus = (paymentsData || []).map(payment => {
@@ -152,15 +156,20 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
             package: pkg ?? fallbackPackageByPaymentId.get(payment.id) ?? null,
           };
         }) as PaymentWithUser[];
+        if (requestId !== requestSeqRef.current) return;
         setPayments(paymentsWithStatus);
       }
 
+      if (requestId !== requestSeqRef.current) return;
       setError(null);
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       setError(err as Error);
       console.error('Error fetching payments:', err);
     } finally {
-      setIsLoading(false);
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [status, limit, page, userId]);
 

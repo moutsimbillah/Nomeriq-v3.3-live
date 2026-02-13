@@ -268,6 +268,13 @@ export const SignalTakeProfitUpdatesDialog = ({
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" onClick={addRow}>
+              <Plus className="w-4 h-4 mr-1" />
+              Add TP
+            </Button>
+          </div>
+
           {existingUpdates.length > 0 && (
             <div className="rounded-xl border border-border/50 p-3">
               <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">Published Updates</p>
@@ -346,17 +353,10 @@ export const SignalTakeProfitUpdatesDialog = ({
             ))}
           </div>
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
               Planned close: <span className="font-semibold text-foreground">{totalPlannedClosePercent.toFixed(2)}%</span>
             </div>
-            <Button type="button" variant="outline" onClick={addRow}>
-              <Plus className="w-4 h-4 mr-1" />
-              Add TP
-            </Button>
-          </div>
-
-          <div className="flex justify-end">
             <Button onClick={handleSubmit} disabled={isSubmitting}>
               {isSubmitting ? "Publishing..." : "Publish Updates"}
             </Button>

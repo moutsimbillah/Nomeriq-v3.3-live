@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Profile, Subscription, Payment } from '@/types/database';
+import { pickPrimarySubscription } from '@/lib/subscription-selection';
 
 interface UserWithDetails extends Profile {
   subscription?: Subscription;
+  subscriptionPackageName?: string | null;
+  subscriptionDurationType?: string | null;
   latestPayment?: Payment;
   role?: string;
 }
@@ -12,46 +15,20 @@ interface UseUsersOptions {
   search?: string;
   limit?: number;
   page?: number;
+  realtime?: boolean;
+  fetchAll?: boolean;
 }
 
-const isSubscriptionActiveNow = (sub: Subscription): boolean => {
-  if (sub.status !== 'active') return false;
-  if (!sub.expires_at) return true; // lifetime / no-expiry plans
-  return new Date(sub.expires_at) > new Date();
-};
-
-const pickPrimarySubscription = (subs: Subscription[]): Subscription | undefined => {
-  if (!subs.length) return undefined;
-
-  const active = subs
-    .filter(isSubscriptionActiveNow)
-    .sort((a, b) => {
-      const aExp = a.expires_at ? new Date(a.expires_at).getTime() : Number.MAX_SAFE_INTEGER;
-      const bExp = b.expires_at ? new Date(b.expires_at).getTime() : Number.MAX_SAFE_INTEGER;
-      return bExp - aExp;
-    });
-  if (active.length > 0) return active[0];
-
-  const pending = subs
-    .filter((s) => s.status === 'pending')
-    .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime());
-  if (pending.length > 0) return pending[0];
-
-  return [...subs].sort(
-    (a, b) =>
-      new Date(b.updated_at || b.created_at).getTime() -
-      new Date(a.updated_at || a.created_at).getTime()
-  )[0];
-};
-
 export const useUsers = (options: UseUsersOptions = {}) => {
-  const { search = '', limit = 20, page = 1 } = options;
+  const { search = '', limit = 20, page = 1, realtime = true, fetchAll = false } = options;
   const [users, setUsers] = useState<UserWithDetails[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const requestSeqRef = useRef(0);
 
   const fetchUsers = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
     setIsLoading(true);
     try {
       // Build the base query for count
@@ -64,27 +41,53 @@ export const useUsers = (options: UseUsersOptions = {}) => {
       }
 
       const { count } = await countQuery;
+      if (requestId !== requestSeqRef.current) return;
       setTotalCount(count || 0);
 
-      // Build the main query
-      const offset = (page - 1) * limit;
-      
-      let query = supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
+      let profilesData: Profile[] = [];
+      if (fetchAll) {
+        const batchSize = 500;
+        const expectedTotal = count || 0;
+        let offset = 0;
 
-      if (search) {
-        query = query.or(`email.ilike.%${search}%,username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,phone.ilike.%${search}%`);
+        while (offset < expectedTotal || offset === 0) {
+          let batchQuery = supabase
+            .from('profiles')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(offset, offset + batchSize - 1);
+
+          if (search) {
+            batchQuery = batchQuery.or(`email.ilike.%${search}%,username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,phone.ilike.%${search}%`);
+          }
+
+          const { data: batchRows, error: batchError } = await batchQuery;
+          if (batchError) throw batchError;
+          if (!batchRows || batchRows.length === 0) break;
+
+          profilesData = [...profilesData, ...(batchRows as Profile[])];
+          if (batchRows.length < batchSize) break;
+          offset += batchSize;
+        }
+      } else {
+        const offset = (page - 1) * limit;
+        let query = supabase
+          .from('profiles')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        if (search) {
+          query = query.or(`email.ilike.%${search}%,username.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,phone.ilike.%${search}%`);
+        }
+
+        const { data, error: profilesError } = await query;
+        if (profilesError) throw profilesError;
+        profilesData = (data || []) as Profile[];
       }
 
-      const { data: profilesData, error: profilesError } = await query;
-
-      if (profilesError) throw profilesError;
-
       // Fetch subscriptions and roles for these users
-      const userIds = (profilesData || []).map(p => p.user_id);
+      const userIds = profilesData.map(p => p.user_id);
       
       const [subscriptionsResult, rolesResult] = await Promise.all([
         supabase.from('subscriptions').select('*').in('user_id', userIds),
@@ -98,29 +101,99 @@ export const useUsers = (options: UseUsersOptions = {}) => {
         list.push(sub);
         subscriptionsByUser.set(sub.user_id, list);
       }
+
+      const selectedSubscriptions = profilesData
+        .map((profile) => pickPrimarySubscription(subscriptionsByUser.get(profile.user_id) || []))
+        .filter((sub): sub is Subscription => Boolean(sub));
+      const packageIds = Array.from(
+        new Set(
+          selectedSubscriptions
+            .map((sub) => sub.package_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+
+      const packageMetaMap = new Map<string, { name: string; duration_type: string | null }>();
+      if (packageIds.length > 0) {
+        const { data: packagesData } = await supabase
+          .from('subscription_packages')
+          .select('id, name, duration_type')
+          .in('id', packageIds);
+        (packagesData || []).forEach((pkg) =>
+          packageMetaMap.set(pkg.id, { name: pkg.name, duration_type: pkg.duration_type || null }),
+        );
+      }
+
       const rolesMap = new Map(
         (rolesResult.data || []).map(r => [r.user_id, r.role])
       );
 
-      const usersWithDetails: UserWithDetails[] = (profilesData || []).map(profile => ({
-        ...profile,
-        subscription: pickPrimarySubscription(subscriptionsByUser.get(profile.user_id) || []),
-        role: rolesMap.get(profile.user_id),
-      }));
+      const usersWithDetails: UserWithDetails[] = profilesData.map(profile => {
+        const selectedSubscription = pickPrimarySubscription(subscriptionsByUser.get(profile.user_id) || []);
+        return {
+          ...profile,
+          subscription: selectedSubscription,
+          subscriptionPackageName: selectedSubscription?.package_id
+            ? packageMetaMap.get(selectedSubscription.package_id)?.name || null
+            : null,
+          subscriptionDurationType: selectedSubscription?.package_id
+            ? packageMetaMap.get(selectedSubscription.package_id)?.duration_type || null
+            : null,
+          role: rolesMap.get(profile.user_id),
+        };
+      });
 
+      if (requestId !== requestSeqRef.current) return;
       setUsers(usersWithDetails);
       setError(null);
     } catch (err) {
+      if (requestId !== requestSeqRef.current) return;
       setError(err as Error);
       console.error('Error fetching users:', err);
     } finally {
-      setIsLoading(false);
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
     }
-  }, [search, limit, page]);
+  }, [search, limit, page, fetchAll]);
 
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  useEffect(() => {
+    if (!realtime) return;
+
+    const channelName = `users-realtime-${Math.random().toString(36).slice(2)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          fetchUsers();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'subscriptions' },
+        () => {
+          fetchUsers();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_roles' },
+        () => {
+          fetchUsers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchUsers, realtime]);
 
   const totalPages = Math.ceil(totalCount / limit);
 
@@ -151,12 +224,13 @@ export const useUserDetails = (userId: string | undefined) => {
 
         if (profileError) throw profileError;
 
-        // Fetch subscription
-        const { data: subData } = await supabase
+        // Fetch subscriptions and choose primary consistently
+        const { data: subRows } = await supabase
           .from('subscriptions')
           .select('*')
           .eq('user_id', userId)
-          .maybeSingle();
+          .order('updated_at', { ascending: false });
+        const subData = pickPrimarySubscription((subRows || []) as Subscription[]) ?? null;
 
         // Fetch role
         const { data: roleData } = await supabase

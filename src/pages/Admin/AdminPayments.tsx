@@ -43,12 +43,14 @@ const AdminPayments = () => {
     return matchesSearch;
   });
   const selectedPayment = payments.find(p => p.id === selectedPaymentId);
-  const handleVerify = async () => {
-    if (!selectedPaymentId || !user) return;
+  const handleVerify = async (paymentId: string) => {
+    if (!paymentId || !user) return;
     try {
-      await verifyPayment(selectedPaymentId, user.id);
+      await verifyPayment(paymentId, user.id);
       toast.success("Payment verified and subscription activated");
-      setSelectedPaymentId(null);
+      if (selectedPaymentId === paymentId) {
+        setSelectedPaymentId(null);
+      }
     } catch (err) {
       console.error('Error verifying payment:', err);
       toast.error("Failed to verify payment");
@@ -201,7 +203,7 @@ const AdminPayments = () => {
                       View
                     </button>
                     {payment.status === "pending" && <>
-                      <Button size="sm" variant="outline" className="border-success/30 text-success hover:bg-success/10" onClick={() => handleVerify()}>
+                      <Button size="sm" variant="outline" className="border-success/30 text-success hover:bg-success/10" onClick={() => handleVerify(payment.id)}>
                         <CheckCircle2 className="w-4 h-4" />
                       </Button>
                       <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => handleReject(payment.id)}>
@@ -489,7 +491,7 @@ const AdminPayments = () => {
                   variant="default"
                   className="flex-1 bg-success hover:bg-success/90"
                   onClick={() => {
-                    handleVerify();
+                    handleVerify(selectedPayment.id);
                     setIsDetailsDialogOpen(false);
                   }}
                 >

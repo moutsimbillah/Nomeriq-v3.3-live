@@ -9,6 +9,7 @@ import { format, parseISO, subMonths, subWeeks, subYears } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, TrendingDown, Wallet, Target, ArrowUpRight, ArrowDownRight, Shield, AlertTriangle, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { calculateSignalRr } from "@/lib/trade-math";
 import {
   Tooltip,
   TooltipContent,
@@ -20,16 +21,7 @@ type Period = "1W" | "1M" | "3M" | "1Y" | "ALL";
 
 // Calculate R:R for a signal
 const calculateRR = (signal: any): number => {
-  const entry = signal?.entry_price || 0;
-  const sl = signal?.stop_loss || 0;
-  const tp = signal?.take_profit || 0;
-  
-  if (signal?.direction === 'BUY' && entry - sl !== 0) {
-    return Math.abs((tp - entry) / (entry - sl));
-  } else if (signal?.direction === 'SELL' && sl - entry !== 0) {
-    return Math.abs((entry - tp) / (sl - entry));
-  }
-  return 1;
+  return calculateSignalRr({ signal });
 };
 
 const hasSameDayCollisions = (dates: Date[]) => {
@@ -48,8 +40,8 @@ interface EquityChartProps {
 
 export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
   const { profile, user } = useAuth();
-  const { trades } = useProviderAwareTrades({ limit: 1000, realtime: true, adminGlobalView });
-  const { signals } = useProviderAwareSignals({ realtime: true, limit: 1000, adminGlobalView });
+  const { trades } = useProviderAwareTrades({ fetchAll: true, realtime: true, adminGlobalView });
+  const { signals } = useProviderAwareSignals({ realtime: true, fetchAll: true, adminGlobalView });
   const { isProvider, isLoading: roleLoading } = useAdminRole();
   const { settings } = useBrand();
   const [period, setPeriod] = useState<Period>("1Y");
@@ -393,7 +385,8 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
         if (drawdown > maxDrawdown) maxDrawdown = drawdown;
       });
       
-      const currentDrawdown = peak > 0 ? ((peak - effectiveCurrentBalance) / peak) * 100 : 0;
+      const rawCurrentDrawdown = peak > 0 ? ((peak - effectiveCurrentBalance) / peak) * 100 : 0;
+      const currentDrawdown = Math.max(0, rawCurrentDrawdown);
       
       // Calculate consecutive losses
       let consecutiveLosses = 0;

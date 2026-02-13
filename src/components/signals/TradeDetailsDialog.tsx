@@ -3,29 +3,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Signal, UserTrade } from "@/types/database";
+import { UserTrade } from "@/types/database";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { format, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { FileText, ExternalLink, Image as ImageIcon, Play } from "lucide-react";
 import { resolveAnalysisImageUrl } from "@/lib/signalAnalysisMedia";
+import {
+  calculateDisplayedPotentialProfit,
+  calculateSignalRrForTarget,
+} from "@/lib/trade-math";
 
 interface TradeDetailsDialogProps {
   trade: UserTrade;
 }
-
-const calculateRr = (signal: Signal | undefined, targetTp: number): number => {
-  const entry = signal?.entry_price || 0;
-  const sl = signal?.stop_loss || 0;
-  if (!signal || entry === 0) return 0;
-
-  if (signal.direction === "BUY") {
-    if (entry - sl === 0) return 0;
-    return Math.abs((targetTp - entry) / (entry - sl));
-  }
-  if (sl - entry === 0) return 0;
-  return Math.abs((entry - targetTp) / (sl - entry));
-};
 
 const getDuration = (createdAt?: string, closedAt?: string | null) => {
   if (!createdAt || !closedAt) return "-";
@@ -63,7 +54,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     return updates.map((u) => {
       const closePercent = Math.max(0, Math.min(remainingPercent, Number(u.close_percent ?? 0)));
       remainingPercent = Math.max(0, remainingPercent - closePercent);
-      const rrAtTp = calculateRr(signal, Number(u.tp_price));
+      const rrAtTp = calculateSignalRrForTarget(signal, Number(u.tp_price));
       const realizedProfit = initialRisk * (closePercent / 100) * rrAtTp;
       return {
         ...u,
@@ -82,11 +73,17 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     return signal.direction === "SELL" ? Math.min(...tpPrices) : Math.max(...tpPrices);
   }, [signal, updates]);
 
-  const rr = useMemo(() => calculateRr(signal, currentTargetTp), [signal, currentTargetTp]);
+  const rr = useMemo(
+    () => calculateSignalRrForTarget(signal, currentTargetTp),
+    [signal, currentTargetTp]
+  );
   const [resolvedImageUrl, setResolvedImageUrl] = useState<string | null>(null);
   const [isImageLoading, setIsImageLoading] = useState(false);
 
-  const potentialProfit = (trade.risk_amount || 0) * rr;
+  const potentialProfit = calculateDisplayedPotentialProfit({
+    ...trade,
+    signal: signal ? { ...signal, take_profit: currentTargetTp } : signal,
+  });
   const duration = getDuration(trade.created_at, trade.closed_at);
   const hasAnalysis = Boolean(signal?.analysis_notes || signal?.analysis_video_url || signal?.analysis_image_url);
   const videoId = signal?.analysis_video_url ? extractYouTubeId(signal.analysis_video_url) : null;

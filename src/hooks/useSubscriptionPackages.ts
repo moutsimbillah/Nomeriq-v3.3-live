@@ -8,6 +8,7 @@ import {
 } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { shouldSuppressQueryErrorLog } from '@/lib/queryStability';
+import { pickPrimarySubscription } from '@/lib/subscription-selection';
 
 export interface SubscriptionPackageWithFeatures extends SubscriptionPackage {
   features: SubscriptionPackageFeature[];
@@ -130,14 +131,15 @@ export const useUserSubscription = (): UseUserSubscriptionResult => {
 
     setIsLoading(true);
     try {
-      const { data: subRow, error: subError } = await supabase
+      const { data: subRows, error: subError } = await supabase
         .from('subscriptions')
         .select('*')
         .eq('user_id', userId)
-        .maybeSingle();
+        .order('updated_at', { ascending: false });
 
       if (subError) throw subError;
 
+      const subRow = pickPrimarySubscription((subRows || []) as Subscription[]);
       if (!subRow) {
         setSubscription(null);
         setError(null);

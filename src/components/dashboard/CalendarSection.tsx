@@ -123,6 +123,9 @@ export const CalendarSection = ({ adminGlobalView = false }: CalendarSectionProp
       </div>
 
       {/* Day Detail Modal */}
-      {modalDate && modalDayData && <DayDetailModal isOpen={modalOpen} onClose={() => setModalOpen(false)} date={modalDate} dayPnl={modalDayData.pnl} dayTrades={modalDayData.trades} />}
+      {modalDate && modalDayData && <DayDetailModal isOpen={modalOpen} onClose={() => {
+      setModalOpen(false);
+      setSelectedDate(modalDate);
+    }} date={modalDate} dayPnl={modalDayData.pnl} dayTrades={modalDayData.trades} adminGlobalView={adminGlobalView} />}
     </div>;
 };

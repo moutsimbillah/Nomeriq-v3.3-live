@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { cn } from "@/lib/utils";
 import { BarChart3, Loader2 } from "lucide-react";
+import { calculateWinRatePercent } from "@/lib/kpi-math";
 
 type BucketStats = {
   label: string;
@@ -51,7 +52,7 @@ const buildBuckets = (labels: string[]): Record<string, BucketStats> =>
 
 const formatPnL = (value: number) => `${value >= 0 ? "+" : ""}$${Math.abs(value).toFixed(2)}`;
 
-const getWinRate = (item: BucketStats) => (item.trades > 0 ? (item.wins / item.trades) * 100 : 0);
+const getWinRate = (item: BucketStats) => calculateWinRatePercent(item.wins, item.losses);
 
 const sortByPerformanceDesc = (items: BucketStats[]) =>
   [...items].sort((a, b) => {
@@ -82,7 +83,7 @@ interface PerformanceBySessionDayProps {
 }
 
 export const PerformanceBySessionDay = ({ adminGlobalView = false }: PerformanceBySessionDayProps) => {
-  const { trades, isLoading } = useProviderAwareTrades({ limit: 1000, realtime: true, adminGlobalView });
+  const { trades, isLoading } = useProviderAwareTrades({ fetchAll: true, realtime: true, adminGlobalView });
 
   const { dayStats, sessionStats } = useMemo(() => {
     const closedTrades = trades.filter(
@@ -122,7 +123,7 @@ export const PerformanceBySessionDay = ({ adminGlobalView = false }: Performance
   }, [trades]);
 
   const renderGaugeCard = (item: BucketStats, index: number) => {
-    const winRate = item.trades > 0 ? (item.wins / item.trades) * 100 : 0;
+    const winRate = calculateWinRatePercent(item.wins, item.losses);
     const rateColor = winRate >= 50 ? "text-success" : "text-destructive";
     const dotColor = getColorToken(index);
     const barColorMap: Record<string, string> = {

@@ -14,6 +14,8 @@ import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
 import { shouldSuppressQueryErrorLog } from "@/lib/queryStability";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
+import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
+import { isUpcomingSignal } from "@/lib/admin-metrics";
 
 interface UpcomingTradesSectionProps {
   adminGlobalView?: boolean;
@@ -58,9 +60,9 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
       
       if (error) throw error;
       const allSignals = data as unknown as Signal[];
-      // Filter for upcoming signals: either by signal_type, status, or upcoming_status
-      const filtered = (allSignals || []).filter(s => 
-        (s.signal_type === 'upcoming' || s.status === 'upcoming' || s.upcoming_status) && 
+      // Keep upcoming contract consistent for admin pages.
+      const filtered = (allSignals || []).filter(s =>
+        isUpcomingSignal(s) &&
         s.status !== 'closed' && 
         s.status !== 'cancelled'
       );
@@ -181,6 +183,12 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
             <p className="text-sm text-muted-foreground">
               Potential setups we're monitoring
             </p>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            <MetricInfoTooltip
+              label={`${filteredTrades.length} upcoming`}
+              description="Potential setups not yet active or executed."
+            />
           </div>
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

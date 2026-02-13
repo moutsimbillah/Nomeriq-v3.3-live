@@ -144,7 +144,43 @@ serve(async (req) => {
       status: "active" | "inactive" | "expired" | "pending";
       providerSubscriptionId?: string | null;
       providerCustomerId?: string | null;
+      eventCreatedAt?: string | null;
+      eventId?: string | null;
     }) => {
+      if (args.eventCreatedAt) {
+        const { data: existing, error: existingError } = await supabaseAdmin
+          .from("subscriptions")
+          .select("provider_event_created_at, provider_last_event_id")
+          .eq("user_id", args.userId)
+          .maybeSingle();
+        if (existingError) throw existingError;
+
+        const incomingTs = new Date(args.eventCreatedAt).getTime();
+        const existingTs = existing?.provider_event_created_at
+          ? new Date(existing.provider_event_created_at).getTime()
+          : null;
+
+        if (
+          Number.isFinite(incomingTs) &&
+          existingTs !== null &&
+          Number.isFinite(existingTs)
+        ) {
+          if (existingTs > incomingTs) {
+            // Ignore stale event update (older than already applied event).
+            return;
+          }
+          if (
+            existingTs === incomingTs &&
+            existing?.provider_last_event_id &&
+            args.eventId &&
+            existing.provider_last_event_id === args.eventId
+          ) {
+            // Same event already applied.
+            return;
+          }
+        }
+      }
+
       const { error } = await supabaseAdmin
         .from("subscriptions")
         .upsert(
@@ -158,6 +194,8 @@ serve(async (req) => {
             provider: "stripe",
             provider_subscription_id: args.providerSubscriptionId ?? null,
             provider_customer_id: args.providerCustomerId ?? null,
+            provider_event_created_at: args.eventCreatedAt ?? null,
+            provider_last_event_id: args.eventId ?? null,
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id" }
@@ -228,6 +266,8 @@ serve(async (req) => {
             status: "active",
             providerSubscriptionId,
             providerCustomerId,
+            eventCreatedAt: toIsoFromStripeTs(event.created),
+            eventId: event.id,
           });
         } else if (paidStatus === "verified") {
           await upsertSubscription({
@@ -239,6 +279,8 @@ serve(async (req) => {
             status: "active",
             providerSubscriptionId: null,
             providerCustomerId,
+            eventCreatedAt: toIsoFromStripeTs(event.created),
+            eventId: event.id,
           });
         }
         break;
@@ -278,6 +320,8 @@ serve(async (req) => {
           providerSubscriptionId,
           providerCustomerId:
             typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,
+          eventCreatedAt: toIsoFromStripeTs(event.created),
+          eventId: event.id,
         });
         break;
       }
@@ -320,6 +364,8 @@ serve(async (req) => {
           providerSubscriptionId,
           providerCustomerId:
             typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,
+          eventCreatedAt: toIsoFromStripeTs(event.created),
+          eventId: event.id,
         });
         break;
       }
@@ -347,6 +393,8 @@ serve(async (req) => {
             providerSubscriptionId,
             providerCustomerId:
               typeof stripeSubscription.customer === "string" ? stripeSubscription.customer : null,
+            eventCreatedAt: toIsoFromStripeTs(event.created),
+            eventId: event.id,
           });
         }
         break;

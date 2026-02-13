@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useRef, ReactNode } fro
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { Profile, Subscription, AppRole } from '@/types/database';
+import { pickPrimarySubscription } from '@/lib/subscription-selection';
 
 interface AuthContextType {
   user: User | null;
@@ -49,14 +50,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       setProfile((profileData ?? null) as Profile | null);
 
-      // Fetch subscription
-      const { data: subData } = await supabase
+      // Fetch subscriptions and select the primary one using shared rules.
+      const { data: subRows } = await supabase
         .from('subscriptions')
         .select('*')
         .eq('user_id', userId)
-        .maybeSingle();
+        .order('updated_at', { ascending: false });
 
-      setSubscription((subData ?? null) as Subscription | null);
+      const primarySub = pickPrimarySubscription((subRows || []) as Subscription[]);
+      setSubscription((primarySub ?? null) as Subscription | null);
 
       // Fetch roles
       const { data: rolesData } = await supabase

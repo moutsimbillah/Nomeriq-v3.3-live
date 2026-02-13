@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Receipt, ExternalLink, CheckCircle, XCircle, Clock, Eye, Shield, TrendingUp, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -19,6 +20,10 @@ interface Payment {
   payment_method?: string | null;
   provider_session_id?: string | null;
   provider_payment_id?: string | null;
+  package?: {
+    name?: string | null;
+    duration_type?: string | null;
+  } | null;
   user_bank_account_name?: string | null;
   user_bank_account_number?: string | null;
   user_bank_name?: string | null;
@@ -34,6 +39,25 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [rowsPerPage, setRowsPerPage] = useState<string>("10");
+  const [page, setPage] = useState(1);
+
+  const totalPages = useMemo(() => {
+    if (rowsPerPage === "all") return 1;
+    const size = Math.max(1, parseInt(rowsPerPage, 10));
+    return Math.max(1, Math.ceil(payments.length / size));
+  }, [payments.length, rowsPerPage]);
+
+  const paginatedPayments = useMemo(() => {
+    if (rowsPerPage === "all") return payments;
+    const size = Math.max(1, parseInt(rowsPerPage, 10));
+    const start = (page - 1) * size;
+    return payments.slice(start, start + size);
+  }, [payments, rowsPerPage, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [payments.length, rowsPerPage]);
 
   const copyHash = (hash: string) => {
     navigator.clipboard.writeText(hash);
@@ -60,11 +84,26 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
   return (
     <>
       <div className="glass-card shadow-none overflow-hidden">
-        <div className="p-6 border-b border-border/50">
+        <div className="p-6 border-b border-border/50 flex items-center justify-between gap-3">
           <h3 className="font-semibold flex items-center gap-2">
             <Receipt className="w-4 h-4 text-primary" />
             Payment History ({payments.length})
           </h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Rows</span>
+            <Select value={rowsPerPage} onValueChange={setRowsPerPage}>
+              <SelectTrigger className="h-8 w-[90px] bg-secondary/40 border-border/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {payments.length === 0 ? (
@@ -73,7 +112,7 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
             <p className="text-sm">No payment records found</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border/50 bg-secondary/30">
@@ -82,6 +121,12 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                   </th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Payment Method
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Package
+                  </th>
+                  <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
+                    Duration
                   </th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">
                     Date & Time
@@ -98,7 +143,7 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {payments.map((payment) => (
+                {paginatedPayments.map((payment) => (
                   <tr key={payment.id} className="hover:bg-accent/30 transition-colors">
                     <td className="px-6 py-4">
                       <code className="text-xs bg-secondary/50 px-2 py-1 rounded font-mono">
@@ -111,6 +156,22 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                         {payment.payment_method === 'bank_transfer' && 'Bank Transfer'}
                         {payment.payment_method === 'stripe' && 'Card Payment'}
                         {!payment.payment_method && 'USDT (TRC20)'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm">
+                        {payment.package?.name || "-"}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm capitalize">
+                        {payment.package?.duration_type === "lifetime"
+                          ? "Lifetime"
+                          : payment.package?.duration_type === "monthly"
+                          ? "Monthly"
+                          : payment.package?.duration_type === "yearly"
+                          ? "Yearly"
+                          : "-"}
                       </span>
                     </td>
                     <td className="px-6 py-4">
@@ -155,6 +216,33 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {rowsPerPage !== "all" && payments.length > 0 && (
+          <div className="px-6 py-4 border-t border-border/40 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Page {page} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                Next
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -207,6 +295,24 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Amount</p>
                   <p className="text-xl font-bold text-primary">${selectedPayment.amount}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Package</p>
+                  <p className="text-sm font-semibold">
+                    {selectedPayment.package?.name || "-"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Duration</p>
+                  <p className="text-sm font-semibold capitalize">
+                    {selectedPayment.package?.duration_type === "lifetime"
+                      ? "Lifetime"
+                      : selectedPayment.package?.duration_type === "monthly"
+                      ? "Monthly"
+                      : selectedPayment.package?.duration_type === "yearly"
+                      ? "Yearly"
+                      : "-"}
+                  </p>
                 </div>
               </div>
 

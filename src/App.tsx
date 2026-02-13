@@ -10,6 +10,7 @@ import { AdminRoleProvider } from "@/contexts/AdminRoleContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { AdminProtectedRoute } from "@/components/auth/AdminProtectedRoute";
 import { BalanceSetupModal } from "@/components/auth/BalanceSetupModal";
+import { UserPresenceTracker } from "@/components/system/UserPresenceTracker";
 
 // Public pages
 import Index from "./pages/Index";
@@ -80,6 +81,7 @@ const App = () => (
           <AuthProvider>
             <BrandProvider>
               <AdminRoleProvider>
+                <UserPresenceTracker />
                 <Toaster />
                 <Sonner />
                 <BalanceSetupModal />

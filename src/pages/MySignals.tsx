@@ -37,12 +37,17 @@ import { SignalAnalysisModal } from "@/components/signals/SignalAnalysisModal";
 import { useSignalAnalysisModal, hasAnalysisContent } from "@/hooks/useSignalAnalysisModal";
 import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
+import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
 const MySignals = () => {
   const { signals, isLoading, refetch } = useProviderSignals({ realtime: true });
+  const { updatesBySignal } = useSignalTakeProfitUpdates({
+    signalIds: signals.map((s) => s.id),
+    realtime: true,
+  });
   const { user, profile } = useAuth();
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -193,7 +198,7 @@ const MySignals = () => {
       setIsCreateOpen(false);
       resetForm();
       refetch();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error creating signal:", err);
       toast.error("Failed to create signal. Please try again.");
     } finally {
@@ -531,7 +536,9 @@ const MySignals = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {visibleSignals.map(signal => (
+                {visibleSignals.map(signal => {
+                  const hasPublishedTpUpdates = (updatesBySignal[signal.id]?.length || 0) > 0;
+                  return (
                   <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
                     <td className="px-6 py-4">
                       <div>
@@ -628,13 +635,34 @@ const MySignals = () => {
 
                         {signal.status === "active" && signal.signal_type === "signal" && (
                           <>
-                            <Button size="sm" variant="outline" className="border-success/30 text-success hover:bg-success/10" onClick={() => updateStatus(signal.id, "tp_hit")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={hasPublishedTpUpdates}
+                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              className="border-success/30 text-success hover:bg-success/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => updateStatus(signal.id, "tp_hit")}
+                            >
                               <CheckCircle2 className="w-4 h-4" />
                             </Button>
-                            <Button size="sm" variant="outline" className="border-warning/30 text-warning hover:bg-warning/10" onClick={() => updateStatus(signal.id, "breakeven")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={hasPublishedTpUpdates}
+                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              className="border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => updateStatus(signal.id, "breakeven")}
+                            >
                               <MinusCircle className="w-4 h-4" />
                             </Button>
-                            <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => updateStatus(signal.id, "sl_hit")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={hasPublishedTpUpdates}
+                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              className="border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => updateStatus(signal.id, "sl_hit")}
+                            >
                               <XCircle className="w-4 h-4" />
                             </Button>
                           </>
@@ -681,7 +709,8 @@ const MySignals = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

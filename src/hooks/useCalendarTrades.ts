@@ -197,11 +197,18 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
       let bestDay: { date: string; pnl: number } | null = null;
       let worstDay: { date: string; pnl: number } | null = null;
 
-      dayArray.forEach((day) => {
+      const profitableDayArray = dayArray.filter((day) => day.pnl > 0);
+      const losingDayArray = dayArray.filter((day) => day.pnl < 0);
+
+      profitableDayArray.forEach((day) => {
         const dateStr = format(day.date, 'yyyy-MM-dd');
         if (!bestDay || day.pnl > bestDay.pnl) {
           bestDay = { date: dateStr, pnl: day.pnl };
         }
+      });
+
+      losingDayArray.forEach((day) => {
+        const dateStr = format(day.date, 'yyyy-MM-dd');
         if (!worstDay || day.pnl < worstDay.pnl) {
           worstDay = { date: dateStr, pnl: day.pnl };
         }
