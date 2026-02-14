@@ -121,10 +121,18 @@ const handler = async (req: Request): Promise<Response> => {
     } = await adminClient.auth.getUser(bearerToken);
 
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      return new Response(
+        JSON.stringify({
+          error:
+            authError?.message && authError.message.length > 0
+              ? `Unauthorized: ${authError.message}`
+              : "Unauthorized",
+        }),
+        {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
+        }
+      );
     }
 
     const { data: role } = await adminClient
