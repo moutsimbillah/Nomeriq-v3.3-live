@@ -152,17 +152,27 @@ const AdminDashboard = () => {
           iconColor="text-primary"
         />
         <StatCard
-          title="Total Users Balance Growth"
+          title={
+            <MetricInfoTooltip
+              label="Total Users Balance Growth"
+              description="Sum of positive profile balance deltas (account balance minus starting balance). This is not realized trade P&L."
+            />
+          }
           value={userOverviewLoading ? "..." : `+$${userOverview.totalBalanceGrowth.toFixed(2)}`}
-          change="Users currently above start"
+          change="Profile delta (not trade P&L)"
           changeType="profit"
           icon={TrendingUp}
           iconColor="text-success"
         />
         <StatCard
-          title="Total Users Balance Loss"
+          title={
+            <MetricInfoTooltip
+              label="Total Users Balance Loss"
+              description="Sum of negative profile balance deltas (account balance below starting balance). This is not realized trade P&L."
+            />
+          }
           value={userOverviewLoading ? "..." : `-$${userOverview.totalBalanceLoss.toFixed(2)}`}
-          change="Users currently below start"
+          change="Profile delta (not trade P&L)"
           changeType="loss"
           icon={TrendingDown}
           iconColor="text-destructive"
