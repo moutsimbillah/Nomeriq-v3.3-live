@@ -35,6 +35,29 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
     const { toast } = useToast();
     const authModal = useOptionalAuthModal();
 
+    const extractFunctionErrorMessage = async (error: unknown): Promise<string> => {
+        if (error && typeof error === "object" && "context" in error) {
+            const response = (error as { context?: unknown }).context;
+            if (response instanceof Response) {
+                try {
+                    const json = await response.clone().json();
+                    if (json && typeof json === "object") {
+                        if ("error" in json && typeof (json as { error?: unknown }).error === "string") {
+                            return (json as { error: string }).error;
+                        }
+                        if ("message" in json && typeof (json as { message?: unknown }).message === "string") {
+                            return (json as { message: string }).message;
+                        }
+                    }
+                } catch {
+                    // Ignore and fallback to generic parser.
+                }
+            }
+        }
+
+        return getSafeErrorMessage(error, "Failed to send verification code.");
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!agreeTerms) {
@@ -79,9 +102,10 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
             });
             if (emailError) {
                 console.error("Error sending verification email:", emailError);
+                const reason = await extractFunctionErrorMessage(emailError);
                 toast({
                     title: "Account Created",
-                    description: "Account created but we couldn't send the verification code. Please try to resend it.",
+                    description: `Account created but verification email failed: ${reason}`,
                     variant: "destructive"
                 });
             } else {

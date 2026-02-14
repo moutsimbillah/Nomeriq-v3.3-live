@@ -15,6 +15,15 @@ export const getSafeErrorMessage = (
 
   if (!normalized) return fallback;
 
+  if (
+    normalized.includes("user already registered") ||
+    normalized.includes("already registered") ||
+    normalized.includes("email address is already registered") ||
+    normalized.includes("already been registered")
+  ) {
+    return "This email is already registered. Please sign in instead.";
+  }
+
   // Never expose backend/internal details directly.
   if (
     normalized.includes("edge function") ||

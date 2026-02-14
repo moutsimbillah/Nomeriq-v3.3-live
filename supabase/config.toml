@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.send-test-email-template]
 verify_jwt = false
+
+[functions.send-verification-email]
+verify_jwt = false
+
+[functions.send-password-reset]
+verify_jwt = false
