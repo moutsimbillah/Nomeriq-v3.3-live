@@ -88,6 +88,7 @@ serve(async (req) => {
       providerSessionId?: string | null;
       providerSubscriptionId?: string | null;
       providerCustomerId?: string | null;
+      eventCreatedAt?: string | null;
       metadata?: Record<string, unknown>;
     }) => {
       const payload = {
@@ -105,6 +106,71 @@ serve(async (req) => {
         provider_customer_id: args.providerCustomerId ?? null,
         metadata: args.metadata ?? {},
       };
+
+      // Stripe subscription checkouts can emit both checkout.session.completed and invoice.paid
+      // for the same first charge. When invoice.paid arrives, promote the checkout row instead
+      // of inserting a second visible payment row.
+      if (
+        args.providerPaymentId &&
+        args.providerSubscriptionId &&
+        !args.providerSessionId &&
+        args.eventCreatedAt
+      ) {
+        const incomingEventMs = new Date(args.eventCreatedAt).getTime();
+        const placeholderWindowStart = Number.isFinite(incomingEventMs)
+          ? new Date(incomingEventMs - 24 * 60 * 60 * 1000).toISOString()
+          : null;
+
+        if (placeholderWindowStart) {
+          const { data: placeholder, error: placeholderError } = await supabaseAdmin
+            .from("payments")
+            .select("id, provider_session_id, metadata")
+            .eq("provider", "stripe")
+            .eq("user_id", args.userId)
+            .eq("provider_subscription_id", args.providerSubscriptionId)
+            .is("provider_payment_id", null)
+            .not("provider_session_id", "is", null)
+            .gte("created_at", placeholderWindowStart)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (placeholderError) throw placeholderError;
+
+          if (placeholder?.id) {
+            const mergedMetadata = {
+              ...((placeholder.metadata as Record<string, unknown> | null) ?? {}),
+              ...(args.metadata ?? {}),
+            };
+
+            const { data: updatedRow, error: updateError } = await supabaseAdmin
+              .from("payments")
+              .update({
+                ...payload,
+                provider_session_id: placeholder.provider_session_id,
+                metadata: mergedMetadata,
+              })
+              .eq("id", placeholder.id)
+              .select("id")
+              .single();
+
+            if (updateError) {
+              // If another row already owns provider_payment_id, return it (idempotent behavior).
+              if ((updateError as { code?: string }).code === "23505") {
+                const { data: existingByProviderPayment, error: existingByProviderPaymentError } = await supabaseAdmin
+                  .from("payments")
+                  .select("id")
+                  .eq("provider_payment_id", args.providerPaymentId)
+                  .maybeSingle();
+                if (existingByProviderPaymentError) throw existingByProviderPaymentError;
+                if (existingByProviderPayment?.id) return existingByProviderPayment.id as string;
+              }
+              throw updateError;
+            }
+
+            return updatedRow.id as string;
+          }
+        }
+      }
 
       if (args.providerSessionId) {
         const { data, error } = await supabaseAdmin
@@ -252,6 +318,7 @@ serve(async (req) => {
           providerSessionId: session.id,
           providerSubscriptionId,
           providerCustomerId,
+          eventCreatedAt: toIsoFromStripeTs(event.created),
           metadata: { eventType: event.type },
         });
 
@@ -307,6 +374,7 @@ serve(async (req) => {
           providerSubscriptionId,
           providerCustomerId:
             typeof invoice.customer === "string" ? invoice.customer : null,
+          eventCreatedAt: toIsoFromStripeTs(event.created),
           metadata: { eventType: event.type, invoiceId: invoice.id },
         });
 
@@ -347,6 +415,7 @@ serve(async (req) => {
           providerSubscriptionId,
           providerCustomerId:
             typeof invoice.customer === "string" ? invoice.customer : null,
+          eventCreatedAt: toIsoFromStripeTs(event.created),
           metadata: { eventType: event.type, invoiceId: invoice.id },
         });
 

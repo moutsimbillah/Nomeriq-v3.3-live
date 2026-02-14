@@ -32,6 +32,53 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const requestSeqRef = useRef(0);
 
+  const dedupeStripeFirstChargeRows = useCallback((rows: Payment[]): Payment[] => {
+    if (!rows.length) return rows;
+
+    const duplicateCheckoutIds = new Set<string>();
+
+    const isCloseAmount = (a?: number | null, b?: number | null) =>
+      Math.abs(Number(a || 0) - Number(b || 0)) < 0.00001;
+
+    const isWithinOneDay = (a?: string | null, b?: string | null) => {
+      if (!a || !b) return false;
+      const deltaSec = Math.abs(
+        (new Date(a).getTime() - new Date(b).getTime()) / 1000
+      );
+      return Number.isFinite(deltaSec) && deltaSec <= 24 * 60 * 60;
+    };
+
+    for (const checkoutRow of rows) {
+      if (
+        checkoutRow.provider !== "stripe" ||
+        !checkoutRow.provider_session_id ||
+        checkoutRow.provider_payment_id ||
+        !checkoutRow.provider_subscription_id
+      ) {
+        continue;
+      }
+
+      const hasMatchingInvoiceRow = rows.some(
+        (invoiceRow) =>
+          invoiceRow.id !== checkoutRow.id &&
+          invoiceRow.provider === "stripe" &&
+          invoiceRow.user_id === checkoutRow.user_id &&
+          invoiceRow.provider_subscription_id === checkoutRow.provider_subscription_id &&
+          !!invoiceRow.provider_payment_id &&
+          invoiceRow.currency === checkoutRow.currency &&
+          isCloseAmount(invoiceRow.amount, checkoutRow.amount) &&
+          isWithinOneDay(invoiceRow.created_at, checkoutRow.created_at)
+      );
+
+      if (hasMatchingInvoiceRow) {
+        duplicateCheckoutIds.add(checkoutRow.id);
+      }
+    }
+
+    if (!duplicateCheckoutIds.size) return rows;
+    return rows.filter((row) => !duplicateCheckoutIds.has(row.id));
+  }, []);
+
   const fetchPayments = useCallback(async () => {
     const requestId = ++requestSeqRef.current;
     setIsLoading(true);
@@ -72,10 +119,14 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
 
       if (paymentsError) throw paymentsError;
 
+      const normalizedPaymentsData = dedupeStripeFirstChargeRows(
+        ((paymentsData || []) as Payment[])
+      );
+
       // Fallback package resolution for legacy rows where payments.package_id is null
       // but subscriptions.payment_id links to a package.
       const fallbackPackageByPaymentId = new Map<string, SubscriptionPackage>();
-      const unresolvedPaymentIds = (paymentsData || [])
+      const unresolvedPaymentIds = normalizedPaymentsData
         .filter((payment) => {
           const raw = (payment as any).subscription_packages;
           const joinedPkg = raw != null ? (Array.isArray(raw) ? raw[0] : raw) : null;
@@ -117,8 +168,8 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
       }
 
       // Fetch user profiles for these payments (only for admin view)
-      if (!userId && paymentsData && paymentsData.length > 0) {
-        const userIds = paymentsData.map(p => p.user_id);
+      if (!userId && normalizedPaymentsData.length > 0) {
+        const userIds = normalizedPaymentsData.map(p => p.user_id);
 
         const { data: profilesData } = await supabase
           .from('profiles')
@@ -129,7 +180,7 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
           (profilesData || []).map(p => [p.user_id, p])
         );
 
-        const paymentsWithUsers = paymentsData.map(payment => {
+        const paymentsWithUsers = normalizedPaymentsData.map(payment => {
           const raw = (payment as any).subscription_packages;
           const pkg = raw != null
             ? (Array.isArray(raw) ? raw[0] : raw) as SubscriptionPackage | null
@@ -145,7 +196,7 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
         if (requestId !== requestSeqRef.current) return;
         setPayments(paymentsWithUsers);
       } else {
-        const paymentsWithStatus = (paymentsData || []).map(payment => {
+        const paymentsWithStatus = normalizedPaymentsData.map(payment => {
           const raw = (payment as any).subscription_packages;
           const pkg = raw != null
             ? (Array.isArray(raw) ? raw[0] : raw) as SubscriptionPackage | null
