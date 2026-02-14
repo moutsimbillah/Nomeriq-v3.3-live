@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Mail, Loader2, Save, AlertCircle } from "lucide-react";
+import { Mail, Loader2, Save, AlertCircle, KeyRound, Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +34,9 @@ const DEFAULT_SETTINGS: EmailTemplateSettings = {
 const AdminEmailSettings = () => {
   const { user } = useAuth();
   const [settings, setSettings] = useState<EmailTemplateSettings>(DEFAULT_SETTINGS);
+  const [resendApiKeyInput, setResendApiKeyInput] = useState("");
+  const [showResendApiKey, setShowResendApiKey] = useState(false);
+  const [hasResendApiKey, setHasResendApiKey] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTestingVerification, setIsTestingVerification] = useState(false);
@@ -42,16 +45,38 @@ const AdminEmailSettings = () => {
   useEffect(() => {
     const fetchSettings = async () => {
       setIsLoading(true);
-      const { data, error } = await supabase
-        .from("email_template_settings")
-        .select("*")
-        .limit(1)
-        .maybeSingle();
+      const [{ data, error }, { data: providerData, error: providerError }] =
+        await Promise.all([
+          supabase
+            .from("email_template_settings")
+            .select("*")
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from("email_provider_settings")
+            .select("id, resend_api_key")
+            .eq("provider", "resend")
+            .maybeSingle(),
+        ]);
 
       if (error) {
         toast.error("Failed to load email settings");
         setIsLoading(false);
         return;
+      }
+
+      if (providerError) {
+        const code = (providerError as { code?: string }).code;
+        if (code === "42P01") {
+          toast.error("Email provider settings table is missing. Please run latest database migrations.");
+        } else if (code === "42501") {
+          toast.error("Permission denied while loading email provider settings.");
+        } else {
+          console.error("Error loading email provider settings:", providerError);
+          toast.error("Failed to load email provider settings");
+        }
+      } else {
+        setHasResendApiKey(Boolean(providerData?.resend_api_key));
       }
 
       if (data) {
@@ -111,10 +136,42 @@ const AdminEmailSettings = () => {
         }
       }
 
+      const providerPayload: {
+        provider: string;
+        resend_api_key?: string | null;
+      } = { provider: "resend" };
+      if (resendApiKeyInput.trim().length > 0) {
+        providerPayload.resend_api_key = resendApiKeyInput.trim();
+      }
+
+      const { error: providerSaveError } = await supabase
+        .from("email_provider_settings")
+        .upsert(providerPayload, { onConflict: "provider" });
+
+      if (providerSaveError) {
+        const code = (providerSaveError as { code?: string }).code;
+        if (code === "42P01") {
+          throw new Error("Email provider settings table is missing. Please run latest database migrations.");
+        }
+        if (code === "42501") {
+          throw new Error("Permission denied while saving email provider settings.");
+        }
+        throw providerSaveError;
+      }
+
+      if (resendApiKeyInput.trim().length > 0) {
+        setHasResendApiKey(true);
+        setResendApiKeyInput("");
+      }
+
       toast.success("Email settings saved");
     } catch (error) {
       console.error("Error saving email settings:", error);
-      toast.error("Failed to save email settings");
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Failed to save email settings";
+      toast.error(message);
     } finally {
       setIsSaving(false);
     }
@@ -134,7 +191,19 @@ const AdminEmailSettings = () => {
     }
 
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+
+      if (!accessToken) {
+        throw new Error("Your session is missing. Please sign out and sign in again.");
+      }
+
       const { error } = await supabase.functions.invoke("send-test-email-template", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: {
           toEmail,
           templateType,
@@ -203,6 +272,48 @@ const AdminEmailSettings = () => {
       }
     >
       <div className="mx-auto max-w-6xl space-y-6">
+        <Card className="border-border/50">
+          <div className="border-b border-border/50 p-4">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Resend API Configuration</h2>
+            </div>
+          </div>
+          <CardContent className="grid grid-cols-1 gap-4 p-6">
+            <div className="space-y-2">
+              <Label htmlFor="resend-api-key">Resend API Key</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="resend-api-key"
+                  type={showResendApiKey ? "text" : "password"}
+                  value={resendApiKeyInput}
+                  onChange={(e) => setResendApiKeyInput(e.target.value)}
+                  placeholder={
+                    hasResendApiKey
+                      ? "Configured. Enter new key to replace"
+                      : "re_..."
+                  }
+                  className="font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="h-10 w-10 shrink-0"
+                  onClick={() => setShowResendApiKey((v) => !v)}
+                >
+                  {showResendApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {hasResendApiKey
+                  ? "A key is already configured. Entering a value here will replace it."
+                  : "No key configured yet. If left empty, system falls back to RESEND_API_KEY environment variable."}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="border-border/50">
           <div className="border-b border-border/50 p-4">
             <div className="flex items-center gap-2">
