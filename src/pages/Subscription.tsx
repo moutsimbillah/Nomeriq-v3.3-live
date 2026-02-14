@@ -26,7 +26,12 @@ function getPackageTierScore(pkg: { duration_type: string; price: number }): num
 }
 
 const Subscription = () => {
-  const { user, subscription: authSubscription, hasActiveSubscription: hasAuthActiveSubscription } = useAuth();
+  const {
+    user,
+    subscription: authSubscription,
+    hasActiveSubscription: hasAuthActiveSubscription,
+    refreshProfile,
+  } = useAuth();
   const { adminRole } = useAdminRoleContext();
   const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const { settings } = useGlobalSettings();
@@ -58,6 +63,7 @@ const Subscription = () => {
       toast.info("Payment received. Verifying your subscription status...");
       refetchSubscriptions();
       refetchPayments();
+      refreshProfile().catch(() => undefined);
     } else if (stripeState === "cancel") {
       toast.message("Stripe checkout was cancelled.");
     }
@@ -66,7 +72,7 @@ const Subscription = () => {
     next.delete("stripe");
     next.delete("session_id");
     setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, refetchSubscriptions, refetchPayments]);
+  }, [searchParams, setSearchParams, refetchSubscriptions, refetchPayments, refreshProfile]);
 
   const walletAddress = settings?.wallet_address || "TNYhMKhLQWz6d5oX7Kqj7sdUo8vNcRYuPE";
 

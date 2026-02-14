@@ -15,12 +15,20 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export const ProfileDropdown = () => {
-  const { profile, subscription, hasActiveSubscription, signOut, isAdmin } = useAuth();
+  const { user, profile, subscription, hasActiveSubscription, signOut, isAdmin } = useAuth();
   const { adminRole } = useAdminRoleContext();
   const isSignalProvider = adminRole === "signal_provider_admin" || adminRole === "super_admin";
   const navigate = useNavigate();
 
-  const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || "User";
+  const firstName =
+    profile?.first_name ||
+    (typeof user?.user_metadata?.first_name === "string" ? user.user_metadata.first_name : "") ||
+    user?.email?.split("@")[0] ||
+    "User";
+  const lastName =
+    profile?.last_name ||
+    (typeof user?.user_metadata?.last_name === "string" ? user.user_metadata.last_name : "");
+  const fullName = [firstName, lastName].filter(Boolean).join(" ") || "User";
   const initials = fullName
     .split(" ")
     .map((n) => n[0])
@@ -38,7 +46,7 @@ export const ProfileDropdown = () => {
       <DropdownMenuTrigger asChild>
         <button className="flex items-center gap-3 outline-none group">
           <span className="hidden md:block text-sm font-bold text-foreground dark:text-white group-hover:text-primary transition-colors">
-            {profile?.first_name || "User"}
+            {firstName}
           </span>
           <div className="relative">
             <Avatar className="h-9 w-9 border border-border dark:border-white/10 group-hover:border-primary/50 transition-colors">
@@ -60,7 +68,7 @@ export const ProfileDropdown = () => {
               </div>
               <div className="flex flex-col">
                 <p className="text-sm font-semibold">{fullName}</p>
-                <p className="text-xs text-muted-foreground">{profile?.email}</p>
+                <p className="text-xs text-muted-foreground">{profile?.email || user?.email}</p>
               </div>
             </div>
           </div>
