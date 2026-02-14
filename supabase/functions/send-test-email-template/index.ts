@@ -1,10 +1,8 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,12 +41,18 @@ function toHtmlBody(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-async function sendEmail(to: string, subject: string, html: string, fromIdentity: string) {
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  fromIdentity: string,
+  resendApiKey: string
+) {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${RESEND_API_KEY}`,
+      Authorization: `Bearer ${resendApiKey}`,
     },
     body: JSON.stringify({
       from: fromIdentity,
@@ -62,6 +66,25 @@ async function sendEmail(to: string, subject: string, html: string, fromIdentity
     const errorData = await response.text();
     throw new Error(`Failed to send email: ${errorData}`);
   }
+}
+
+async function resolveResendApiKey(
+  adminClient: ReturnType<typeof createClient>
+): Promise<string | null> {
+  const { data, error } = await adminClient
+    .from("email_provider_settings")
+    .select("resend_api_key")
+    .eq("provider", "resend")
+    .maybeSingle();
+
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== "42P01" && code !== "PGRST116") {
+      console.error("Error loading email provider settings:", error);
+    }
+  }
+
+  return data?.resend_api_key || Deno.env.get("RESEND_API_KEY") || null;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -78,18 +101,24 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    const bearerToken = authHeader.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length).trim()
+      : "";
+    if (!bearerToken) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
     const {
       data: { user },
       error: authError,
-    } = await userClient.auth.getUser();
+    } = await adminClient.auth.getUser(bearerToken);
 
     if (authError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -108,6 +137,14 @@ const handler = async (req: Request): Promise<Response> => {
     if (!role || role.admin_role !== "super_admin") {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
+    const resendApiKey = await resolveResendApiKey(adminClient);
+    if (!resendApiKey) {
+      return new Response(JSON.stringify({ error: "Resend API key is not configured" }), {
+        status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
@@ -172,7 +209,7 @@ const handler = async (req: Request): Promise<Response> => {
     `;
 
     const fromIdentity = `${templates.sender_name} <${templates.sender_email}>`;
-    await sendEmail(toEmail, subject, html, fromIdentity);
+    await sendEmail(toEmail, subject, html, fromIdentity, resendApiKey);
 
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
@@ -180,7 +217,11 @@ const handler = async (req: Request): Promise<Response> => {
     });
   } catch (error) {
     console.error("Error in send-test-email-template:", error);
-    return new Response(JSON.stringify({ error: "Failed to send test email" }), {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Failed to send test email";
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });

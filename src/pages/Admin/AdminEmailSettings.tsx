@@ -31,6 +31,40 @@ const DEFAULT_SETTINGS: EmailTemplateSettings = {
     "Hi {{user_email}},\n\nUse this code to reset your password:\n\n{{otp_code}}\n\nThis code expires in {{code_expiry_minutes}} minutes.\n\nIf you did not request this, ignore this message.\n\nSupport: {{support_email}}",
 };
 
+const extractFunctionErrorMessage = async (error: unknown): Promise<string> => {
+  if (error && typeof error === "object" && "context" in error) {
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      try {
+        const json = await response.clone().json();
+        if (json && typeof json === "object" && "error" in json) {
+          const message = (json as { error?: unknown }).error;
+          if (typeof message === "string" && message.trim().length > 0) {
+            return message;
+          }
+        }
+      } catch {
+        // Ignore JSON parse failures and try plain text fallback.
+      }
+
+      try {
+        const text = await response.text();
+        if (text.trim().length > 0) {
+          return text;
+        }
+      } catch {
+        // Ignore plain text parse failures and fallback to generic message.
+      }
+    }
+  }
+
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  return "Failed to send test email";
+};
+
 const AdminEmailSettings = () => {
   const { user } = useAuth();
   const [settings, setSettings] = useState<EmailTemplateSettings>(DEFAULT_SETTINGS);
@@ -218,7 +252,8 @@ const AdminEmailSettings = () => {
       );
     } catch (error) {
       console.error("Error sending test email:", error);
-      toast.error("Failed to send test email");
+      const message = await extractFunctionErrorMessage(error);
+      toast.error(message);
     } finally {
       if (templateType === "verification") {
         setIsTestingVerification(false);
