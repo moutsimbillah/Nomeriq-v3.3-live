@@ -65,6 +65,26 @@ const extractFunctionErrorMessage = async (error: unknown): Promise<string> => {
   return "Failed to send test email";
 };
 
+const isInvalidJwtFunctionError = async (error: unknown): Promise<boolean> => {
+  if (error && typeof error === "object" && "context" in error) {
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      try {
+        const json = await response.clone().json();
+        const message =
+          json && typeof json === "object" && "message" in json
+            ? (json as { message?: unknown }).message
+            : null;
+        return typeof message === "string" && message.toLowerCase().includes("invalid jwt");
+      } catch {
+        // Ignore parse errors and fallback below.
+      }
+    }
+  }
+
+  return false;
+};
+
 const AdminEmailSettings = () => {
   const { user } = useAuth();
   const [settings, setSettings] = useState<EmailTemplateSettings>(DEFAULT_SETTINGS);
@@ -225,25 +245,44 @@ const AdminEmailSettings = () => {
     }
 
     try {
+      const invokeTemplate = async (token: string) =>
+        supabase.functions.invoke("send-test-email-template", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: {
+            toEmail,
+            templateType,
+            templates: settings,
+          },
+        });
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      const accessToken = session?.access_token;
+      let accessToken = session?.access_token;
+
+      if (!accessToken) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError) {
+          throw new Error("Your session is invalid. Please sign out and sign in again.");
+        }
+        accessToken = refreshed.session?.access_token;
+      }
 
       if (!accessToken) {
         throw new Error("Your session is missing. Please sign out and sign in again.");
       }
 
-      const { error } = await supabase.functions.invoke("send-test-email-template", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: {
-          toEmail,
-          templateType,
-          templates: settings,
-        },
-      });
+      let { error } = await invokeTemplate(accessToken);
+
+      if (error && (await isInvalidJwtFunctionError(error))) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !refreshed.session?.access_token) {
+          throw new Error("Your session expired. Please sign out and sign in again.");
+        }
+        ({ error } = await invokeTemplate(refreshed.session.access_token));
+      }
 
       if (error) throw error;
 
