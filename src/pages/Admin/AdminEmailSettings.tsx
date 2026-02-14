@@ -258,16 +258,19 @@ const AdminEmailSettings = () => {
         });
 
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      let accessToken = session?.access_token;
+        data: refreshed,
+        error: refreshError,
+      } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        throw new Error("Your session is invalid. Please sign out and sign in again.");
+      }
 
+      let accessToken = refreshed.session?.access_token;
       if (!accessToken) {
-        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          throw new Error("Your session is invalid. Please sign out and sign in again.");
-        }
-        accessToken = refreshed.session?.access_token;
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
       }
 
       if (!accessToken) {
