@@ -3,7 +3,6 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -86,7 +85,7 @@ export const AdminSignalForm = React.memo(
           <Button
             type="button"
             variant={formData.signalType === "upcoming" ? "default" : "outline"}
-            className={cn(formData.signalType === "upcoming" && "bg-warning hover:bg-warning/90 text-warning-foreground")}
+            className={cn(formData.signalType === "upcoming" && "bg-warning hover:bg-warning/90 text-white")}
             onClick={() => setFormData((prev) => ({ ...prev, signalType: "upcoming" }))}
           >
             <Clock className="w-4 h-4 mr-2" />
@@ -211,17 +210,6 @@ export const AdminSignalForm = React.memo(
           />
         </div>
       </div>
-      </div>
-
-      {/* Notes - especially useful for upcoming */}
-      <div className="space-y-2">
-        <Label>{isUpcoming ? "Notes / Analysis" : "Notes (Optional)"}</Label>
-        <Textarea
-          placeholder={isUpcoming ? "Describe the setup you're watching..." : "Additional notes..."}
-          value={formData.notes}
-          onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-          className="bg-secondary/50 min-h-[80px]"
-        />
       </div>
 
       {/* Analysis Content Section */}

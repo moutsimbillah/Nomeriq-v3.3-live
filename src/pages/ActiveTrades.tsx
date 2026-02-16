@@ -169,7 +169,7 @@ const ActiveTrades = () => {
     previousUpdateIdsRef.current = currentIds;
   }, [updatesBySignal, initialUpdatesLoaded, isProvider]);
   const getOpenRisk = (trade: UserTrade) => Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
-  const getTradeRiskPercent = (_trade: UserTrade) => Number(settings?.global_risk_percent || 2);
+  const getTradeRiskPercent = (trade: UserTrade) => Number(trade.risk_percent ?? settings?.global_risk_percent ?? 2);
   const getTargetTpFromUpdates = (trade: UserTrade) => {
     const signal = trade.signal;
     const updates = updatesBySignal[signal?.id || ""] || [];
@@ -351,7 +351,7 @@ const ActiveTrades = () => {
                 <p className="text-primary font-mono text-xs font-bold">${getOpenRisk(trade).toFixed(0)}</p>
               </div>
               <div className="py-2 px-2 rounded-lg bg-success/10 text-center">
-                <p className="text-muted-foreground text-[10px] mb-0.5">Profit</p>
+                <p className="text-muted-foreground text-[10px] mb-0.5">Potential Profit</p>
                 <p className="text-success font-mono text-xs font-bold">+${potentialProfit.toFixed(0)}</p>
               </div>
             </div>
@@ -450,7 +450,7 @@ const ActiveTrades = () => {
 
             {/* Potential Profit - col-span-1 */}
             <div className="col-span-1 py-2 px-2 rounded-lg bg-success/10 text-center w-full">
-              <p className="text-muted-foreground mb-1 text-xs">Profit</p>
+              <p className="text-muted-foreground mb-1 text-xs">Potential Profit</p>
               <p className="text-success font-mono text-sm font-bold truncate">+${potentialProfit.toFixed(0)}</p>
             </div>
 

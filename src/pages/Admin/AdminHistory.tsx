@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Loader2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { format, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
 import { DateRange } from "react-day-picker";
@@ -14,7 +16,7 @@ import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 import { computeClosedTradeMetrics } from "@/lib/admin-metrics";
 import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
-import { calculateDisplayedPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
+import { calculateOpeningPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
 
 const AdminHistory = () => {
     const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -34,6 +36,8 @@ const AdminHistory = () => {
     const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
     const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
     const [resultFilter, setResultFilter] = useState<ResultFilter>('all');
+    const [rowsPerPage, setRowsPerPage] = useState("10");
+    const [currentPage, setCurrentPage] = useState(1);
 
     // Filter closed trades only (win, loss, or breakeven)
     let closedTrades = trades.filter(t => t.result === 'win' || t.result === 'loss' || t.result === 'breakeven');
@@ -66,6 +70,21 @@ const AdminHistory = () => {
 
     // Sort
     closedTrades = sortTrades(closedTrades, sortBy);
+
+    const totalPages = useMemo(() => {
+        const size = Math.max(1, parseInt(rowsPerPage, 10));
+        return Math.max(1, Math.ceil(closedTrades.length / size));
+    }, [closedTrades.length, rowsPerPage]);
+
+    const paginatedTrades = useMemo(() => {
+        const size = Math.max(1, parseInt(rowsPerPage, 10));
+        const start = (currentPage - 1) * size;
+        return closedTrades.slice(start, start + size);
+    }, [closedTrades, rowsPerPage, currentPage]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [sortBy, timeFilter, dateRange, directionFilter, categoryFilter, resultFilter, rowsPerPage, closedTrades.length]);
 
     const metrics = computeClosedTradeMetrics(closedTrades);
 
@@ -185,7 +204,7 @@ const AdminHistory = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border/30">
-                                {closedTrades.map(trade => {
+                                {paginatedTrades.map(trade => {
                                     const hasAnalysis = hasAnalysisContent(trade.signal as Signal);
                                     return (
                                         <tr
@@ -257,7 +276,7 @@ const AdminHistory = () => {
                                             </td>
                                             <td className="px-6 py-4 text-left">
                                                 <span className="font-mono font-semibold text-success">
-                                                    +${calculateDisplayedPotentialProfit(trade).toFixed(2)}
+                                                    +${calculateOpeningPotentialProfit(trade).toFixed(2)}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 text-left">
@@ -302,6 +321,45 @@ const AdminHistory = () => {
                                 })}
                             </tbody>
                         </table>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-t border-border/40 bg-secondary/10">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">Rows</span>
+                                <Select value={rowsPerPage} onValueChange={setRowsPerPage}>
+                                    <SelectTrigger className="h-8 w-[90px] bg-secondary/40 border-border/50">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="10">10</SelectItem>
+                                        <SelectItem value="20">20</SelectItem>
+                                        <SelectItem value="50">50</SelectItem>
+                                        <SelectItem value="100">100</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex items-center justify-between sm:justify-end gap-2">
+                                <p className="text-xs text-muted-foreground">
+                                    Page {currentPage} of {totalPages}
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                    disabled={currentPage <= 1}
+                                >
+                                    Previous
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage >= totalPages}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

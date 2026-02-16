@@ -43,13 +43,11 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
   const [page, setPage] = useState(1);
 
   const totalPages = useMemo(() => {
-    if (rowsPerPage === "all") return 1;
     const size = Math.max(1, parseInt(rowsPerPage, 10));
     return Math.max(1, Math.ceil(payments.length / size));
   }, [payments.length, rowsPerPage]);
 
   const paginatedPayments = useMemo(() => {
-    if (rowsPerPage === "all") return payments;
     const size = Math.max(1, parseInt(rowsPerPage, 10));
     const start = (page - 1) * size;
     return payments.slice(start, start + size);
@@ -97,10 +95,9 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="10">10</SelectItem>
-                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="20">20</SelectItem>
                 <SelectItem value="50">50</SelectItem>
                 <SelectItem value="100">100</SelectItem>
-                <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -218,7 +215,7 @@ export const UserPaymentHistory = ({ payments, isLoading }: UserPaymentHistoryPr
             </table>
           </div>
         )}
-        {rowsPerPage !== "all" && payments.length > 0 && (
+        {payments.length > 0 && (
           <div className="px-6 py-4 border-t border-border/40 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
               Page {page} of {totalPages}

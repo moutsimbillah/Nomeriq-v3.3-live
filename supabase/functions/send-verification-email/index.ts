@@ -1,8 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -40,12 +38,18 @@ function toHtmlBody(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-async function sendEmail(to: string, subject: string, html: string, fromIdentity: string) {
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  fromIdentity: string,
+  resendApiKey: string
+) {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${RESEND_API_KEY}`,
+      Authorization: `Bearer ${resendApiKey}`,
     },
     body: JSON.stringify({
       from: fromIdentity,
@@ -61,6 +65,25 @@ async function sendEmail(to: string, subject: string, html: string, fromIdentity
   }
 
   return response.json();
+}
+
+async function resolveResendApiKey(
+  supabaseAdmin: ReturnType<typeof createClient>
+): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("email_provider_settings")
+    .select("resend_api_key")
+    .eq("provider", "resend")
+    .maybeSingle();
+
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== "42P01" && code !== "PGRST116") {
+      console.error("Error loading email provider settings:", error);
+    }
+  }
+
+  return data?.resend_api_key || Deno.env.get("RESEND_API_KEY") || null;
 }
 
 async function checkRateLimit(
@@ -145,6 +168,13 @@ const handler = async (req: Request): Promise<Response> => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
+    const resendApiKey = await resolveResendApiKey(supabaseAdmin);
+    if (!resendApiKey) {
+      return new Response(JSON.stringify({ error: "Resend API key is not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
 
     const rateLimitResult = await checkRateLimit(supabaseAdmin, email, "verification_email");
     if (!rateLimitResult.allowed) {
@@ -241,7 +271,7 @@ const handler = async (req: Request): Promise<Response> => {
       </html>
     `;
 
-    await sendEmail(email, subject, html, `${senderName} <${senderEmail}>`);
+    await sendEmail(email, subject, html, `${senderName} <${senderEmail}>`, resendApiKey);
 
     return new Response(JSON.stringify({ success: true, message: "Verification code sent" }), {
       status: 200,

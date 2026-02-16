@@ -120,6 +120,59 @@ serve(async (req) => {
     }
 
     const isLifetime = pkg.duration_type === "lifetime";
+    const stripePrice = await stripe.prices.retrieve(pkg.stripe_price_id);
+
+    // Guardrail: prevent billing-period mismatches (e.g. yearly package pointing to monthly Stripe price).
+    if (isLifetime) {
+      if (stripePrice.type !== "one_time") {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Package duration mismatch: lifetime package must use a one-time Stripe Price.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } else {
+      const recurring = stripePrice.recurring;
+      if (!recurring) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Package duration mismatch: recurring package must use a recurring Stripe Price.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const interval = recurring.interval;
+      const intervalCount = recurring.interval_count ?? 1;
+      const isMonthlyPrice = interval === "month" && intervalCount === 1;
+      const isYearlyPrice =
+        (interval === "year" && intervalCount === 1) ||
+        (interval === "month" && intervalCount === 12);
+
+      if (pkg.duration_type === "monthly" && !isMonthlyPrice) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Package duration mismatch: monthly package must use a monthly Stripe Price.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (pkg.duration_type === "yearly" && !isYearlyPrice) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Package duration mismatch: yearly package must use a yearly Stripe Price.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const metadata = {
       user_id: authData.user.id,
       package_id: pkg.id,

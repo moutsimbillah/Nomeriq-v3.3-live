@@ -27,7 +27,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { AdminWithProfile, AdminRole, AdminStatus } from "@/types/database";
-import { Crown, Shield, CreditCard, Signal, MoreHorizontal, Trash2, UserX, UserCheck, Loader2 } from "lucide-react";
+import { Crown, Shield, CreditCard, TrendingUp, MoreHorizontal, Trash2, UserX, UserCheck, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,7 +63,7 @@ const roleConfig: Record<AdminRole, { label: string; icon: React.ElementType; co
   },
   signal_provider_admin: {
     label: "Signal Provider",
-    icon: Signal,
+    icon: TrendingUp,
     color: "bg-success text-success-foreground",
     description: "Access to signals and trading analytics",
   },
@@ -211,7 +211,6 @@ export const AdminManagementTable = ({
           <TableBody>
             {admins.map((admin) => {
               const role = roleConfig[admin.admin_role];
-              const RoleIcon = role.icon;
               const fullName = admin.profile
                 ? `${admin.profile.first_name || ''} ${admin.profile.last_name || ''}`.trim() || 'Unknown'
                 : 'Unknown';
@@ -243,11 +242,8 @@ export const AdminManagementTable = ({
                       onValueChange={(value) => handleRoleChange(admin, value as AdminRole)}
                       disabled={isLastSuperAdmin && admin.admin_role === 'super_admin'}
                     >
-                      <SelectTrigger className="w-[180px]">
-                        <div className="flex items-center gap-2">
-                          <RoleIcon className="w-4 h-4" />
-                          <SelectValue />
-                        </div>
+                      <SelectTrigger className="w-[220px]">
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {Object.entries(roleConfig).map(([key, config]) => (
@@ -255,7 +251,7 @@ export const AdminManagementTable = ({
                             <div className="flex flex-col">
                               <div className="flex items-center gap-2">
                                 <config.icon className="w-4 h-4" />
-                                <span>{config.label}</span>
+                                <span className="whitespace-nowrap">{config.label}</span>
                               </div>
                             </div>
                           </SelectItem>

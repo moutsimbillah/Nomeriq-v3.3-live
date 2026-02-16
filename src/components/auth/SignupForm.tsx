@@ -119,11 +119,14 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
         }
 
         if (onClose) onClose();
+        if (typeof window !== "undefined") {
+            window.sessionStorage.setItem("pending_verification_email", email);
+        }
         if (!standalone && authModal) {
             authModal.openModal("verify-email");
             return;
         }
-        navigate("/login");
+        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     };
 
     return (

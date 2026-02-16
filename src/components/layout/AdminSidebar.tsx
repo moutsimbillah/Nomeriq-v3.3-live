@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   ShieldCheck,
-  Tag,
   Crown,
   Palette,
   Send,
@@ -102,12 +101,6 @@ const navItems: NavItem[] = [
     icon: Settings,
     label: "Payment Settings",
     path: "/admin/payment-settings",
-    allowedRoles: ['super_admin', 'payments_admin']
-  },
-  {
-    icon: Tag,
-    label: "Discounts",
-    path: "/admin/discounts",
     allowedRoles: ['super_admin', 'payments_admin']
   },
   {

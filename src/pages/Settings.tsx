@@ -197,7 +197,16 @@ const Settings = () => {
     };
   })();
 
-  const currentActiveSubscription = activeSubscriptions[0] ?? null;
+  const currentActiveSubscription = useMemo(() => {
+    if (!activeSubscriptions.length) return null;
+    if (subscription?.package_id) {
+      const matched = activeSubscriptions.find(
+        (sub) => sub.package_id === subscription.package_id
+      );
+      if (matched) return matched;
+    }
+    return activeSubscriptions[0] ?? null;
+  }, [activeSubscriptions, subscription?.package_id]);
   const currentPlan = useMemo(() => {
     if (!currentActiveSubscription?.package_id) return null;
     return packages.find((p) => p.id === currentActiveSubscription.package_id) ?? null;

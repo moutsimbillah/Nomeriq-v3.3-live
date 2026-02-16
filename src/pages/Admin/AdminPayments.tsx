@@ -17,7 +17,7 @@ const AdminPayments = () => {
   } = useAuth();
   const { settings } = useGlobalSettings();
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "verified" | "rejected">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "verified" | "rejected" | "failed">("all");
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
@@ -28,7 +28,12 @@ const AdminPayments = () => {
     rejectPayment,
     totalCount
   } = usePayments({
-    status: statusFilter === 'all' ? undefined : statusFilter,
+    status:
+      statusFilter === "all"
+        ? undefined
+        : statusFilter === "failed"
+          ? "rejected"
+          : statusFilter,
     limit: 50
   });
   const filteredPayments = payments.filter(payment => {
@@ -71,6 +76,7 @@ const AdminPayments = () => {
     setTimeout(() => setCopiedHash(null), 2000);
   };
   const pendingCount = payments.filter(p => p.status === "pending").length;
+  const failedCount = payments.filter(p => p.status === "rejected").length;
   const verifiedRevenue = payments.filter(p => p.status === "verified").reduce((sum, p) => sum + p.amount, 0);
   return <AdminLayout title="Payment Verification">
     {/* Header */}
@@ -80,17 +86,20 @@ const AdminPayments = () => {
         <Input placeholder="Search by name, email, or TX hash..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10 bg-secondary/50" />
       </div>
       <div className="flex gap-2">
-        {(["all", "pending", "verified", "rejected"] as const).map(status => <Button key={status} variant={statusFilter === status ? "default" : "outline"} size="sm" onClick={() => setStatusFilter(status)} className={cn(statusFilter === status && status === "pending" && "bg-warning hover:bg-warning/90", statusFilter === status && status === "verified" && "bg-success hover:bg-success/90", statusFilter === status && status === "rejected" && "bg-destructive hover:bg-destructive/90")}>
+        {(["all", "pending", "verified", "rejected", "failed"] as const).map(status => <Button key={status} variant={statusFilter === status ? "default" : "outline"} size="sm" onClick={() => setStatusFilter(status)} className={cn(statusFilter === status && status === "pending" && "bg-warning hover:bg-warning/90", statusFilter === status && status === "verified" && "bg-success hover:bg-success/90", statusFilter === status && status === "rejected" && "bg-destructive hover:bg-destructive/90", statusFilter === status && status === "failed" && "bg-destructive hover:bg-destructive/90")}>
           {status.charAt(0).toUpperCase() + status.slice(1)}
           {status === "pending" && pendingCount > 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-background/20 text-xs">
             {pendingCount}
+          </span>}
+          {status === "failed" && failedCount > 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-background/20 text-xs">
+            {failedCount}
           </span>}
         </Button>)}
       </div>
     </div>
 
     {/* Stats */}
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
       <div className="glass-card p-4 shadow-none">
         <p className="text-2xl font-bold">{isLoading ? "..." : totalCount}</p>
         <p className="text-sm text-muted-foreground">Total Payments</p>
@@ -104,6 +113,12 @@ const AdminPayments = () => {
           {isLoading ? "..." : payments.filter(p => p.status === "verified").length}
         </p>
         <p className="text-sm text-muted-foreground">Verified</p>
+      </div>
+      <div className="glass-card p-4 shadow-none">
+        <p className="text-2xl font-bold text-destructive">
+          {isLoading ? "..." : failedCount}
+        </p>
+        <p className="text-sm text-muted-foreground">Failed</p>
       </div>
       <div className="glass-card p-4 shadow-none">
         <p className="text-2xl font-bold text-success">

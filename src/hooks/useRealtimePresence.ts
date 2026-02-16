@@ -1,25 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { RealtimeChannel } from "@supabase/supabase-js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
-const CHANNEL = "global-user-presence-broadcast";
 const HEARTBEAT_MS = 10000;
-const ONLINE_TTL_MS = 30000;
+const OVERVIEW_POLL_MS = 15000;
 const SESSION_STORAGE_KEY = "presence_session_id";
-
-type PresenceHeartbeat = {
-  user_id: string;
-  session_id: string;
-  started_at: string;
-  ts: string;
-};
-
-type PresenceLeave = {
-  user_id: string;
-  session_id: string;
-  ts: string;
-};
 
 const getOrCreateSessionId = () => {
   const existing = sessionStorage.getItem(SESSION_STORAGE_KEY);
@@ -32,42 +17,33 @@ const getOrCreateSessionId = () => {
 export const useTrackUserPresence = () => {
   const { user } = useAuth();
   const intervalRef = useRef<number | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
     if (!user?.id) return;
 
     const sessionId = getOrCreateSessionId();
     const startedAt = new Date().toISOString();
-
-    const channel = supabase.channel(CHANNEL);
-    channelRef.current = channel;
-
     const sendHeartbeat = async () => {
-      const payload: PresenceHeartbeat = {
-        user_id: user.id,
-        session_id: sessionId,
-        started_at: startedAt,
-        ts: new Date().toISOString(),
-      };
-      await channel.send({
-        type: "broadcast",
-        event: "presence_heartbeat",
-        payload,
+      const nowIso = new Date().toISOString();
+      const { error } = await (supabase.rpc as any)("upsert_user_presence_session", {
+        p_session_id: sessionId,
+        p_started_at: startedAt,
+        p_last_seen_at: nowIso,
       });
+      if (error && import.meta.env.DEV) {
+        console.debug("[presence] heartbeat failed", error);
+      }
     };
 
     const sendLeave = async () => {
-      const payload: PresenceLeave = {
-        user_id: user.id,
-        session_id: sessionId,
-        ts: new Date().toISOString(),
-      };
-      await channel.send({
-        type: "broadcast",
-        event: "presence_leave",
-        payload,
+      const nowIso = new Date().toISOString();
+      const { error } = await (supabase.rpc as any)("close_user_presence_session", {
+        p_session_id: sessionId,
+        p_ended_at: nowIso,
       });
+      if (error && import.meta.env.DEV) {
+        console.debug("[presence] close failed", error);
+      }
     };
 
     const onVisibility = () => {
@@ -76,36 +52,41 @@ export const useTrackUserPresence = () => {
       }
     };
 
-    channel.subscribe((status) => {
-      if (status !== "SUBSCRIBED") return;
-      void sendHeartbeat();
-      intervalRef.current = window.setInterval(() => {
-        void sendHeartbeat();
-      }, HEARTBEAT_MS);
-    });
-
-    window.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("beforeunload", () => {
+    const onPageHide = () => {
       void sendLeave();
-    });
+    };
+
+    void sendHeartbeat();
+    intervalRef.current = window.setInterval(() => {
+      void sendHeartbeat();
+    }, HEARTBEAT_MS);
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("beforeunload", onPageHide);
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
-      window.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", onPageHide);
+      window.removeEventListener("pagehide", onPageHide);
       void sendLeave();
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
-      supabase.removeChannel(channel);
-      channelRef.current = null;
     };
   }, [user?.id]);
 };
 
-type SessionState = {
-  userId: string;
-  sessionId: string;
-  startedAtMs: number;
-  lastSeenMs: number;
+type PresenceOverviewRow = {
+  online_user_ids?: string[] | null;
+  online_users?: number | string | null;
+  offline_users?: number | string | null;
+  avg_session_seconds?: number | string | null;
+};
+
+const parsePresenceNumber = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 };
 
 export const usePresenceOverview = (totalUsers = 0) => {
@@ -113,91 +94,73 @@ export const usePresenceOverview = (totalUsers = 0) => {
   const [onlineUsers, setOnlineUsers] = useState(0);
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const [avgSessionSeconds, setAvgSessionSeconds] = useState(0);
-  const sessionsRef = useRef<Map<string, SessionState>>(new Map());
+  const [offlineUsersFromServer, setOfflineUsersFromServer] = useState<number | null>(null);
+  const requestSeqRef = useRef(0);
 
-  useEffect(() => {
-    const channel = supabase.channel(CHANNEL);
-    let fallbackTimer: number | null = null;
-    let recomputeTimer: number | null = null;
+  const fetchPresenceOverview = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
 
-    const recompute = () => {
-      const now = Date.now();
-      const sessions = sessionsRef.current;
-
-      for (const [key, session] of sessions.entries()) {
-        if (now - session.lastSeenMs > ONLINE_TTL_MS) {
-          sessions.delete(key);
-        }
-      }
-
-      const userMinStarts = new Map<string, number>();
-      for (const session of sessions.values()) {
-        const prev = userMinStarts.get(session.userId);
-        if (prev === undefined || session.startedAtMs < prev) {
-          userMinStarts.set(session.userId, session.startedAtMs);
-        }
-      }
-
-      let totalSeconds = 0;
-      for (const startedAtMs of userMinStarts.values()) {
-        totalSeconds += Math.max(0, Math.floor((now - startedAtMs) / 1000));
-      }
-
-      const count = userMinStarts.size;
-      setOnlineUsers(count);
-      setOnlineUserIds(Array.from(userMinStarts.keys()));
-      setAvgSessionSeconds(count > 0 ? totalSeconds / count : 0);
-      setIsLoading(false);
-    };
-
-    channel
-      .on("broadcast", { event: "presence_heartbeat" }, ({ payload }) => {
-        const data = payload as PresenceHeartbeat;
-        if (!data?.user_id || !data?.session_id) return;
-        const key = `${data.user_id}:${data.session_id}`;
-        const startedAtMs = Date.parse(data.started_at || data.ts || "");
-        const tsMs = Date.parse(data.ts || "");
-
-        sessionsRef.current.set(key, {
-          userId: data.user_id,
-          sessionId: data.session_id,
-          startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
-          lastSeenMs: Number.isFinite(tsMs) ? tsMs : Date.now(),
-        });
-        recompute();
-      })
-      .on("broadcast", { event: "presence_leave" }, ({ payload }) => {
-        const data = payload as PresenceLeave;
-        if (!data?.user_id || !data?.session_id) return;
-        sessionsRef.current.delete(`${data.user_id}:${data.session_id}`);
-        recompute();
-      })
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          recompute();
-          return;
-        }
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          setIsLoading(false);
-        }
+    try {
+      const { data, error } = await (supabase.rpc as any)("get_presence_overview", {
+        p_total_users: Math.max(0, Number(totalUsers || 0)),
       });
 
-    recomputeTimer = window.setInterval(recompute, 2000);
-    fallbackTimer = window.setTimeout(() => {
-      setIsLoading(false);
-      recompute();
-    }, 3000);
+      if (requestId !== requestSeqRef.current) return;
+      if (error) throw error;
+
+      const row = (Array.isArray(data) ? data[0] : data) as PresenceOverviewRow | null;
+      if (!row) {
+        setOnlineUsers(0);
+        setOnlineUserIds([]);
+        setAvgSessionSeconds(0);
+        setOfflineUsersFromServer(Math.max(0, totalUsers));
+        return;
+      }
+
+      const ids = Array.isArray(row.online_user_ids)
+        ? row.online_user_ids.filter((v): v is string => typeof v === "string" && v.length > 0)
+        : [];
+
+      const online = Math.max(0, parsePresenceNumber(row.online_users));
+      const offline =
+        row.offline_users === null || row.offline_users === undefined
+          ? null
+          : Math.max(0, parsePresenceNumber(row.offline_users));
+
+      setOnlineUserIds(ids);
+      setOnlineUsers(online > 0 ? online : ids.length);
+      setAvgSessionSeconds(Math.max(0, parsePresenceNumber(row.avg_session_seconds)));
+      setOfflineUsersFromServer(offline);
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.debug("[presence] overview fetch failed", error);
+      }
+    } finally {
+      if (requestId === requestSeqRef.current) {
+        setIsLoading(false);
+      }
+    }
+  }, [totalUsers]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    void fetchPresenceOverview();
+
+    const timer = window.setInterval(() => {
+      void fetchPresenceOverview();
+    }, OVERVIEW_POLL_MS);
 
     return () => {
-      if (recomputeTimer) clearInterval(recomputeTimer);
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-      supabase.removeChannel(channel);
+      clearInterval(timer);
     };
-  }, []);
+  }, [fetchPresenceOverview]);
 
   const offlineUsers = useMemo(
-    () => Math.max(0, totalUsers - onlineUsers),
-    [onlineUsers, totalUsers],
+    () =>
+      offlineUsersFromServer !== null
+        ? offlineUsersFromServer
+        : Math.max(0, totalUsers - onlineUsers),
+    [offlineUsersFromServer, onlineUsers, totalUsers],
   );
 
   return {

@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { AdminSignalForm } from "@/components/admin/AdminSignalForm";
 import { Signal } from "@/types/database";
-import { sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
+import { getTelegramDeliveryFeedback, sendTelegramSignal, sendTelegramTradeClosed } from "@/lib/telegram";
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
@@ -101,6 +101,29 @@ const ProviderSignals = () => {
     return null;
   };
 
+  const showCreateOrPublishResultToast = (
+    webAppMessage: string,
+    telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null
+  ) => {
+    const webSuccessPrefix = `Web app: ${webAppMessage}`;
+    if (!telegramFeedback) {
+      toast.success(webSuccessPrefix);
+      return;
+    }
+
+    if (telegramFeedback.level === "success") {
+      toast.success(`${webSuccessPrefix} ${telegramFeedback.message}`);
+      return;
+    }
+
+    toast.warning(
+      `${webSuccessPrefix} Telegram: failed/skipped. ${getSafeErrorMessage(
+        telegramFeedback.message,
+        "Please check Telegram integration settings and network."
+      )}`
+    );
+  };
+
   const handleCreate = async () => {
     if (!formData.pair || !formData.category) {
       toast.error("Please fill in pair and category");
@@ -114,6 +137,8 @@ const ProviderSignals = () => {
 
     setIsSubmitting(true);
     try {
+      const baseSuccessMessage =
+        formData.signalType === 'upcoming' ? "Upcoming trade created successfully." : "Signal created successfully.";
       const { error } = await supabase.from('signals').insert({
         pair: formData.pair.toUpperCase(),
         category: formData.category,
@@ -135,6 +160,7 @@ const ProviderSignals = () => {
 
       if (error) throw error;
 
+      let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
       if (formData.sendToTelegram) {
         const res = await sendTelegramSignal({
           action: "created",
@@ -153,12 +179,11 @@ const ProviderSignals = () => {
           },
         });
 
-        if (res.ok === false) {
-          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
-        }
+        telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
       }
 
-      toast.success(formData.signalType === 'upcoming' ? "Upcoming trade created" : "Signal created successfully");
+      showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+
       setIsCreateOpen(false);
       resetForm();
       refetch();
@@ -242,6 +267,7 @@ const ProviderSignals = () => {
 
       if (error) throw error;
 
+      let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
       if (formData.sendToTelegram) {
         const res = await sendTelegramSignal({
           action: "activated",
@@ -260,12 +286,11 @@ const ProviderSignals = () => {
           },
         });
 
-        if (res.ok === false) {
-          toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram alert right now."));
-        }
+        telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
       }
 
-      toast.success("Upcoming trade converted to active signal!");
+      showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+
       setConvertingSignalId(null);
       resetForm();
       refetch();

@@ -18,7 +18,7 @@ import { UserPaymentHistory } from "@/components/admin/user-details/UserPaymentH
 import { TradeDetailsDialog } from "@/components/signals/TradeDetailsDialog";
 import { TradeFilters, SortOption, TimeFilter, DirectionFilter, CategoryFilter, ResultFilter, filterByTime, sortTrades } from "@/components/filters/TradeFilters";
 import { pickPrimarySubscription } from "@/lib/subscription-selection";
-import { calculateDisplayedPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
+import { calculateOpeningPotentialProfit, calculateSignalRr } from "@/lib/trade-math";
 
 interface TradeWithSignal extends UserTrade {
   signal: Signal;
@@ -320,12 +320,10 @@ const AdminUserDetails = () => {
     return sortTrades(rows, sortBy);
   }, [closedTrades, timeFilter, dateRange, directionFilter, categoryFilter, resultFilter, sortBy]);
   const tradeTotalPages = useMemo(() => {
-    if (tradeRowsPerPage === "all") return 1;
     const size = Math.max(1, parseInt(tradeRowsPerPage, 10));
     return Math.max(1, Math.ceil(historyTrades.length / size));
   }, [historyTrades.length, tradeRowsPerPage]);
   const paginatedHistoryTrades = useMemo(() => {
-    if (tradeRowsPerPage === "all") return historyTrades;
     const size = Math.max(1, parseInt(tradeRowsPerPage, 10));
     const start = (tradePage - 1) * size;
     return historyTrades.slice(start, start + size);
@@ -709,10 +707,9 @@ const AdminUserDetails = () => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="10">10</SelectItem>
-                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="20">20</SelectItem>
                 <SelectItem value="50">50</SelectItem>
                 <SelectItem value="100">100</SelectItem>
-                <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -761,7 +758,7 @@ const AdminUserDetails = () => {
               ) : (
                 paginatedHistoryTrades.map((trade) => {
                   const rr = calculateSignalRr(trade);
-                  const potentialProfit = calculateDisplayedPotentialProfit(trade);
+                  const potentialProfit = calculateOpeningPotentialProfit(trade);
                   const start = trade.created_at ? new Date(trade.created_at) : null;
                   const end = trade.closed_at ? new Date(trade.closed_at) : null;
                   const minutes = start && end ? differenceInMinutes(end, start) : 0;
@@ -832,7 +829,7 @@ const AdminUserDetails = () => {
             </tbody>
           </table>
         </div>
-        {tradeRowsPerPage !== "all" && historyTrades.length > 0 && (
+        {historyTrades.length > 0 && (
           <div className="mt-4 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
               Page {tradePage} of {tradeTotalPages}

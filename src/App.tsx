@@ -16,6 +16,7 @@ import { UserPresenceTracker } from "@/components/system/UserPresenceTracker";
 import Index from "./pages/Index";
 import Login from "./pages/Auth/Login";
 import Signup from "./pages/Auth/Signup";
+import VerifyEmail from "./pages/Auth/VerifyEmail";
 import ForgotPassword from "./pages/Auth/ForgotPassword";
 import ResetPassword from "./pages/Auth/ResetPassword";
 import TermsOfService from "./pages/TermsOfService";
@@ -40,7 +41,6 @@ import AdminUsers from "./pages/Admin/AdminUsers";
 import AdminUserDetails from "./pages/Admin/AdminUserDetails";
 import AdminPayments from "./pages/Admin/AdminPayments";
 import AdminSettings from "./pages/Admin/AdminSettings";
-import AdminDiscounts from "./pages/Admin/AdminDiscounts";
 import AdminManagement from "./pages/Admin/AdminManagement";
 import AdminHistory from "./pages/Admin/AdminHistory";
 import AdminBranding from "./pages/Admin/AdminBranding";
@@ -90,6 +90,7 @@ const App = () => (
                   <Route path="/" element={<Index />} />
                   <Route path="/login" element={<Login />} />
                   <Route path="/signup" element={<Signup />} />
+                  <Route path="/verify-email" element={<VerifyEmail />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/terms" element={<TermsOfService />} />
@@ -202,11 +203,6 @@ const App = () => (
                   <Route path="/admin/subscription-settings" element={
                     <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
                       <AdminSubscriptionSettings />
-                    </AdminProtectedRoute>
-                  } />
-                  <Route path="/admin/discounts" element={
-                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
-                      <AdminDiscounts />
                     </AdminProtectedRoute>
                   } />
                   <Route path="/admin/telegram-integrations" element={

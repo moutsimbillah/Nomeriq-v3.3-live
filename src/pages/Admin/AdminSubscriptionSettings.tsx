@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,7 +11,7 @@ import { SignalCategory } from "@/types/database";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Loader2, Plus, Pencil, Trash2, GripVertical } from "lucide-react";
+import { Loader2, Plus, Pencil, Trash2, GripVertical, Ban } from "lucide-react";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
 interface EditableFeature {
@@ -21,34 +21,31 @@ interface EditableFeature {
 
 const AdminSubscriptionSettings = () => {
   const { packages, isLoading, error, refetch } = useSubscriptionPackages({
-    statusFilter: 'all',
+    statusFilter: 'active',
   });
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingPackage, setEditingPackage] = useState<SubscriptionPackageWithFeatures | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [usedPackageIds, setUsedPackageIds] = useState<Set<string>>(new Set());
 
   const [formState, setFormState] = useState<{
     name: string;
     description: string;
-    status: "active" | "inactive";
     price: string;
     currency: string;
     duration_type: "monthly" | "yearly" | "lifetime";
     duration_months: string;
-    availability: "single" | "multiple";
     stripe_price_id: string;
     categories: SignalCategory[];
     features: EditableFeature[];
   }>({
     name: "",
     description: "",
-    status: "active",
     price: "",
     currency: "USD",
     duration_type: "monthly",
     duration_months: "1",
-    availability: "single",
     stripe_price_id: "",
     categories: ["Forex", "Metals", "Crypto", "Indices", "Commodities"],
     features: [],
@@ -59,12 +56,10 @@ const AdminSubscriptionSettings = () => {
     setFormState({
       name: "",
       description: "",
-      status: "active",
       price: "",
       currency: "USD",
       duration_type: "monthly",
       duration_months: "1",
-      availability: "single",
       stripe_price_id: "",
       categories: ["Forex", "Metals", "Crypto", "Indices", "Commodities"],
       features: [],
@@ -77,12 +72,10 @@ const AdminSubscriptionSettings = () => {
     setFormState({
       name: pkg.name,
       description: pkg.description || "",
-      status: pkg.status,
       price: String(pkg.price),
       currency: pkg.currency,
       duration_type: pkg.duration_type,
       duration_months: String(pkg.duration_months),
-      availability: pkg.availability,
       stripe_price_id: pkg.stripe_price_id || "",
       categories: (pkg.categories && pkg.categories.length > 0
         ? pkg.categories
@@ -106,15 +99,18 @@ const AdminSubscriptionSettings = () => {
       const basePayload = {
         name: formState.name,
         description: formState.description || null,
-        status: formState.status,
+        status: editingPackage?.status ?? "active",
         price: Number(formState.price),
         currency: formState.currency,
         duration_type: formState.duration_type,
         duration_months:
           formState.duration_type === "lifetime"
             ? 0
-            : Number(formState.duration_months || "1"),
-        availability: formState.availability,
+            : Number(
+                formState.duration_months ||
+                  (formState.duration_type === "yearly" ? "12" : "1")
+              ),
+        availability: "single",
         stripe_price_id: formState.stripe_price_id.trim() || null,
         categories: formState.categories,
       };
@@ -175,23 +171,65 @@ const AdminSubscriptionSettings = () => {
     }
   };
 
-  const handleDelete = async (pkg: SubscriptionPackageWithFeatures) => {
-    setIsDeleting(pkg.id);
+  const handleDisable = async (pkg: SubscriptionPackageWithFeatures) => {
+    setActiveAction(`disable:${pkg.id}`);
     try {
-      // Soft-delete semantics: mark as inactive instead of full delete
       const { error } = await supabase
         .from("subscription_packages")
         .update({ status: "inactive" })
         .eq("id", pkg.id);
       if (error) throw error;
 
-      toast.success("Package disabled (inactive) successfully");
+      toast.success("Package disabled successfully");
       await refetch();
     } catch (err) {
       console.error("Error disabling package:", err);
-      toast.error("Failed to disable package");
+      toast.error(getSafeErrorMessage(err, "Failed to disable package"));
     } finally {
-      setIsDeleting(null);
+      setActiveAction(null);
+    }
+  };
+
+  const handleDelete = async (pkg: SubscriptionPackageWithFeatures) => {
+    setActiveAction(`delete:${pkg.id}`);
+    try {
+      const [{ count: subCount, error: subError }, { count: payCount, error: payError }] =
+        await Promise.all([
+          supabase
+            .from("subscriptions")
+            .select("id", { count: "exact", head: true })
+            .eq("package_id", pkg.id),
+          supabase
+            .from("payments")
+            .select("id", { count: "exact", head: true })
+            .eq("package_id", pkg.id),
+        ]);
+
+      if (subError) throw subError;
+      if (payError) throw payError;
+
+      const linkedSubscriptions = subCount || 0;
+      const linkedPayments = payCount || 0;
+      if (linkedSubscriptions > 0 || linkedPayments > 0) {
+        toast.error(
+          "This package is used by existing subscribers/payment history. Use Disable to hide it safely."
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("subscription_packages")
+        .delete()
+        .eq("id", pkg.id);
+      if (error) throw error;
+
+      toast.success("Package deleted successfully");
+      await refetch();
+    } catch (err) {
+      console.error("Error deleting package:", err);
+      toast.error(getSafeErrorMessage(err, "Failed to delete package"));
+    } finally {
+      setActiveAction(null);
     }
   };
 
@@ -217,6 +255,53 @@ const AdminSubscriptionSettings = () => {
       return { ...prev, features: next };
     });
   };
+
+  useEffect(() => {
+    let active = true;
+
+    const loadPackageUsage = async () => {
+      const packageIds = packages.map((p) => p.id).filter(Boolean);
+      if (packageIds.length === 0) {
+        if (active) setUsedPackageIds(new Set());
+        return;
+      }
+
+      try {
+        const [{ data: subRows, error: subError }, { data: payRows, error: payError }] =
+          await Promise.all([
+            supabase
+              .from("subscriptions")
+              .select("package_id")
+              .in("package_id", packageIds),
+            supabase
+              .from("payments")
+              .select("package_id")
+              .in("package_id", packageIds),
+          ]);
+
+        if (subError) throw subError;
+        if (payError) throw payError;
+
+        const nextUsed = new Set<string>();
+        (subRows || []).forEach((r: any) => {
+          if (r.package_id) nextUsed.add(r.package_id as string);
+        });
+        (payRows || []).forEach((r: any) => {
+          if (r.package_id) nextUsed.add(r.package_id as string);
+        });
+
+        if (active) setUsedPackageIds(nextUsed);
+      } catch (err) {
+        console.error("Error loading package usage:", err);
+      }
+    };
+
+    loadPackageUsage();
+
+    return () => {
+      active = false;
+    };
+  }, [packages]);
 
   return (
     <AdminLayout
@@ -258,6 +343,9 @@ const AdminSubscriptionSettings = () => {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {packages.map((pkg) => (
+              (() => {
+                const packageInUse = usedPackageIds.has(pkg.id);
+                return (
               <div
                 key={pkg.id}
                 className="glass-card p-5 flex flex-col justify-between border border-border/60"
@@ -297,13 +385,8 @@ const AdminSubscriptionSettings = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Availability: {pkg.availability === "single" ? "Single" : "Multiple"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Features: {pkg.features.length}
-                  </span>
+                <div className="flex items-center justify-end mb-3 gap-2">
+                  <span className="text-xs text-muted-foreground">Features: {pkg.features.length}</span>
                 </div>
 
                 <p className="text-xs text-muted-foreground mb-3">
@@ -354,19 +437,37 @@ const AdminSubscriptionSettings = () => {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-destructive/40 text-destructive hover:bg-destructive/10"
-                    onClick={() => handleDelete(pkg)}
-                    disabled={isDeleting === pkg.id}
+                    className="border-warning/40 text-warning hover:bg-warning/10"
+                    onClick={() => handleDisable(pkg)}
+                    disabled={activeAction === `disable:${pkg.id}` || activeAction === `delete:${pkg.id}`}
                   >
-                    {isDeleting === pkg.id ? (
+                    {activeAction === `disable:${pkg.id}` ? (
                       <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                     ) : (
-                      <Trash2 className="w-4 h-4 mr-1" />
+                      <Ban className="w-4 h-4 mr-1" />
                     )}
                     Disable
                   </Button>
+                  {!packageInUse && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDelete(pkg)}
+                      disabled={activeAction === `disable:${pkg.id}` || activeAction === `delete:${pkg.id}`}
+                    >
+                      {activeAction === `delete:${pkg.id}` ? (
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4 mr-1" />
+                      )}
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </div>
+                );
+              })()
             ))}
           </div>
         )}
@@ -381,34 +482,15 @@ const AdminSubscriptionSettings = () => {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium">Package Name</label>
-                <Input
-                  value={formState.name}
-                  onChange={(e) =>
-                    setFormState((prev) => ({ ...prev, name: e.target.value }))
-                  }
-                  placeholder="Pro Signals"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Status</label>
-                <Select
-                  value={formState.status}
-                  onValueChange={(value: "active" | "inactive") =>
-                    setFormState((prev) => ({ ...prev, status: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <label className="text-sm font-medium">Package Name</label>
+              <Input
+                value={formState.name}
+                onChange={(e) =>
+                  setFormState((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Pro Signals"
+              />
             </div>
 
             <div>
@@ -422,7 +504,7 @@ const AdminSubscriptionSettings = () => {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium">Price</label>
                 <Input
@@ -445,23 +527,6 @@ const AdminSubscriptionSettings = () => {
                   }
                   placeholder="USD"
                 />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Availability</label>
-                <Select
-                  value={formState.availability}
-                  onValueChange={(value: "single" | "multiple") =>
-                    setFormState((prev) => ({ ...prev, availability: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="single">Single</SelectItem>
-                    <SelectItem value="multiple">Multiple</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
             </div>
 
@@ -530,7 +595,11 @@ const AdminSubscriptionSettings = () => {
                       ...prev,
                       duration_type: value,
                       duration_months:
-                        value === "lifetime" ? "0" : prev.duration_months || "1",
+                        value === "lifetime"
+                          ? "0"
+                          : value === "yearly"
+                          ? "12"
+                          : "1",
                     }))
                   }
                 >

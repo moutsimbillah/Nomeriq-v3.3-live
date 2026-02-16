@@ -14,12 +14,10 @@ import {
   User,
   Loader2,
   Users,
-  Wifi,
-  WifiOff,
-  Clock3,
-  CheckCircle2,
-  Hourglass,
-  AlertCircle,
+  Sparkles,
+  BarChart3,
+  Globe2,
+  Layers3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUsers } from "@/hooks/useUsers";
@@ -34,15 +32,6 @@ const AdminUsers = () => {
   const { settings } = useBrand();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [subscriptionFilter, setSubscriptionFilter] = useState("all");
-  const [presenceFilter, setPresenceFilter] = useState("all");
-  const [planFilter, setPlanFilter] = useState("all");
-  const [durationFilter, setDurationFilter] = useState("all");
-  const [countryFilter, setCountryFilter] = useState("all");
-  const [balanceTrendFilter, setBalanceTrendFilter] = useState("all");
-  const [joinedFilter, setJoinedFilter] = useState("all");
-  const [startingBalanceRangeFilter, setStartingBalanceRangeFilter] = useState("all");
-  const [currentBalanceRangeFilter, setCurrentBalanceRangeFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
   const [rowsPerPage, setRowsPerPage] = useState("10");
   const [page, setPage] = useState(1);
@@ -61,8 +50,7 @@ const AdminUsers = () => {
     return "expired";
   }, []);
 
-  const { onlineUsers, onlineUserIds, offlineUsers, avgSessionSeconds, isLoading: presenceLoading } =
-    usePresenceOverview(totalCount);
+  const { onlineUserIds, avgSessionSeconds } = usePresenceOverview(totalCount);
   const onlineUserIdSet = useMemo(() => new Set(onlineUserIds), [onlineUserIds]);
 
   const handleDeleteUser = async (userId: string) => {
@@ -108,64 +96,20 @@ const AdminUsers = () => {
 
   const filteredUsers = useMemo(() => {
     let rows = [...users];
-    const now = new Date();
-
-    const inRange = (value: number, range: string) => {
-      if (range === "lt_1000") return value < 1000;
-      if (range === "1000_5000") return value >= 1000 && value <= 5000;
-      if (range === "5000_10000") return value > 5000 && value <= 10000;
-      if (range === "gt_10000") return value > 10000;
-      return true;
-    };
-
-    const inJoinedWindow = (createdAt: string, windowKey: string) => {
-      if (windowKey === "all") return true;
-      const created = new Date(createdAt);
-      if (windowKey === "today") {
-        return created.toDateString() === now.toDateString();
-      }
-      const daysMap: Record<string, number> = {
-        last_7d: 7,
-        last_30d: 30,
-        last_90d: 90,
-      };
-      const days = daysMap[windowKey];
-      if (!days) return true;
-      const from = new Date(now);
-      from.setDate(from.getDate() - days);
-      return created >= from;
-    };
-
-    rows = rows.filter((u) => {
-      const subStatus = getSubscriptionStatus(u);
-      const isOnline = onlineUserIdSet.has(u.user_id);
-      const planName = (u.subscriptionPackageName || "").trim();
-      const duration = (u.subscriptionDurationType || "").toLowerCase();
-      const country = (u.country || "").trim();
-      const starting = Number((u.starting_balance ?? u.account_balance) || 0);
-      const current = Number(u.account_balance || 0);
-      const hasGrowth = current > starting;
-      const hasLoss = current < starting;
-      const isFlat = current === starting;
-
-      if (subscriptionFilter !== "all" && subStatus !== subscriptionFilter) return false;
-      if (presenceFilter !== "all" && ((presenceFilter === "online") !== isOnline)) return false;
-      if (planFilter !== "all" && planName !== planFilter) return false;
-      if (durationFilter !== "all") {
-        if (durationFilter === "none" && duration) return false;
-        if (durationFilter !== "none" && duration !== durationFilter) return false;
-      }
-      if (countryFilter !== "all" && country !== countryFilter) return false;
-      if (!inJoinedWindow(u.created_at, joinedFilter)) return false;
-      if (!inRange(starting, startingBalanceRangeFilter)) return false;
-      if (!inRange(current, currentBalanceRangeFilter)) return false;
-      if (balanceTrendFilter !== "all") {
-        if (balanceTrendFilter === "growth" && !hasGrowth) return false;
-        if (balanceTrendFilter === "loss" && !hasLoss) return false;
-        if (balanceTrendFilter === "flat" && !isFlat) return false;
-      }
-      return true;
-    });
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      rows = rows.filter((u) => {
+        const displayName = [u.first_name, u.last_name].filter(Boolean).join(" ").toLowerCase();
+        return (
+          displayName.includes(query) ||
+          (u.email || "").toLowerCase().includes(query) ||
+          (u.phone || "").toLowerCase().includes(query) ||
+          (u.username || "").toLowerCase().includes(query) ||
+          (u.country || "").toLowerCase().includes(query) ||
+          (u.subscriptionPackageName || "").toLowerCase().includes(query)
+        );
+      });
+    }
 
     rows.sort((a, b) => {
       const aName = ([a.first_name, a.last_name].filter(Boolean).join(" ") || a.email).toLowerCase();
@@ -197,118 +141,218 @@ const AdminUsers = () => {
     });
 
     return rows;
-  }, [
-    users,
-    onlineUserIdSet,
-    subscriptionFilter,
-    presenceFilter,
-    planFilter,
-    durationFilter,
-    countryFilter,
-    balanceTrendFilter,
-    joinedFilter,
-    startingBalanceRangeFilter,
-    currentBalanceRangeFilter,
-    sortBy,
-    getSubscriptionStatus,
-  ]);
+  }, [users, searchQuery, sortBy]);
 
   const totalPages = useMemo(() => {
-    if (rowsPerPage === "all") return 1;
     const size = Math.max(1, parseInt(rowsPerPage, 10));
     return Math.max(1, Math.ceil(filteredUsers.length / size));
   }, [filteredUsers.length, rowsPerPage]);
 
   const paginatedUsers = useMemo(() => {
-    if (rowsPerPage === "all") return filteredUsers;
     const size = Math.max(1, parseInt(rowsPerPage, 10));
     const start = (page - 1) * size;
     return filteredUsers.slice(start, start + size);
   }, [filteredUsers, rowsPerPage, page]);
 
-  const planOptions = useMemo(() => {
-    const list = Array.from(new Set(users.map((u) => (u.subscriptionPackageName || "").trim()).filter(Boolean)));
-    return list.sort((a, b) => a.localeCompare(b));
-  }, [users]);
+  const analytics = useMemo(() => {
+    const statusCounts = { active: 0, pending: 0, expired: 0, inactive: 0 };
+    const durationCounts = { monthly: 0, yearly: 0, lifetime: 0, none: 0 };
+    const trendCounts = { growth: 0, loss: 0, flat: 0 };
+    const joinedCounts = { today: 0, last7: 0, last30: 0, last90: 0, older: 0 };
+    const startingRangeCounts = { lt1000: 0, r1000to5000: 0, r5000to10000: 0, gt10000: 0 };
+    const currentRangeCounts = { lt1000: 0, r1000to5000: 0, r5000to10000: 0, gt10000: 0 };
+    const planMap = new Map<string, number>();
+    const countryMap = new Map<string, number>();
+    const now = new Date();
 
-  const countryOptions = useMemo(() => {
-    const list = Array.from(new Set(users.map((u) => (u.country || "").trim()).filter(Boolean)));
-    return list.sort((a, b) => a.localeCompare(b));
-  }, [users]);
+    const bucketRange = (value: number) => {
+      if (value < 1000) return "lt1000";
+      if (value <= 5000) return "r1000to5000";
+      if (value <= 10000) return "r5000to10000";
+      return "gt10000";
+    };
 
-  const activeCount = filteredUsers.filter((u) => getSubscriptionStatus(u) === "active").length;
-  const pendingCount = filteredUsers.filter((u) => getSubscriptionStatus(u) === "pending").length;
-  const expiredCount = filteredUsers.filter((u) => {
-    const s = getSubscriptionStatus(u);
-    return s === "expired" || s === "inactive";
-  }).length;
-  const filteredOnline = filteredUsers.filter((u) => onlineUserIdSet.has(u.user_id)).length;
-  const filteredOffline = filteredUsers.length - filteredOnline;
+    for (const u of users) {
+      const status = getSubscriptionStatus(u);
+      if (status === "active") statusCounts.active += 1;
+      else if (status === "pending") statusCounts.pending += 1;
+      else if (status === "expired") statusCounts.expired += 1;
+      else statusCounts.inactive += 1;
 
-  const setFilter = (setter: (v: string) => void, value: string) => {
-    setter(value);
-    setPage(1);
+      const duration = (u.subscriptionDurationType || "").toLowerCase();
+      if (duration === "monthly" || duration === "yearly" || duration === "lifetime") {
+        durationCounts[duration] += 1;
+      } else {
+        durationCounts.none += 1;
+      }
+
+      const starting = Number((u.starting_balance ?? u.account_balance) || 0);
+      const current = Number(u.account_balance || 0);
+      if (current > starting) trendCounts.growth += 1;
+      else if (current < starting) trendCounts.loss += 1;
+      else trendCounts.flat += 1;
+
+      startingRangeCounts[bucketRange(starting)] += 1;
+      currentRangeCounts[bucketRange(current)] += 1;
+
+      const createdAt = new Date(u.created_at);
+      const ageDays = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+      if (createdAt.toDateString() === now.toDateString()) joinedCounts.today += 1;
+      else if (ageDays <= 7) joinedCounts.last7 += 1;
+      else if (ageDays <= 30) joinedCounts.last30 += 1;
+      else if (ageDays <= 90) joinedCounts.last90 += 1;
+      else joinedCounts.older += 1;
+
+      const plan = (u.subscriptionPackageName || "").trim();
+      if (plan) {
+        planMap.set(plan, (planMap.get(plan) || 0) + 1);
+      }
+
+      const country = (u.country || "").trim();
+      if (country) {
+        countryMap.set(country, (countryMap.get(country) || 0) + 1);
+      }
+    }
+
+    const topPlans = Array.from(planMap.entries()).sort((a, b) => b[1] - a[1]);
+    const topCountries = Array.from(countryMap.entries()).sort((a, b) => b[1] - a[1]);
+    const totalOnline = users.filter((u) => onlineUserIdSet.has(u.user_id)).length;
+    const totalOffline = Math.max(0, users.length - totalOnline);
+
+    return {
+      statusCounts,
+      durationCounts,
+      trendCounts,
+      joinedCounts,
+      startingRangeCounts,
+      currentRangeCounts,
+      topPlans,
+      topCountries,
+      totalOnline,
+      totalOffline,
+    };
+  }, [users, onlineUserIdSet, getSubscriptionStatus]);
+
+  const maxPlanCount = Math.max(1, ...analytics.topPlans.map(([, count]) => count), 1);
+  const maxCountryCount = Math.max(1, ...analytics.topCountries.map(([, count]) => count), 1);
+  const durationItems = [
+    {
+      label: "Monthly",
+      count: analytics.durationCounts.monthly,
+      border: "border-sky-500/30",
+      bg: "bg-sky-500/10",
+      bar: "from-sky-400/85 to-cyan-300/75",
+    },
+    {
+      label: "Yearly",
+      count: analytics.durationCounts.yearly,
+      border: "border-violet-500/30",
+      bg: "bg-violet-500/10",
+      bar: "from-violet-400/85 to-purple-300/75",
+    },
+    {
+      label: "Lifetime",
+      count: analytics.durationCounts.lifetime,
+      border: "border-emerald-500/30",
+      bg: "bg-emerald-500/10",
+      bar: "from-emerald-400/85 to-green-300/75",
+    },
+    {
+      label: "None",
+      count: analytics.durationCounts.none,
+      border: "border-muted-foreground/30",
+      bg: "bg-muted/20",
+      bar: "from-slate-300/85 to-slate-200/75",
+    },
+  ] as const;
+  const maxDurationCount = Math.max(1, ...durationItems.map((d) => d.count), 1);
+  const cohortItems = [
+    { label: "Today", value: analytics.joinedCounts.today, color: "from-cyan-400/85 to-sky-300/75" },
+    { label: "7d", value: analytics.joinedCounts.last7, color: "from-violet-400/85 to-purple-300/75" },
+    { label: "30d", value: analytics.joinedCounts.last30, color: "from-emerald-400/85 to-lime-300/75" },
+    { label: "90d", value: analytics.joinedCounts.last90, color: "from-amber-400/85 to-yellow-300/75" },
+    { label: "Older", value: analytics.joinedCounts.older, color: "from-slate-300/85 to-slate-200/75" },
+  ] as const;
+  const maxCohortValue = Math.max(1, ...cohortItems.map((c) => c.value), 1);
+  const totalUsersForDistribution = Math.max(users.length, 1);
+
+  const balanceRangeMeta = [
+    {
+      key: "lt1000",
+      label: "< $1K",
+      segment: "from-rose-400/85 to-pink-400/85",
+      dot: "bg-rose-400",
+    },
+    {
+      key: "r1000to5000",
+      label: "$1K - $5K",
+      segment: "from-sky-400/85 to-cyan-400/85",
+      dot: "bg-sky-400",
+    },
+    {
+      key: "r5000to10000",
+      label: "$5K - $10K",
+      segment: "from-emerald-400/85 to-green-400/85",
+      dot: "bg-emerald-400",
+    },
+    {
+      key: "gt10000",
+      label: "> $10K",
+      segment: "from-violet-400/85 to-fuchsia-400/85",
+      dot: "bg-violet-400",
+    },
+  ] as const;
+
+  const startingDistribution = balanceRangeMeta.map((range) => {
+    const count = analytics.startingRangeCounts[range.key];
+    return {
+      ...range,
+      count,
+      percent: (count / totalUsersForDistribution) * 100,
+    };
+  });
+
+  const currentDistribution = balanceRangeMeta.map((range) => {
+    const count = analytics.currentRangeCounts[range.key];
+    return {
+      ...range,
+      count,
+      percent: (count / totalUsersForDistribution) * 100,
+    };
+  });
+
+  const planThemes = [
+    { bar: "bg-gradient-to-r from-emerald-400/85 to-emerald-300/75", dot: "bg-emerald-400" },
+    { bar: "bg-gradient-to-r from-sky-400/85 to-cyan-300/75", dot: "bg-sky-400" },
+    { bar: "bg-gradient-to-r from-violet-400/85 to-fuchsia-300/75", dot: "bg-violet-400" },
+    { bar: "bg-gradient-to-r from-amber-400/85 to-orange-300/75", dot: "bg-amber-400" },
+    { bar: "bg-gradient-to-r from-rose-400/85 to-pink-300/75", dot: "bg-rose-400" },
+    { bar: "bg-gradient-to-r from-lime-400/85 to-green-300/75", dot: "bg-lime-400" },
+    { bar: "bg-gradient-to-r from-indigo-400/85 to-blue-300/75", dot: "bg-indigo-400" },
+    { bar: "bg-gradient-to-r from-teal-400/85 to-cyan-300/75", dot: "bg-teal-400" },
+  ] as const;
+
+  const countryThemes = [
+    { bar: "bg-gradient-to-r from-cyan-400/85 to-sky-300/75", dot: "bg-cyan-400" },
+    { bar: "bg-gradient-to-r from-purple-400/85 to-violet-300/75", dot: "bg-purple-400" },
+    { bar: "bg-gradient-to-r from-emerald-400/85 to-green-300/75", dot: "bg-emerald-400" },
+    { bar: "bg-gradient-to-r from-amber-400/85 to-yellow-300/75", dot: "bg-amber-400" },
+    { bar: "bg-gradient-to-r from-fuchsia-400/85 to-pink-300/75", dot: "bg-fuchsia-400" },
+    { bar: "bg-gradient-to-r from-blue-400/85 to-indigo-300/75", dot: "bg-blue-400" },
+  ] as const;
+
+  const stableIndex = (value: string, modulo: number) => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+    }
+    return modulo > 0 ? hash % modulo : 0;
   };
 
-  const resetFilters = () => {
-    setSubscriptionFilter("all");
-    setPresenceFilter("all");
-    setPlanFilter("all");
-    setDurationFilter("all");
-    setCountryFilter("all");
-    setBalanceTrendFilter("all");
-    setJoinedFilter("all");
-    setStartingBalanceRangeFilter("all");
-    setCurrentBalanceRangeFilter("all");
-    setSortBy("newest");
-    setRowsPerPage("10");
-    setPage(1);
-  };
-
-  const statCards = [
-    {
-      label: "Total Users",
-      value: isLoading ? "..." : filteredUsers.length.toString(),
-      icon: Users,
-      accent: "text-primary",
-    },
-    {
-      label: "Total Online",
-      value: isLoading || presenceLoading ? "..." : filteredOnline.toString(),
-      icon: Wifi,
-      accent: "text-success",
-    },
-    {
-      label: "Total Offline",
-      value: isLoading || presenceLoading ? "..." : filteredOffline.toString(),
-      icon: WifiOff,
-      accent: "text-muted-foreground",
-    },
-    {
-      label: "Avg Time Spend/Day",
-      value: isLoading || presenceLoading ? "..." : formatDuration(avgSessionSeconds),
-      icon: Clock3,
-      accent: "text-primary",
-    },
-    {
-      label: "Active Subscriptions",
-      value: isLoading ? "..." : activeCount.toString(),
-      icon: CheckCircle2,
-      accent: "text-success",
-    },
-    {
-      label: "Pending",
-      value: isLoading ? "..." : pendingCount.toString(),
-      icon: Hourglass,
-      accent: "text-warning",
-    },
-    {
-      label: "Expired/Inactive",
-      value: isLoading ? "..." : expiredCount.toString(),
-      icon: AlertCircle,
-      accent: "text-destructive",
-    },
-  ];
+  const getPlanTheme = (planName: string) =>
+    planThemes[stableIndex(planName.toLowerCase(), planThemes.length)];
+  const getCountryTheme = (countryName: string) =>
+    countryThemes[stableIndex(countryName.toLowerCase(), countryThemes.length)];
 
   useEffect(() => {
     if (page > totalPages) {
@@ -318,8 +362,275 @@ const AdminUsers = () => {
 
   return (
     <AdminLayout title="User Management">
-      <div className="flex flex-col gap-4 mb-6">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      <div className="space-y-5">
+        <section className="relative overflow-hidden rounded-2xl border border-border/50 bg-card/80">
+          <div className="relative p-5 md:p-6 space-y-5">
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-border/50 bg-background/40 px-3 py-1 text-xs font-medium text-muted-foreground">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  Customer Intelligence
+                </div>
+                <h2 className="text-xl md:text-2xl font-semibold tracking-tight">User Command Center</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Monitor subscription health, presence behavior, and account balances in one place.
+                </p>
+              </div>
+            </div>
+
+            <div className="h-1 rounded-full bg-gradient-to-r from-primary/70 via-blue-400/55 to-cyan-400/45" />
+          </div>
+        </section>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5">
+            <p className="mb-1 text-xs uppercase tracking-wider text-muted-foreground">Subscription & Presence</p>
+            <p className="mb-3 text-xs text-muted-foreground/80">
+              Inactive means user has no subscription record yet.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2.5">
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Total Users</p>
+                <p className="mt-1 text-2xl font-semibold text-primary">{isLoading ? "..." : users.length}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Active</p>
+                <p className="mt-1 text-2xl font-semibold text-success">{analytics.statusCounts.active}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Pending</p>
+                <p className="mt-1 text-2xl font-semibold text-warning">{analytics.statusCounts.pending}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Expired</p>
+                <p className="mt-1 text-2xl font-semibold text-destructive">{analytics.statusCounts.expired}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Inactive</p>
+                <p className="mt-1 text-2xl font-semibold">{analytics.statusCounts.inactive}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground/80">No subscription row</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Online</p>
+                <p className="mt-1 text-2xl font-semibold text-success">{analytics.totalOnline}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Offline</p>
+                <p className="mt-1 text-2xl font-semibold text-muted-foreground">{analytics.totalOffline}</p>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/50 px-3 py-2.5">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Avg Time/Day</p>
+                <p className="mt-1 text-2xl font-semibold text-primary">{formatDuration(avgSessionSeconds)}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground/80">All registered users</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <Layers3 className="h-4 w-4 text-primary" />
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Plan & Duration Mix</p>
+            </div>
+            <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
+              {(analytics.topPlans.length > 0 ? analytics.topPlans : [["No plan", 0]]).map(([name, count]) => {
+                const planTheme = getPlanTheme(name);
+                return (
+                <div key={name}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="truncate text-foreground/90 flex items-center gap-2">
+                      <span className={cn("h-2 w-2 rounded-full", planTheme.dot)} />
+                      {name}
+                    </span>
+                    <span className="font-semibold">{count}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-secondary/40 overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full", planTheme.bar)}
+                      style={{ width: `${Math.max(6, (count / maxPlanCount) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs max-h-44 overflow-y-auto pr-1">
+              {durationItems.map((item) => (
+                <div key={item.label} className={cn("rounded-lg border px-3 py-2", item.border, item.bg)}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span>{item.label}</span>
+                    <span className="font-semibold">{item.count}</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-secondary/40 overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full bg-gradient-to-r", item.bar)}
+                      style={{ width: `${Math.max(item.count > 0 ? 8 : 0, (item.count / maxDurationCount) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">None means duration type is not set on that user subscription.</p>
+          </div>
+
+            <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <Globe2 className="h-4 w-4 text-primary" />
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Countries & Trend</p>
+            </div>
+            <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
+              {(analytics.topCountries.length > 0 ? analytics.topCountries : [["No country", 0]]).map(([country, count]) => {
+                const countryTheme = getCountryTheme(country);
+                return (
+                <div key={country}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="truncate text-foreground/90 flex items-center gap-2">
+                      <span className={cn("h-2 w-2 rounded-full", countryTheme.dot)} />
+                      {country}
+                    </span>
+                    <span className="font-semibold">{count}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-secondary/40 overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full", countryTheme.bar)}
+                      style={{ width: `${Math.max(6, (count / maxCountryCount) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg bg-success/10 border border-success/25 px-3 py-2 text-center">
+                Growth
+                <p className="font-semibold text-success mt-1">{analytics.trendCounts.growth}</p>
+              </div>
+              <div className="rounded-lg bg-destructive/10 border border-destructive/25 px-3 py-2 text-center">
+                Loss
+                <p className="font-semibold text-destructive mt-1">{analytics.trendCounts.loss}</p>
+              </div>
+              <div className="rounded-lg bg-muted/30 border border-border/40 px-3 py-2 text-center">
+                Flat
+                <p className="font-semibold mt-1">{analytics.trendCounts.flat}</p>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Growth = current balance above starting balance. Loss = below starting balance. Flat = equal balances.
+            </p>
+          </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" />
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Joined Cohorts</p>
+            </div>
+            <div className="space-y-2.5 text-sm max-h-60 overflow-y-auto pr-1">
+              {cohortItems.map((cohort) => (
+                <div key={cohort.label}>
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-foreground/90">{cohort.label}</span>
+                    <span className="font-semibold">{cohort.value}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-secondary/35 overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full bg-gradient-to-r", cohort.color)}
+                      style={{ width: `${Math.max(cohort.value > 0 ? 8 : 0, (cohort.value / maxCohortValue) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Joined Cohorts groups users by signup age: Today, last 7 days, last 30 days, last 90 days, and Older.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" />
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Balance Distribution</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="rounded-xl border border-border/40 bg-secondary/15 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Starting Balance</p>
+                  <span className="text-xs text-muted-foreground">{users.length} users</span>
+                </div>
+                <div className="h-3 rounded-full bg-secondary/35 overflow-hidden flex">
+                  {startingDistribution.map((range) => (
+                    <div
+                      key={`start-segment-${range.key}`}
+                      className={cn("h-full bg-gradient-to-r", range.segment)}
+                      style={{ width: `${range.percent}%` }}
+                      title={`${range.label}: ${range.count} (${range.percent.toFixed(1)}%)`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-3 space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {startingDistribution.map((range) => (
+                    <div key={`start-row-${range.key}`}>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="flex items-center gap-2">
+                          <span className={cn("h-2 w-2 rounded-full", range.dot)} />
+                          {range.label}
+                        </span>
+                        <span className="font-semibold">{range.count}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-secondary/35 overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full bg-gradient-to-r", range.segment)}
+                          style={{ width: `${Math.max(range.percent, range.count > 0 ? 6 : 0)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border/40 bg-secondary/15 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Current Balance</p>
+                  <span className="text-xs text-muted-foreground">{users.length} users</span>
+                </div>
+                <div className="h-3 rounded-full bg-secondary/35 overflow-hidden flex">
+                  {currentDistribution.map((range) => (
+                    <div
+                      key={`current-segment-${range.key}`}
+                      className={cn("h-full bg-gradient-to-r", range.segment)}
+                      style={{ width: `${range.percent}%` }}
+                      title={`${range.label}: ${range.count} (${range.percent.toFixed(1)}%)`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-3 space-y-2 max-h-44 overflow-y-auto pr-1">
+                  {currentDistribution.map((range) => (
+                    <div key={`current-row-${range.key}`}>
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="flex items-center gap-2">
+                          <span className={cn("h-2 w-2 rounded-full", range.dot)} />
+                          {range.label}
+                        </span>
+                        <span className="font-semibold">{range.count}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-secondary/35 overflow-hidden">
+                        <div
+                          className={cn("h-full rounded-full bg-gradient-to-r", range.segment)}
+                          style={{ width: `${Math.max(range.percent, range.count > 0 ? 6 : 0)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-border/60 bg-card/70 p-4 md:p-5 mt-6">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="relative flex-1 max-w-xl">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <Input
@@ -329,175 +640,65 @@ const AdminUsers = () => {
                 setSearchQuery(e.target.value);
                 setPage(1);
               }}
-              className="pl-10 h-11 bg-secondary/50 border-border/60"
+              className="pl-10 h-11 bg-background/70 border-border/50"
             />
           </div>
-          <div className="text-sm text-muted-foreground">
-            {isLoading ? "Loading users..." : `${filteredUsers.length} filtered of ${totalCount} users`}
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-muted-foreground xl:mr-2">
+              {isLoading ? "Loading users..." : `${filteredUsers.length} shown of ${totalCount} users`}
+            </p>
+            <Select value={sortBy} onValueChange={(v) => { setSortBy(v); setPage(1); }}>
+              <SelectTrigger className="h-10 w-[170px] bg-background/60 border-border/50">
+                <SelectValue placeholder="Sort" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest</SelectItem>
+                <SelectItem value="oldest">Oldest</SelectItem>
+                <SelectItem value="name_asc">Name A-Z</SelectItem>
+                <SelectItem value="name_desc">Name Z-A</SelectItem>
+                <SelectItem value="balance_high">Balance High-Low</SelectItem>
+                <SelectItem value="balance_low">Balance Low-High</SelectItem>
+                <SelectItem value="starting_high">Starting High-Low</SelectItem>
+                <SelectItem value="starting_low">Starting Low-High</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={rowsPerPage} onValueChange={(v) => { setRowsPerPage(v); setPage(1); }}>
+              <SelectTrigger className="h-10 w-[120px] bg-background/60 border-border/50">
+                <SelectValue placeholder="Rows" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10 rows</SelectItem>
+                <SelectItem value="20">20 rows</SelectItem>
+                <SelectItem value="50">50 rows</SelectItem>
+                <SelectItem value="100">100 rows</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 2xl:grid-cols-12 gap-2">
-          <Select value={subscriptionFilter} onValueChange={(v) => setFilter(setSubscriptionFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Subscription" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="expired">Expired</SelectItem>
-              <SelectItem value="inactive">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={presenceFilter} onValueChange={(v) => setFilter(setPresenceFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Presence" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Presence</SelectItem>
-              <SelectItem value="online">Online</SelectItem>
-              <SelectItem value="offline">Offline</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={planFilter} onValueChange={(v) => setFilter(setPlanFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Plan" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Plans</SelectItem>
-              {planOptions.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={durationFilter} onValueChange={(v) => setFilter(setDurationFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Duration" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Durations</SelectItem>
-              <SelectItem value="monthly">Monthly</SelectItem>
-              <SelectItem value="yearly">Yearly</SelectItem>
-              <SelectItem value="lifetime">Lifetime</SelectItem>
-              <SelectItem value="none">No Duration</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={countryFilter} onValueChange={(v) => setFilter(setCountryFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Country" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Countries</SelectItem>
-              {countryOptions.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={balanceTrendFilter} onValueChange={(v) => setFilter(setBalanceTrendFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Balance Trend" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Balance States</SelectItem>
-              <SelectItem value="growth">Growth</SelectItem>
-              <SelectItem value="loss">Loss</SelectItem>
-              <SelectItem value="flat">Flat</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={joinedFilter} onValueChange={(v) => setFilter(setJoinedFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Joined Date" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Joined Dates</SelectItem>
-              <SelectItem value="today">Today</SelectItem>
-              <SelectItem value="last_7d">Last 7 days</SelectItem>
-              <SelectItem value="last_30d">Last 30 days</SelectItem>
-              <SelectItem value="last_90d">Last 90 days</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={startingBalanceRangeFilter} onValueChange={(v) => setFilter(setStartingBalanceRangeFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Starting Balance" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Starting Balances</SelectItem>
-              <SelectItem value="lt_1000">&lt; $1,000</SelectItem>
-              <SelectItem value="1000_5000">$1,000 - $5,000</SelectItem>
-              <SelectItem value="5000_10000">$5,000 - $10,000</SelectItem>
-              <SelectItem value="gt_10000">&gt; $10,000</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={currentBalanceRangeFilter} onValueChange={(v) => setFilter(setCurrentBalanceRangeFilter, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Current Balance" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Current Balances</SelectItem>
-              <SelectItem value="lt_1000">&lt; $1,000</SelectItem>
-              <SelectItem value="1000_5000">$1,000 - $5,000</SelectItem>
-              <SelectItem value="5000_10000">$5,000 - $10,000</SelectItem>
-              <SelectItem value="gt_10000">&gt; $10,000</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={sortBy} onValueChange={(v) => setFilter(setSortBy, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Sort" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="newest">Newest</SelectItem>
-              <SelectItem value="oldest">Oldest</SelectItem>
-              <SelectItem value="name_asc">Name A-Z</SelectItem>
-              <SelectItem value="name_desc">Name Z-A</SelectItem>
-              <SelectItem value="balance_high">Balance High-Low</SelectItem>
-              <SelectItem value="balance_low">Balance Low-High</SelectItem>
-              <SelectItem value="starting_high">Starting High-Low</SelectItem>
-              <SelectItem value="starting_low">Starting Low-High</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={rowsPerPage} onValueChange={(v) => setFilter(setRowsPerPage, v)}>
-            <SelectTrigger className="h-10 bg-secondary/40 border-border/50"><SelectValue placeholder="Rows" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="10">10 rows</SelectItem>
-              <SelectItem value="25">25 rows</SelectItem>
-              <SelectItem value="50">50 rows</SelectItem>
-              <SelectItem value="100">100 rows</SelectItem>
-              <SelectItem value="all">All rows</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Button variant="outline" className="h-10" onClick={resetFilters}>
-            Reset Filters
-          </Button>
+      <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/70 shadow-[0_16px_42px_-30px_hsl(var(--foreground)/0.45)] mt-4">
+        <div className="flex items-center justify-between border-b border-border/50 px-6 py-4 bg-gradient-to-r from-background/50 to-transparent">
+          <p className="text-sm font-semibold">User Directory</p>
+          <p className="text-xs text-muted-foreground">Page {page} of {totalPages}</p>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 mb-6">
-        {statCards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div key={card.label} className="glass-card p-4 border border-border/40 shadow-none">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{card.label}</p>
-                <Icon className={cn("w-4 h-4", card.accent)} />
-              </div>
-              <p className={cn("text-3xl font-semibold leading-none", card.accent)}>{card.value}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="glass-card overflow-hidden border border-border/40 shadow-none">
         {isLoading ? (
-          <div className="flex items-center justify-center py-16">
+          <div className="flex min-h-[640px] items-center justify-center">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
         ) : filteredUsers.length === 0 ? (
-          <div className="text-center py-16">
+          <div className="min-h-[640px] flex items-center justify-center text-center px-6">
+            <div>
             <User className="w-12 h-12 mx-auto text-muted-foreground/40 mb-4" />
             <p className="text-lg font-semibold">No users found</p>
             <p className="text-muted-foreground">
               {searchQuery ? "Try a different search." : "No users have signed up yet."}
             </p>
+            </div>
           </div>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <div className="min-h-[640px] flex flex-col">
+            <div className="overflow-x-auto flex-1">
               <table className="w-full min-w-[1200px]">
                 <thead>
                   <tr className="border-b border-border/50 bg-secondary/25">
@@ -624,34 +825,32 @@ const AdminUsers = () => {
               </table>
             </div>
 
-            {rowsPerPage !== "all" && filteredUsers.length > 0 && (
-              <div className="px-6 py-4 border-t border-border/40 flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Page {page} of {totalPages}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page <= 1}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page >= totalPages}
-                  >
-                    Next
-                  </Button>
-                </div>
+            <div className="px-6 py-4 border-t border-border/40 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Page {page} of {totalPages}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Next
+                </Button>
               </div>
-            )}
-          </>
+            </div>
+          </div>
         )}
       </div>
     </AdminLayout>

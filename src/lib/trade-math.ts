@@ -15,6 +15,10 @@ type TradePnlInput = TradeMathInput & {
   risk_amount?: number | null;
 };
 
+type TradePotentialInput = TradeMathInput & {
+  risk_amount?: number | null;
+};
+
 export const calculateSignalRrForTarget = (
   signal: TradeMathSignal | null | undefined,
   targetTp: number | null | undefined,
@@ -51,3 +55,9 @@ export const calculateDisplayedPotentialProfit = (
 
   return Number(trade.risk_amount || 0) * calculateSignalRr(trade);
 };
+
+// Canonical "opening potential": based on opening trade risk and opening TP R:R.
+// Use this for history tables so Potential Profit remains comparable to original setup.
+export const calculateOpeningPotentialProfit = (
+  trade: TradePotentialInput,
+): number => Number(trade.risk_amount || 0) * calculateSignalRr(trade);

@@ -103,6 +103,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 
     const setupRealtimeForUser = (userId: string) => {
+      const refreshPrimarySubscription = async () => {
+        const { data: subRows, error } = await supabase
+          .from('subscriptions')
+          .select('*')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false });
+
+        if (error) {
+          console.error('[AuthContext] Error refreshing subscriptions from realtime event:', error);
+          return;
+        }
+
+        const primarySub = pickPrimarySubscription((subRows || []) as Subscription[]);
+        setSubscription((primarySub ?? null) as Subscription | null);
+      };
+
       // Subscribe to realtime changes for this user's profile and subscription
       realtimeChannel = supabase
         .channel(`user_data_${userId}`)
@@ -118,10 +134,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'subscriptions', filter: `user_id=eq.${userId}` },
-          (payload) => {
-            if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-              setSubscription(payload.new as Subscription);
-            }
+          () => {
+            // Never trust a single changed row as "current subscription".
+            // Recompute from all rows to keep state consistent with page refresh logic.
+            void refreshPrimarySubscription();
           }
         )
         .on(

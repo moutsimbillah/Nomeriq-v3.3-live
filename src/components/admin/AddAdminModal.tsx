@@ -15,13 +15,12 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AdminRole, Profile } from "@/types/database";
 import { supabase } from "@/integrations/supabase/client";
-import { Search, UserPlus, Mail, Loader2, Crown, CreditCard, Signal, Check } from "lucide-react";
+import { Search, UserPlus, Mail, Loader2, Crown, CreditCard, TrendingUp, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
@@ -48,8 +47,8 @@ const roleOptions: { value: AdminRole; label: string; icon: React.ElementType; d
   },
   {
     value: "signal_provider_admin",
-    label: "Signal Provider Admin",
-    icon: Signal,
+    label: "Signal Provider",
+    icon: TrendingUp,
     description: "Access to signal creation, editing, and trading analytics",
   },
 ];
@@ -63,6 +62,8 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
   const [inviteEmail, setInviteEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const selectedRoleOption = roleOptions.find((role) => role.value === selectedRole) ?? roleOptions[0];
+  const SelectedRoleIcon = selectedRoleOption.icon;
 
   // Search for users
   useEffect(() => {
@@ -230,12 +231,15 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
             <div className="space-y-2">
               <Label>Admin Role</Label>
               <Select value={selectedRole} onValueChange={(v) => setSelectedRole(v as AdminRole)}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger className="h-11">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <SelectedRoleIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate font-medium">{selectedRoleOption.label}</span>
+                  </div>
                 </SelectTrigger>
                 <SelectContent>
                   {roleOptions.map((role) => (
-                    <SelectItem key={role.value} value={role.value}>
+                    <SelectItem key={role.value} value={role.value} textValue={role.label}>
                       <div className="flex items-center gap-2">
                         <role.icon className="w-4 h-4" />
                         <div>
@@ -247,6 +251,9 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground px-1">
+                {selectedRoleOption.description}
+              </p>
             </div>
           </TabsContent>
 
@@ -268,12 +275,15 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
             <div className="space-y-2">
               <Label>Admin Role</Label>
               <Select value={selectedRole} onValueChange={(v) => setSelectedRole(v as AdminRole)}>
-                <SelectTrigger>
-                  <SelectValue />
+                <SelectTrigger className="h-11">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <SelectedRoleIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="truncate font-medium">{selectedRoleOption.label}</span>
+                  </div>
                 </SelectTrigger>
                 <SelectContent>
                   {roleOptions.map((role) => (
-                    <SelectItem key={role.value} value={role.value}>
+                    <SelectItem key={role.value} value={role.value} textValue={role.label}>
                       <div className="flex items-center gap-2">
                         <role.icon className="w-4 h-4" />
                         <span>{role.label}</span>
@@ -282,6 +292,9 @@ export const AddAdminModal = ({ open, onOpenChange, onAddAdmin, onSuccess }: Add
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground px-1">
+                {selectedRoleOption.description}
+              </p>
             </div>
 
             <div className="p-3 bg-muted/50 rounded-lg text-sm text-muted-foreground">

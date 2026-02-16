@@ -44,6 +44,8 @@ const COLORS = [
   "#84CC16", // lime
 ];
 
+const DEFAULT_CATEGORY_ORDER = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
+
 const getCategoryTheme = (category: string) => {
   const key = category.toLowerCase();
 
@@ -218,6 +220,18 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
       return b.totalTrades - a.totalTrades;
     });
 
+  const displayCategoryStats = categoryStats.length
+    ? categoryStats
+    : DEFAULT_CATEGORY_ORDER.map((category) => ({
+        category,
+        wins: 0,
+        losses: 0,
+        breakeven: 0,
+        totalTrades: 0,
+        winRate: 0,
+        totalPnL: 0,
+      }));
+
   const sortedTrades = [...closedTrades].sort(
     (a: any, b: any) =>
       new Date(a.closed_at || a.created_at).getTime() -
@@ -262,7 +276,9 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
     ? pnlValues.reduce((sum, val) => sum + Math.pow(val - avgPnl, 2), 0) / pnlValues.length
     : 0;
   const stdDev = Math.sqrt(variance);
-  const consistencyIndex = Math.max(0, Math.min(100, 100 - (stdDev / (Math.abs(avgPnl) + 1)) * 10));
+  const consistencyIndex = closedTrades.length > 0
+    ? Math.max(0, Math.min(100, 100 - (stdDev / (Math.abs(avgPnl) + 1)) * 10))
+    : 0;
   const qualityScore = closedTrades.length >= 3
     ? (winRatePercent * 0.4) + (rrScore * 0.3) + (consistencyIndex * 0.3)
     : 0;
@@ -448,51 +464,50 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
           </div>
           <h3 className="text-lg font-semibold">Category Performance</h3>
         </div>
-        {categoryStats.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No trade history yet</p>
-        ) : (
-          <div className="space-y-3">
-            {categoryStats.map((cat) => (
-              <div key={cat.category} className="p-3 rounded-xl bg-secondary/30 border border-border/40">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className={cn("w-3 h-3 rounded-full", getCategoryTheme(cat.category).dot)} />
-                    <span className="text-sm font-semibold">{cat.category}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={cn(
-                        "font-mono text-sm font-semibold",
-                        cat.winRate >= 50 ? "text-success" : "text-destructive"
-                      )}
-                    >
-                      {cat.winRate.toFixed(0)}%
-                    </span>
-                    <span
-                      className={cn(
-                        "font-mono text-xs",
-                        cat.totalPnL >= 0 ? "text-success" : "text-destructive"
-                      )}
-                    >
-                      {cat.totalPnL >= 0 ? "+" : ""}${cat.totalPnL.toFixed(0)}
-                    </span>
-                  </div>
+        {closedTrades.length === 0 && (
+          <p className="text-xs text-muted-foreground mb-3">No trade history yet. Showing baseline values.</p>
+        )}
+        <div className="space-y-3">
+          {displayCategoryStats.map((cat) => (
+            <div key={cat.category} className="p-3 rounded-xl bg-secondary/30 border border-border/40">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className={cn("w-3 h-3 rounded-full", getCategoryTheme(cat.category).dot)} />
+                  <span className="text-sm font-semibold">{cat.category}</span>
                 </div>
-                {/* Win Rate Gauge */}
-                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={cn("h-full rounded-full transition-all bg-gradient-to-r", getCategoryTheme(cat.category).bar)}
-                    style={{ width: `${cat.winRate}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between mt-1.5 text-xs text-muted-foreground">
-                  <span>{cat.totalTrades} trades</span>
-                  <span>{cat.wins}W / {cat.losses}L / {cat.breakeven}BE</span>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={cn(
+                      "font-mono text-sm font-semibold",
+                      cat.winRate >= 50 ? "text-success" : "text-destructive"
+                    )}
+                  >
+                    {cat.winRate.toFixed(0)}%
+                  </span>
+                  <span
+                    className={cn(
+                      "font-mono text-xs",
+                      cat.totalPnL >= 0 ? "text-success" : "text-destructive"
+                    )}
+                  >
+                    {cat.totalPnL >= 0 ? "+" : ""}${cat.totalPnL.toFixed(0)}
+                  </span>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+              {/* Win Rate Gauge */}
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all bg-gradient-to-r", getCategoryTheme(cat.category).bar)}
+                  style={{ width: `${cat.winRate}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-1.5 text-xs text-muted-foreground">
+                <span>{cat.totalTrades} trades</span>
+                <span>{cat.wins}W / {cat.losses}L / {cat.breakeven}BE</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Signal Quality & System Health */}
@@ -507,10 +522,10 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
           </div>
         </div>
 
-        {closedTrades.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No trade history yet</p>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {closedTrades.length === 0 && (
+          <p className="text-xs text-muted-foreground mb-4">No trade history yet. Showing baseline values.</p>
+        )}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="p-5 rounded-xl bg-secondary/30 border border-border/50">
               <div className="flex items-center justify-between mb-4">
                 <span className="font-medium">Signal Quality Score</span>
@@ -628,7 +643,6 @@ export const PerformanceAnalytics = ({ adminGlobalView = false }: PerformanceAna
 
             </div>
           </div>
-        )}
       </div>
     </div>
   );

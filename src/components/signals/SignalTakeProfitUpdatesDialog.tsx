@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -52,6 +52,8 @@ export const SignalTakeProfitUpdatesDialog = ({
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rows, setRows] = useState<FormRow[]>([{ tpPrice: "", closePercent: "", note: "" }]);
+  const [remainingExposure, setRemainingExposure] = useState<number | null>(null);
+  const [isRemainingLoading, setIsRemainingLoading] = useState(false);
 
   const { updatesBySignal, refetch } = useSignalTakeProfitUpdates({
     signalIds: [signal.id],
@@ -59,6 +61,48 @@ export const SignalTakeProfitUpdatesDialog = ({
   });
 
   const existingUpdates = updatesBySignal[signal.id] || [];
+  const publishedRows = useMemo(() => {
+    let remainingPercent = 100;
+    return existingUpdates.map((u) => {
+      const closePct = Math.max(0, Math.min(100, Number(u.close_percent || 0)));
+      const effectiveClosed = remainingPercent * (closePct / 100);
+      remainingPercent = Math.max(0, remainingPercent - effectiveClosed);
+      return {
+        ...u,
+        remainingAfterPercent: remainingPercent,
+      };
+    });
+  }, [existingUpdates]);
+
+  const fetchRemainingExposure = useCallback(async () => {
+    setIsRemainingLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("user_trades")
+        .select("remaining_risk_amount")
+        .eq("signal_id", signal.id)
+        .eq("result", "pending");
+
+      if (error) throw error;
+
+      const totalRemaining = (data || []).reduce(
+        (sum, row: { remaining_risk_amount?: number | null }) =>
+          sum + Number(row.remaining_risk_amount || 0),
+        0
+      );
+      setRemainingExposure(totalRemaining);
+    } catch (err) {
+      console.error("Error fetching remaining exposure:", err);
+      setRemainingExposure(null);
+    } finally {
+      setIsRemainingLoading(false);
+    }
+  }, [signal.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    void fetchRemainingExposure();
+  }, [open, fetchRemainingExposure]);
 
   const totalPlannedClosePercent = useMemo(
     () =>
@@ -93,6 +137,11 @@ export const SignalTakeProfitUpdatesDialog = ({
   };
 
   const handleSubmit = async () => {
+    if (typeof remainingExposure === "number" && remainingExposure <= 0) {
+      toast.error("Cannot publish update: this signal has no remaining open position.");
+      return;
+    }
+
     const signalEntry = Number(signal.entry_price);
     if (!Number.isFinite(signalEntry)) {
       toast.error("Signal entry is missing. Please update the base signal first.");
@@ -179,6 +228,7 @@ export const SignalTakeProfitUpdatesDialog = ({
     try {
       await createSignalTakeProfitUpdates(signal.id, currentUserId, parsed);
       await refetch();
+      await fetchRemainingExposure();
 
       if (signal.send_updates_to_telegram) {
         for (const row of parsed) {
@@ -214,6 +264,8 @@ export const SignalTakeProfitUpdatesDialog = ({
         normalized.includes("relation") && normalized.includes("signal_take_profit_updates")
       ) {
         toast.error("Database migration not applied: signal_take_profit_updates table is missing.");
+      } else if (normalized.includes("no remaining open position")) {
+        toast.error("Cannot publish update: this signal has no remaining open position.");
       } else if (normalized.includes("row-level security") || normalized.includes("permission")) {
         toast.error("Permission denied to publish updates for this signal.");
       } else {
@@ -269,17 +321,38 @@ export const SignalTakeProfitUpdatesDialog = ({
 
         <div className="space-y-4">
           <div className="flex justify-end">
-            <Button type="button" variant="outline" onClick={addRow}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addRow}
+              disabled={isRemainingLoading || (typeof remainingExposure === "number" && remainingExposure <= 0)}
+            >
               <Plus className="w-4 h-4 mr-1" />
               Add TP
             </Button>
           </div>
 
+          {typeof remainingExposure === "number" && (
+            <div
+              className={cn(
+                "rounded-lg border px-3 py-2 text-sm",
+                remainingExposure > 0
+                  ? "border-success/30 bg-success/10 text-success"
+                  : "border-warning/30 bg-warning/10 text-warning"
+              )}
+            >
+              Remaining open exposure: <span className="font-semibold">${remainingExposure.toFixed(2)}</span>
+              {remainingExposure <= 0 && (
+                <span className="ml-2">No further TP updates can be published.</span>
+              )}
+            </div>
+          )}
+
           {existingUpdates.length > 0 && (
             <div className="rounded-xl border border-border/50 p-3">
               <p className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">Published Updates</p>
               <div className="space-y-2 max-h-40 overflow-y-auto">
-                {existingUpdates.map((u) => (
+                {publishedRows.map((u) => (
                   <div key={u.id} className="flex flex-wrap items-center gap-2 text-sm rounded-lg bg-secondary/30 px-3 py-2">
                     <Badge variant="outline">{u.tp_label}</Badge>
                     <span className="font-mono">Price: {u.tp_price}</span>
@@ -296,6 +369,9 @@ export const SignalTakeProfitUpdatesDialog = ({
                     ) : (
                       <span className="font-medium text-muted-foreground">Profit: --</span>
                     )}
+                    <span className="font-medium text-muted-foreground">
+                      Remaining: {u.remainingAfterPercent.toFixed(2)}%
+                    </span>
                     {u.note && <span className="text-muted-foreground">- {u.note}</span>}
                   </div>
                 ))}
@@ -357,7 +433,14 @@ export const SignalTakeProfitUpdatesDialog = ({
             <div className="text-sm text-muted-foreground">
               Planned close: <span className="font-semibold text-foreground">{totalPlannedClosePercent.toFixed(2)}%</span>
             </div>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
+            <Button
+              onClick={handleSubmit}
+              disabled={
+                isSubmitting ||
+                isRemainingLoading ||
+                (typeof remainingExposure === "number" && remainingExposure <= 0)
+              }
+            >
               {isSubmitting ? "Publishing..." : "Publish Updates"}
             </Button>
           </div>

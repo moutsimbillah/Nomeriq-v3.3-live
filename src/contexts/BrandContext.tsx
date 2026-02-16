@@ -16,6 +16,7 @@ const defaultSettings: GlobalSettings = {
   brand_name: 'nomeriq',
   logo_url: null,
   logo_url_dark: null,
+  favicon_url: null,
   support_email: 'support@nomeriq.com',
   support_phone: null,
   timezone: 'UTC',
@@ -148,6 +149,20 @@ export const BrandProvider = ({ children }: { children: ReactNode }) => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const faviconUrl = settings?.favicon_url?.trim();
+    if (!faviconUrl || typeof document === 'undefined') return;
+
+    let icon = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
+    if (!icon) {
+      icon = document.createElement('link');
+      icon.rel = 'icon';
+      document.head.appendChild(icon);
+    }
+
+    icon.href = faviconUrl;
+  }, [settings?.favicon_url]);
 
   return (
     <BrandContext.Provider value={{ settings, isLoading, refreshSettings }}>
