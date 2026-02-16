@@ -336,29 +336,20 @@ const AdminSettings = () => {
               </CardContent>
             </Card>
 
-            {/* Quick Actions */}
-            <Card className="border-border/50">
-              <div className="p-4 border-b border-border/50">
-                <h2 className="text-lg font-semibold">Quick Actions</h2>
-              </div>
-              <CardContent className="p-6 space-y-3">
-                <Button
-                  onClick={handleSave}
-                  className="w-full bg-primary hover:bg-primary/90"
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4 mr-2" />
-                  )}
-                  {isSaving ? "Saving..." : "Save All Settings"}
-                </Button>
-                <div className="text-xs text-muted-foreground text-center">
-                  Changes will be applied immediately
-                </div>
-              </CardContent>
-            </Card>
+            <div className="flex justify-end">
+              <Button
+                onClick={handleSave}
+                className="w-[16%] bg-primary hover:bg-primary/90"
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4 mr-2" />
+                )}
+                {isSaving ? "Saving..." : "Save All Settings"}
+              </Button>
+            </div>
         </div>
       </div>
     </AdminLayout>

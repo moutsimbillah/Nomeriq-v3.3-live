@@ -280,7 +280,9 @@ export const usePayments = (options: UsePaymentsOptions = {}) => {
         if (payment.package.duration_type === 'lifetime') {
           expiresAt = null;
         } else {
-          const months = payment.package.duration_months || 1;
+          const months =
+            payment.package.duration_months ||
+            (payment.package.duration_type === 'yearly' ? 12 : 1);
           const expiry = new Date(now);
           expiry.setMonth(expiry.getMonth() + months);
           expiresAt = expiry.toISOString();

@@ -40,6 +40,60 @@ export interface TelegramTradeClosedPayload {
   status: "tp_hit" | "sl_hit" | "breakeven";
 }
 
+export type TelegramDeliveryResult =
+  | {
+      ok: true;
+      status: "sent";
+      attemptedCount: number;
+      deliveredCount: number;
+    }
+  | {
+      ok: true;
+      status: "skipped";
+      reason: "not_configured" | "no_matching_category";
+      message: string;
+    }
+  | {
+      ok: false;
+      status: "failed";
+      error: string;
+      attemptedCount: number;
+      deliveredCount: number;
+      failedCount: number;
+    };
+
+export function getTelegramDeliveryFeedback(
+  result: TelegramDeliveryResult,
+  targetLabel = "Telegram notification"
+): { level: "success" | "warning" | "error"; message: string } {
+  if (result.ok && result.status === "sent") {
+    const destinationLabel = result.deliveredCount === 1 ? "destination" : "destinations";
+    return {
+      level: "success",
+      message: `${targetLabel} sent successfully to ${result.deliveredCount} ${destinationLabel}.`,
+    };
+  }
+
+  if (result.ok && result.status === "skipped") {
+    return {
+      level: "warning",
+      message: `${targetLabel} not sent: ${result.message}`,
+    };
+  }
+
+  if (result.deliveredCount > 0) {
+    return {
+      level: "warning",
+      message: `${targetLabel} partially sent (${result.deliveredCount}/${result.attemptedCount}). ${result.error}`,
+    };
+  }
+
+  return {
+    level: "error",
+    message: `${targetLabel} failed: ${result.error}`,
+  };
+}
+
 const DEFAULT_FOOTER = "Trade responsibly!";
 
 const formatDirection = (direction: string) => {
@@ -101,7 +155,7 @@ async function sendTelegramMessageToCategory(
   category: string,
   message: string,
   options?: { overrideHeader?: boolean }
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<TelegramDeliveryResult> {
   try {
     const { data, error: integrationsError } = await supabase
       .from("telegram_integrations")
@@ -109,10 +163,26 @@ async function sendTelegramMessageToCategory(
       .eq("is_enabled", true);
 
     if (integrationsError) {
-      return { ok: false, error: "Failed to fetch Telegram integrations" };
+      return {
+        ok: false,
+        status: "failed",
+        error: "Failed to fetch Telegram integrations",
+        attemptedCount: 0,
+        deliveredCount: 0,
+        failedCount: 0,
+      };
     }
 
     const allIntegrations = (data || []) as TelegramIntegration[];
+    if (allIntegrations.length === 0) {
+      return {
+        ok: true,
+        status: "skipped",
+        reason: "not_configured",
+        message: "No enabled Telegram integration is configured.",
+      };
+    }
+
     const matchingIntegrations = allIntegrations.filter((integration) => {
       const cats = integration.categories ?? [];
       if (cats.length === 0) return true;
@@ -120,7 +190,12 @@ async function sendTelegramMessageToCategory(
     });
 
     if (matchingIntegrations.length === 0) {
-      return { ok: true };
+      return {
+        ok: true,
+        status: "skipped",
+        reason: "no_matching_category",
+        message: `No enabled Telegram integration is linked to category "${category}".`,
+      };
     }
 
     const results = await Promise.all(
@@ -132,51 +207,92 @@ async function sendTelegramMessageToCategory(
           options
         );
 
-        const response = await fetch(telegramApiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: integration.chat_id,
-            text: finalMessage,
-            parse_mode: "Markdown",
-          }),
-        });
+        try {
+          const response = await fetch(telegramApiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: integration.chat_id,
+              text: finalMessage,
+              parse_mode: "Markdown",
+            }),
+          });
 
-        const result = await response.json();
+          let result: Record<string, unknown> | null = null;
+          try {
+            result = (await response.json()) as Record<string, unknown>;
+          } catch {
+            // Telegram may return non-JSON payload for upstream/proxy failures.
+          }
 
-        if (!response.ok) {
+          if (!response.ok) {
+            return {
+              ok: false as const,
+              integrationName: integration.name || integration.chat_id || "Unnamed integration",
+              error:
+                (result?.description as string | undefined) ||
+                `Telegram HTTP ${response.status}`,
+            };
+          }
+
+          return { ok: true as const };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Connection failed";
           return {
             ok: false as const,
-            error: result.description || "Failed to send to Telegram",
+            integrationName: integration.name || integration.chat_id || "Unnamed integration",
+            error: message,
           };
         }
-
-        return { ok: true as const };
       })
     );
 
+    const attemptedCount = matchingIntegrations.length;
+    const deliveredCount = results.filter((r) => r.ok).length;
     const failed = results.filter((r) => !r.ok) as {
       ok: false;
+      integrationName: string;
       error: string;
     }[];
+
     if (failed.length > 0) {
+      const summary = failed
+        .slice(0, 3)
+        .map((f) => `${f.integrationName}: ${f.error}`)
+        .join("; ");
       return {
         ok: false,
-        error: failed.map((f) => f.error).join("; "),
+        status: "failed",
+        error: summary || "Failed to send Telegram message.",
+        attemptedCount,
+        deliveredCount,
+        failedCount: failed.length,
       };
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      status: "sent",
+      attemptedCount,
+      deliveredCount,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
-    return { ok: false, error: msg };
+    return {
+      ok: false,
+      status: "failed",
+      error: msg,
+      attemptedCount: 0,
+      deliveredCount: 0,
+      failedCount: 0,
+    };
   }
 }
 
 export async function sendTelegramSignal(params: {
   signal: TelegramSignalPayload;
   action: TelegramSignalAction;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<TelegramDeliveryResult> {
   const message = formatSignalMessage(params.signal, params.action);
   return sendTelegramMessageToCategory(params.signal.category, message, {
     overrideHeader: true,
@@ -185,7 +301,7 @@ export async function sendTelegramSignal(params: {
 
 export async function sendTelegramTradeUpdate(params: {
   signal: TelegramTradeUpdatePayload;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<TelegramDeliveryResult> {
   const { signal } = params;
   const noteLine = signal.note ? `\nNote: ${signal.note}` : "";
   const coreLines = buildCoreTradeLines({
@@ -209,7 +325,7 @@ export async function sendTelegramTradeUpdate(params: {
 
 export async function sendTelegramTradeClosed(params: {
   signal: TelegramTradeClosedPayload;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<TelegramDeliveryResult> {
   const { signal } = params;
   const coreLines = buildCoreTradeLines({
     category: signal.category,

@@ -43,7 +43,7 @@ const Login = () => {
       const userMetadata = data.user?.user_metadata;
       const isCustomVerified = userMetadata?.custom_email_verified === true;
       if (data.user && !isCustomVerified) {
-        // User is not verified, sign them out and redirect to landing page
+        // User is not verified, sign them out and route to verification screen
         await supabase.auth.signOut();
 
         // Send a new verification code
@@ -66,8 +66,10 @@ const Login = () => {
           });
         }
 
-        // Redirect to landing page
-        navigate("/");
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("pending_verification_email", email);
+        }
+        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
         setIsLoading(false);
         return;
       }

@@ -35,6 +35,7 @@ interface Trade {
   result: string | null;
   risk_amount: number;
   initial_risk_amount?: number;
+  remaining_risk_amount?: number;
   closed_at: string | null;
   created_at: string;
   signal: {
@@ -637,7 +638,8 @@ export const DayDetailModal = ({
                               ? { ...trade.signal, take_profit: currentTp }
                               : trade.signal,
                           });
-                          let remainingPercent = 100;
+                          const baseRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+                          let runningRemainingRisk = Math.max(0, baseRisk);
 
                           return (
                             <Fragment key={trade.id}>
@@ -762,29 +764,67 @@ export const DayDetailModal = ({
                                           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Closed</p>
                                           <p className="font-semibold">{trade.closed_at ? format(new Date(trade.closed_at), "yyyy-MM-dd HH:mm") : "-"}</p>
                                         </div>
+                                        <div className="rounded-lg border border-border/30 p-3">
+                                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Remaining Position</p>
+                                          <p className="font-semibold font-mono">
+                                            {(() => {
+                                              const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+                                              const remainingRisk = Math.max(
+                                                0,
+                                                Number(
+                                                  trade.remaining_risk_amount ??
+                                                    (trade.result === "pending" ? initialRisk : 0)
+                                                )
+                                              );
+                                              const remainingPercent = initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : 0;
+                                              return `${remainingPercent.toFixed(2)}% ($${remainingRisk.toFixed(2)})`;
+                                            })()}
+                                          </p>
+                                        </div>
                                       </div>
 
                                       <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
                                         <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">TP Updates</p>
+                                        <p className="text-xs text-muted-foreground mb-2">
+                                          Remaining Position:{" "}
+                                          {(() => {
+                                            const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+                                            const remainingRisk = Math.max(
+                                              0,
+                                              Number(
+                                                trade.remaining_risk_amount ??
+                                                  (trade.result === "pending" ? initialRisk : 0)
+                                              )
+                                            );
+                                            const remainingPercent = initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : 0;
+                                            return `${remainingPercent.toFixed(2)}% ($${remainingRisk.toFixed(2)})`;
+                                          })()}
+                                        </p>
                                         {updates.length === 0 ? (
                                           <p className="text-sm text-muted-foreground">No TP updates published.</p>
                                         ) : (
                                           <div className="space-y-2">
                                             {updates.map((u) => {
-                                              const closePercent = Math.max(0, Math.min(remainingPercent, Number(u.close_percent || 0)));
-                                              remainingPercent = Math.max(0, remainingPercent - closePercent);
+                                              const closePercent = Math.max(0, Math.min(100, Number(u.close_percent || 0)));
+                                              const reducedRisk = runningRemainingRisk * (closePercent / 100);
+                                              let remainingAfterRisk = Math.max(0, runningRemainingRisk - reducedRisk);
+                                              if (closePercent >= 100) {
+                                                remainingAfterRisk = 0;
+                                              }
                                               const updateRr = calculateSignalRrForTarget(
                                                 trade.signal,
                                                 Number(u.tp_price)
                                               );
-                                              const baseRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-                                              const realizedProfit = baseRisk * (closePercent / 100) * updateRr;
+                                              const realizedProfit = reducedRisk * updateRr;
+                                              const remainingAfterPercent = baseRisk > 0 ? (remainingAfterRisk / baseRisk) * 100 : 0;
+                                              runningRemainingRisk = remainingAfterRisk;
                                               return (
                                                 <div key={u.id} className="rounded-md bg-secondary/30 px-3 py-2 text-sm flex flex-wrap items-center gap-2 break-words">
                                                   <span className="px-2 py-0.5 rounded-full border border-border/50 text-xs">{u.tp_label}</span>
                                                   <span className="font-mono">Price: {u.tp_price}</span>
                                                   <span className="text-primary">Close: {closePercent.toFixed(2)}%</span>
                                                   <span className="text-success font-semibold">Profit: +${realizedProfit.toFixed(2)}</span>
+                                                  <span className="text-muted-foreground">Remaining: {remainingAfterPercent.toFixed(2)}%</span>
                                                   {u.note && <span className="text-muted-foreground">- {u.note}</span>}
                                                 </div>
                                               );

@@ -14,6 +14,33 @@ export interface SubscriptionPackageWithFeatures extends SubscriptionPackage {
   features: SubscriptionPackageFeature[];
 }
 
+const toFiniteNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const comparePackagesLowToHigh = (
+  a: SubscriptionPackageWithFeatures,
+  b: SubscriptionPackageWithFeatures
+): number => {
+  const priceDiff =
+    toFiniteNumber(a.price, Number.MAX_SAFE_INTEGER) -
+    toFiniteNumber(b.price, Number.MAX_SAFE_INTEGER);
+  if (priceDiff !== 0) return priceDiff;
+
+  const durationDiff =
+    toFiniteNumber((a as { duration_months?: unknown }).duration_months, Number.MAX_SAFE_INTEGER) -
+    toFiniteNumber((b as { duration_months?: unknown }).duration_months, Number.MAX_SAFE_INTEGER);
+  if (durationDiff !== 0) return durationDiff;
+
+  const sortOrderDiff =
+    toFiniteNumber(a.sort_order, Number.MAX_SAFE_INTEGER) -
+    toFiniteNumber(b.sort_order, Number.MAX_SAFE_INTEGER);
+  if (sortOrderDiff !== 0) return sortOrderDiff;
+
+  return String(a.name ?? '').localeCompare(String(b.name ?? ''));
+};
+
 interface UseSubscriptionPackagesOptions {
   /** When 'all', returns every package (for admin). Default 'active' for user-facing lists. */
   statusFilter?: 'active' | 'all';
@@ -84,7 +111,7 @@ export const useSubscriptionPackages = (
         }
       }
 
-      setPackages(withFeatures);
+      setPackages([...withFeatures].sort(comparePackagesLowToHigh));
     } catch (err) {
       console.error('Error fetching subscription packages:', err);
       setError(err as Error);
@@ -308,11 +335,21 @@ export const useUserSubscriptions = (): UseUserSubscriptionsResult => {
   }, [fetchSubscriptions]);
 
   const now = new Date();
-  const activeSubscriptions = subscriptions.filter((sub) => {
-    if (sub.status !== 'active') return false;
-    if (!sub.expires_at) return true;
-    return new Date(sub.expires_at) > now;
-  });
+  const activeSubscriptions = subscriptions
+    .filter((sub) => {
+      if (sub.status !== 'active') return false;
+      if (!sub.expires_at) return true;
+      return new Date(sub.expires_at) > now;
+    })
+    .sort((a, b) => {
+      const aExp = a.expires_at
+        ? new Date(a.expires_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      const bExp = b.expires_at
+        ? new Date(b.expires_at).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      return bExp - aExp;
+    });
 
   return {
     subscriptions,

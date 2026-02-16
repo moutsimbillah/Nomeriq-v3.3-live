@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, Loader2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Signal } from "@/types/database";
 import { DateRange } from "react-day-picker";
@@ -304,10 +305,29 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
                     {trade.notes || "—"}
                   </p>
                 </div>
+              
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!hasAnalysis}
+                    className={cn(
+                      "border-primary/30 text-primary",
+                      hasAnalysis ? "hover:bg-primary/10" : "opacity-50 cursor-not-allowed"
+                    )}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hasAnalysis) openAnalysis(trade);
+                    }}
+                  >
+                    <FileText className="w-4 h-4 mr-1" />
+                    View
+                  </Button>
+                </div>
               </div>
 
               {/* Desktop Layout (lg+) */}
-              <div className="hidden lg:grid lg:grid-cols-[auto_1fr_auto_auto_1fr] items-center gap-4">
+              <div className="hidden lg:grid lg:grid-cols-[auto_1fr_auto_auto_1fr_auto] items-center gap-4">
                 {/* Direction Icon */}
                 <div className={cn("p-2.5 rounded-xl shrink-0", trade.direction === "BUY" ? "bg-success/20" : "bg-destructive/20")}>
                   {trade.direction === "BUY" ? <ArrowUpRight className="w-5 h-5 text-success" /> : <ArrowDownRight className="w-5 h-5 text-destructive" />}
@@ -351,6 +371,29 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
                 <p className="text-sm text-muted-foreground truncate text-left font-sans">
                   {trade.notes || "—"}
                 </p>
+
+                {/* Analysis */}
+                <div className="py-2 px-2 rounded-lg bg-secondary/20 text-center w-full">
+                  <p className="text-muted-foreground mb-1 text-xs">Analysis</p>
+                  <div className="flex justify-center">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!hasAnalysis}
+                      className={cn(
+                        "border-primary/30 text-primary",
+                        hasAnalysis ? "hover:bg-primary/10" : "opacity-50 cursor-not-allowed"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (hasAnalysis) openAnalysis(trade);
+                      }}
+                    >
+                      <FileText className="w-4 h-4 mr-1" />
+                      View
+                    </Button>
+                  </div>
+                </div>
               </div>
             </div>
           })}
@@ -366,3 +409,4 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
       </div>
     </div>;
 };
+

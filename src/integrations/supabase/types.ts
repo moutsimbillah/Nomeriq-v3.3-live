@@ -143,6 +143,30 @@ export type Database = {
         }
         Relationships: []
       }
+      email_provider_settings: {
+        Row: {
+          created_at: string
+          id: string
+          provider: string
+          resend_api_key: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          provider: string
+          resend_api_key?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          provider?: string
+          resend_api_key?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       email_template_settings: {
         Row: {
           id: string
@@ -202,6 +226,7 @@ export type Database = {
           brand_name: string
           copyright_name: string | null
           disclaimer_text: string | null
+          favicon_url: string | null
           global_risk_percent: number
           id: string
           logo_url: string | null
@@ -222,6 +247,7 @@ export type Database = {
           brand_name?: string
           copyright_name?: string | null
           disclaimer_text?: string | null
+          favicon_url?: string | null
           global_risk_percent?: number
           id?: string
           logo_url?: string | null
@@ -242,6 +268,7 @@ export type Database = {
           brand_name?: string
           copyright_name?: string | null
           disclaimer_text?: string | null
+          favicon_url?: string | null
           global_risk_percent?: number
           id?: string
           logo_url?: string | null

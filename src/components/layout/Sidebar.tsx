@@ -62,6 +62,19 @@ export const SidebarContent = () => {
     return baseNavItems;
   }, [isSignalProvider]);
 
+  const preferredActiveSubscription = useMemo(() => {
+    if (activeSubscriptions.length === 0) return null;
+
+    if (subscription?.package_id) {
+      const matched = activeSubscriptions.find(
+        (sub) => sub.package_id === subscription.package_id
+      );
+      if (matched) return matched;
+    }
+
+    return activeSubscriptions[0] ?? null;
+  }, [activeSubscriptions, subscription?.package_id]);
+
   // Subscription label and days text from real data: use active subscription's package name and duration
   const subscriptionInfo = useMemo(() => {
     if (!subscription) {
@@ -82,16 +95,24 @@ export const SidebarContent = () => {
         daysText: "Subscription expired",
       };
     }
-    const activeSub = activeSubscriptions[0];
+    const activeSub = preferredActiveSubscription;
     const pkg = activeSub?.package;
     const packageName = pkg?.name ?? null;
     const isLifetime = pkg?.duration_type === "lifetime";
+    const durationLabel =
+      pkg?.duration_type === "yearly"
+        ? " (Yearly)"
+        : pkg?.duration_type === "monthly"
+        ? " (Monthly)"
+        : pkg?.duration_type === "lifetime"
+        ? " (Lifetime)"
+        : "";
 
     if (expiresAt) {
       const daysRemaining = differenceInDays(expiresAt, new Date());
       return {
         status: "active",
-        statusText: packageName ? `Active ${packageName}` : "Active",
+        statusText: packageName ? `Active ${packageName}${durationLabel}` : "Active",
         daysText:
           daysRemaining > 0
             ? `Expires in ${daysRemaining} days`
@@ -100,10 +121,10 @@ export const SidebarContent = () => {
     }
     return {
       status: "active",
-      statusText: packageName ? `Active ${packageName}` : "Active",
+      statusText: packageName ? `Active ${packageName}${durationLabel}` : "Active",
       daysText: isLifetime ? "Lifetime access" : "Active",
     };
-  }, [subscription, hasActiveSubscription, activeSubscriptions]);
+  }, [subscription, hasActiveSubscription, preferredActiveSubscription]);
 
   const handleSignOut = async () => {
     await signOut();

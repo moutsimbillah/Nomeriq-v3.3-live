@@ -25,6 +25,27 @@ function getPackageTierScore(pkg: { duration_type: string; price: number }): num
   return w * 1e9 + Number(pkg.price);
 }
 
+function formatPackageDurationLabel(pkg?: { duration_type?: string | null; duration_months?: number | null } | null): string {
+  if (!pkg) return "-";
+  if (pkg.duration_type === "lifetime") return "Lifetime";
+
+  const months = Number(pkg.duration_months ?? 0);
+  if (Number.isFinite(months) && months > 0) {
+    return `${months} Month${months === 1 ? "" : "s"}`;
+  }
+
+  if (pkg.duration_type === "monthly") return "Monthly";
+  if (pkg.duration_type === "yearly") return "Yearly";
+  return "-";
+}
+
+function formatPackagePlanTitle(pkg: { duration_type: string; duration_months: number }): string {
+  if (pkg.duration_type === "lifetime") return "Lifetime Plan";
+  const duration = formatPackageDurationLabel(pkg);
+  if (duration === "-") return "Plan";
+  return `${duration} Plan`;
+}
+
 const Subscription = () => {
   const {
     user,
@@ -258,16 +279,16 @@ const Subscription = () => {
                   : "max-h-[5000px] translate-y-0 opacity-100"
               )}
             >
-              <div className="flex items-center justify-between rounded-2xl border border-border/60 bg-background/70 px-5 py-4 mb-4">
-                <div>
+              <div className="rounded-2xl border border-border/60 bg-background/70 px-5 py-4 mb-4">
+                <div className="flex items-center gap-2">
                   <h2 className="text-base font-semibold tracking-tight">Choose Your Plan</h2>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Plans resize automatically as your admin adds or removes packages.
-                  </p>
+                  <Badge variant="outline" className="text-xs">
+                    {packages.length} plan{packages.length === 1 ? "" : "s"}
+                  </Badge>
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {packages.length} plan{packages.length === 1 ? "" : "s"}
-                </Badge>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Plans resize automatically as your admin adds or removes packages.
+                </p>
               </div>
 
               {isLoadingPackages ? (
@@ -279,7 +300,7 @@ const Subscription = () => {
                   <p>No subscription packages are available yet. Please contact support.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(290px,1fr))] gap-4 md:gap-5">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(290px,416px))] justify-start gap-4 md:gap-5">
                   {packages.map((pkg) => {
                     const isSubscribedToPackage = activePackageIds.has(pkg.id);
                     const hasPendingVerification = pendingPaymentPackageIds.has(pkg.id);
@@ -332,11 +353,7 @@ const Subscription = () => {
                           <div className="flex items-start justify-between gap-4">
                             <div className="self-end">
                               <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mb-1 whitespace-nowrap">
-                                {pkg.duration_type === "lifetime"
-                                  ? "Lifetime Plan"
-                                  : pkg.duration_type === "monthly"
-                                  ? "Monthly Plan"
-                                  : "Yearly Plan"}
+                                {formatPackagePlanTitle(pkg)}
                               </p>
                               <h3 className="text-xl font-semibold tracking-tight">{pkg.name}</h3>
                             </div>
@@ -358,11 +375,7 @@ const Subscription = () => {
 
                         <div className="mb-4 flex flex-wrap items-center gap-2">
                           <Badge variant="secondary" className="text-[11px] capitalize font-medium">
-                            {pkg.duration_type === "lifetime"
-                              ? "Lifetime"
-                              : pkg.duration_type === "monthly"
-                              ? "Monthly"
-                              : "Yearly"}
+                            {formatPackageDurationLabel(pkg)}
                           </Badge>
                           <Badge variant="outline" className="text-[11px]">
                             {pkg.features.length} feature{pkg.features.length === 1 ? "" : "s"}
@@ -459,7 +472,14 @@ const Subscription = () => {
               )}
             >
               {effectiveSelectedPackage && (
-                <div className="mx-auto w-full max-w-[1080px] rounded-2xl border border-border/60 bg-background/90 p-6 lg:p-8 shadow-none">
+                <div
+                  className={cn(
+                    "mx-auto w-full rounded-2xl border border-border/60 bg-background/90 p-6 lg:p-8 shadow-none",
+                    selectedPaymentMethod === "bank_transfer"
+                      ? "max-w-[1080px]"
+                      : "max-w-[736px]"
+                  )}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-4 mb-6 border-b border-border/50 pb-4">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 border border-primary/20">
@@ -641,13 +661,7 @@ const Subscription = () => {
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-sm capitalize">
-                              {payment.package?.duration_type === 'lifetime'
-                                ? 'Lifetime'
-                                : payment.package?.duration_type === 'monthly'
-                                ? 'Monthly'
-                                : payment.package?.duration_type === 'yearly'
-                                ? 'Yearly'
-                                : '—'}
+                              {formatPackageDurationLabel(payment.package)}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -762,13 +776,7 @@ const Subscription = () => {
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Duration</p>
                     <p className="text-sm font-semibold capitalize">
-                      {selectedPayment.package?.duration_type === 'lifetime'
-                        ? 'Lifetime'
-                        : selectedPayment.package?.duration_type === 'monthly'
-                        ? 'Monthly'
-                        : selectedPayment.package?.duration_type === 'yearly'
-                        ? 'Yearly'
-                        : '—'}
+                      {formatPackageDurationLabel(selectedPayment.package)}
                     </p>
                   </div>
                 </div>
@@ -928,3 +936,4 @@ const Subscription = () => {
 };
 
 export default Subscription;
+

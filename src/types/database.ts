@@ -211,6 +211,7 @@ export interface GlobalSettings {
   brand_name: string;
   logo_url: string | null;
   logo_url_dark: string | null;
+  favicon_url: string | null;
   support_email: string | null;
   support_phone: string | null;
   timezone: string;

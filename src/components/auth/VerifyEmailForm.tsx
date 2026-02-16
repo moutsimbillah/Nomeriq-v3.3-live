@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { CheckCircle, Mail, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuthModal } from "@/contexts/AuthModalContext";
+import { useOptionalAuthModal } from "@/contexts/AuthModalContext";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 
 interface VerifyEmailFormProps {
@@ -14,14 +14,23 @@ interface VerifyEmailFormProps {
 }
 
 export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }: VerifyEmailFormProps) => {
-    const [email, setEmail] = useState(initialEmail || "");
+    const storedEmail =
+        typeof window !== "undefined"
+            ? window.sessionStorage.getItem("pending_verification_email") || ""
+            : "";
+    const [email] = useState((initialEmail || storedEmail).trim().toLowerCase());
     const [code, setCode] = useState("");
     const [isVerifying, setIsVerifying] = useState(false);
     const [isResending, setIsResending] = useState(false);
     const [isVerified, setIsVerified] = useState(false);
     const navigate = useNavigate();
     const { toast } = useToast();
-    const { openModal } = useAuthModal();
+    const authModal = useOptionalAuthModal();
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !email) return;
+        window.sessionStorage.setItem("pending_verification_email", email);
+    }, [email]);
 
     // Auto-submit when 6 digits entered
     useEffect(() => {
@@ -39,6 +48,15 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
                     variant: "destructive",
                 });
             }
+            return;
+        }
+
+        if (!email) {
+            toast({
+                title: "Email Required",
+                description: "Please enter your email address first.",
+                variant: "destructive",
+            });
             return;
         }
 
@@ -75,6 +93,9 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
             }
 
             setIsVerified(true);
+            if (typeof window !== "undefined") {
+                window.sessionStorage.removeItem("pending_verification_email");
+            }
             toast({
                 title: "Email Verified!",
                 description: "Your email has been verified. You can now sign in.",
@@ -82,7 +103,11 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
 
             setTimeout(() => {
                 if (onClose) onClose();
-                openModal("login");
+                if (authModal) {
+                    authModal.openModal("login");
+                    return;
+                }
+                navigate("/login");
             }, 2000);
         } catch (err) {
             console.error("Verification error:", err);
@@ -234,7 +259,11 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
             {/* Back to Login */}
             <div className="mt-4">
                 <button
-                    onClick={onBackToLogin ? onBackToLogin : () => openModal("login")}
+                    onClick={
+                        onBackToLogin
+                            ? onBackToLogin
+                            : () => (authModal ? authModal.openModal("login") : navigate("/login"))
+                    }
                     className="text-sm text-primary hover:text-primary/80 font-medium transition-colors"
                 >
                     Back to Sign In

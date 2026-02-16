@@ -50,15 +50,22 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
   const updates = signal?.id ? (updatesBySignal[signal.id] || []) : [];
   const tpRows = useMemo(() => {
     const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-    let remainingPercent = 100;
+    let runningRemainingRisk = Math.max(0, initialRisk);
     return updates.map((u) => {
-      const closePercent = Math.max(0, Math.min(remainingPercent, Number(u.close_percent ?? 0)));
-      remainingPercent = Math.max(0, remainingPercent - closePercent);
+      const closePercent = Math.max(0, Math.min(100, Number(u.close_percent ?? 0)));
+      const reducedRisk = runningRemainingRisk * (closePercent / 100);
+      let remainingAfterRisk = Math.max(0, runningRemainingRisk - reducedRisk);
+      if (closePercent >= 100) {
+        remainingAfterRisk = 0;
+      }
       const rrAtTp = calculateSignalRrForTarget(signal, Number(u.tp_price));
-      const realizedProfit = initialRisk * (closePercent / 100) * rrAtTp;
+      const realizedProfit = reducedRisk * rrAtTp;
+      const remainingAfterPercent = initialRisk > 0 ? (remainingAfterRisk / initialRisk) * 100 : 0;
+      runningRemainingRisk = remainingAfterRisk;
       return {
         ...u,
         closePercent,
+        remainingAfterPercent,
         rrAtTp,
         realizedProfit,
       };
@@ -84,6 +91,15 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     ...trade,
     signal: signal ? { ...signal, take_profit: currentTargetTp } : signal,
   });
+  const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+  const remainingRisk = Math.max(
+    0,
+    Number(
+      trade.remaining_risk_amount ??
+        (trade.result === "pending" ? initialRisk : 0)
+    )
+  );
+  const remainingPercent = initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : 0;
   const duration = getDuration(trade.created_at, trade.closed_at);
   const hasAnalysis = Boolean(signal?.analysis_notes || signal?.analysis_video_url || signal?.analysis_image_url);
   const videoId = signal?.analysis_video_url ? extractYouTubeId(signal.analysis_video_url) : null;
@@ -151,6 +167,12 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
                 <p className="font-semibold">${(trade.risk_amount || 0).toFixed(2)}</p>
               </div>
               <div className="rounded-lg border border-border/50 p-3">
+                <p className="text-xs text-muted-foreground">Remaining Position</p>
+                <p className="font-semibold">
+                  {remainingPercent.toFixed(2)}% (${remainingRisk.toFixed(2)})
+                </p>
+              </div>
+              <div className="rounded-lg border border-border/50 p-3">
                 <p className="text-xs text-muted-foreground">R:R</p>
                 <p className="font-semibold">1:{rr.toFixed(1)}</p>
               </div>
@@ -193,6 +215,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
                       <span className="font-mono">Price: {u.tp_price}</span>
                       <span className="text-primary">Close: {u.closePercent.toFixed(2)}%</span>
                       <span className="text-success font-semibold">Profit: +${u.realizedProfit.toFixed(2)}</span>
+                      <span className="text-muted-foreground">Remaining: {u.remainingAfterPercent.toFixed(2)}%</span>
                       {u.note && <span className="text-muted-foreground">- {u.note}</span>}
                     </div>
                   ))}

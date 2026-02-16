@@ -20,7 +20,8 @@ import {
   Upload,
   Trash2,
   Sun,
-  Moon
+  Moon,
+  AppWindow
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useBrand } from "@/contexts/BrandContext";
@@ -32,12 +33,15 @@ const AdminBranding = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingLight, setIsUploadingLight] = useState(false);
   const [isUploadingDark, setIsUploadingDark] = useState(false);
+  const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
   const lightFileInputRef = useRef<HTMLInputElement>(null);
   const darkFileInputRef = useRef<HTMLInputElement>(null);
+  const faviconFileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUrlDark, setLogoUrlDark] = useState("");
+  const [faviconUrl, setFaviconUrl] = useState("");
   const [supportEmail, setSupportEmail] = useState("");
   const [copyrightName, setCopyrightName] = useState("");
   const [disclaimerText, setDisclaimerText] = useState("");
@@ -52,6 +56,7 @@ const AdminBranding = () => {
     if (settings) {
       setLogoUrl(settings.logo_url || "");
       setLogoUrlDark(settings.logo_url_dark || "");
+      setFaviconUrl(settings.favicon_url || "");
       setSupportEmail(settings.support_email || "");
       setCopyrightName(settings.copyright_name || settings.brand_name || "");
       setDisclaimerText(settings.disclaimer_text || "");
@@ -65,15 +70,15 @@ const AdminBranding = () => {
 
   const handleLogoUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    type: 'light' | 'dark'
+    type: 'light' | 'dark' | 'favicon'
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     // Validate file type - SVG excluded to prevent XSS attacks
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/x-icon', 'image/vnd.microsoft.icon'];
     if (!validTypes.includes(file.type)) {
-      toast.error("Invalid file type. Please upload JPG, PNG, WebP or GIF.");
+      toast.error("Invalid file type. Please upload JPG, PNG, WebP, GIF or ICO.");
       return;
     }
 
@@ -83,15 +88,29 @@ const AdminBranding = () => {
       return;
     }
 
-    const setIsUploading = type === 'light' ? setIsUploadingLight : setIsUploadingDark;
-    const currentUrl = type === 'light' ? logoUrl : logoUrlDark;
-    const setUrl = type === 'light' ? setLogoUrl : setLogoUrlDark;
+    const setIsUploading =
+      type === 'light'
+        ? setIsUploadingLight
+        : type === 'dark'
+          ? setIsUploadingDark
+          : setIsUploadingFavicon;
+    const currentUrl =
+      type === 'light' ? logoUrl : type === 'dark' ? logoUrlDark : faviconUrl;
+    const setUrl =
+      type === 'light'
+        ? setLogoUrl
+        : type === 'dark'
+          ? setLogoUrlDark
+          : setFaviconUrl;
 
     setIsUploading(true);
     try {
       // Generate unique filename
       const fileExt = file.name.split('.').pop();
-      const fileName = `logo-${type}-${Date.now()}.${fileExt}`;
+      const fileName =
+        type === 'favicon'
+          ? `favicon-${Date.now()}.${fileExt}`
+          : `logo-${type}-${Date.now()}.${fileExt}`;
 
       // Delete old logo if exists
       if (currentUrl) {
@@ -114,22 +133,35 @@ const AdminBranding = () => {
         .getPublicUrl(fileName);
 
       setUrl(publicUrl);
-      toast.success(`${type === 'light' ? 'Light' : 'Dark'} mode logo uploaded!`);
+      const label =
+        type === 'light' ? 'Light mode logo' : type === 'dark' ? 'Dark mode logo' : 'Favicon';
+      toast.success(`${label} uploaded!`);
     } catch (err) {
       console.error('Error uploading logo:', err);
       toast.error("Failed to upload logo");
     } finally {
       setIsUploading(false);
-      const ref = type === 'light' ? lightFileInputRef : darkFileInputRef;
+      const ref =
+        type === 'light'
+          ? lightFileInputRef
+          : type === 'dark'
+            ? darkFileInputRef
+            : faviconFileInputRef;
       if (ref.current) {
         ref.current.value = '';
       }
     }
   };
 
-  const handleRemoveLogo = async (type: 'light' | 'dark') => {
-    const currentUrl = type === 'light' ? logoUrl : logoUrlDark;
-    const setUrl = type === 'light' ? setLogoUrl : setLogoUrlDark;
+  const handleRemoveLogo = async (type: 'light' | 'dark' | 'favicon') => {
+    const currentUrl =
+      type === 'light' ? logoUrl : type === 'dark' ? logoUrlDark : faviconUrl;
+    const setUrl =
+      type === 'light'
+        ? setLogoUrl
+        : type === 'dark'
+          ? setLogoUrlDark
+          : setFaviconUrl;
 
     if (!currentUrl) return;
 
@@ -139,7 +171,9 @@ const AdminBranding = () => {
         await supabase.storage.from('brand-assets').remove([oldPath]);
       }
       setUrl("");
-      toast.success(`${type === 'light' ? 'Light' : 'Dark'} mode logo removed`);
+      const label =
+        type === 'light' ? 'Light mode logo' : type === 'dark' ? 'Dark mode logo' : 'Favicon';
+      toast.success(`${label} removed`);
     } catch (err) {
       console.error('Error removing logo:', err);
       toast.error("Failed to remove logo");
@@ -154,27 +188,53 @@ const AdminBranding = () => {
 
     setIsSaving(true);
     try {
+      let savedWithoutFavicon = false;
+      const payload = {
+        logo_url: logoUrl || null,
+        logo_url_dark: logoUrlDark || null,
+        favicon_url: faviconUrl || null,
+        support_email: supportEmail.trim() || null,
+        copyright_name: copyrightName.trim() || settings.brand_name,
+        disclaimer_text: disclaimerText.trim() || null,
+        social_facebook: socialFacebook.trim() || null,
+        social_twitter: socialTwitter.trim() || null,
+        social_instagram: socialInstagram.trim() || null,
+        social_telegram: socialTelegram.trim() || null,
+        social_discord: socialDiscord.trim() || null,
+        updated_at: new Date().toISOString()
+      };
+
       const { error } = await supabase
         .from('global_settings')
-        .update({
-          logo_url: logoUrl || null,
-          logo_url_dark: logoUrlDark || null,
-          support_email: supportEmail.trim() || null,
-          copyright_name: copyrightName.trim() || settings.brand_name,
-          disclaimer_text: disclaimerText.trim() || null,
-          social_facebook: socialFacebook.trim() || null,
-          social_twitter: socialTwitter.trim() || null,
-          social_instagram: socialInstagram.trim() || null,
-          social_telegram: socialTelegram.trim() || null,
-          social_discord: socialDiscord.trim() || null,
-          updated_at: new Date().toISOString()
-        })
+        .update(payload)
         .eq('id', settings.id);
 
-      if (error) throw error;
+      if (error) {
+        const message = String((error as { message?: unknown }).message || '');
+        const isMissingFaviconColumn =
+          /favicon_url/i.test(message) &&
+          /(column|does not exist|schema cache)/i.test(message);
+
+        if (!isMissingFaviconColumn) {
+          throw error;
+        }
+
+        const { favicon_url: _ignored, ...legacyPayload } = payload;
+        const { error: fallbackError } = await supabase
+          .from('global_settings')
+          .update(legacyPayload)
+          .eq('id', settings.id);
+
+        if (fallbackError) throw fallbackError;
+        savedWithoutFavicon = true;
+      }
 
       await refreshSettings();
-      toast.success("Branding settings saved successfully!");
+      toast.success(
+        savedWithoutFavicon
+          ? "Branding saved. Run latest DB migration to enable favicon."
+          : "Branding settings saved successfully!"
+      );
     } catch (err) {
       console.error('Error saving branding:', err);
       toast.error(getSafeErrorMessage(err, "Failed to save branding settings"));
@@ -191,7 +251,7 @@ const AdminBranding = () => {
     isUploading,
     fileInputRef
   }: {
-    type: 'light' | 'dark';
+    type: 'light' | 'dark' | 'favicon';
     label: string;
     icon: typeof Sun;
     logoUrl: string;
@@ -204,7 +264,32 @@ const AdminBranding = () => {
         {label}
       </Label>
       <div className="flex items-center gap-3">
-        {url ? (
+        {type === "favicon" ? (
+          url ? (
+            <div className="relative group">
+              <div className="h-12 w-12 rounded-lg border border-border/50 bg-muted/20 flex items-center justify-center overflow-hidden">
+                <img
+                  src={url}
+                  alt={`${label} preview`}
+                  className="h-8 w-8 object-contain"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = '/placeholder.svg';
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => handleRemoveLogo(type)}
+                className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Trash2 className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          ) : (
+            <div className="h-12 w-12 rounded-lg border border-dashed border-border flex items-center justify-center bg-muted/30">
+              <AppWindow className="w-5 h-5 text-muted-foreground" />
+            </div>
+          )
+        ) : url ? (
           <div className="relative group">
             <div className={`h-12 min-w-[80px] max-w-[140px] rounded-lg border border-border/50 flex items-center justify-center overflow-hidden px-2 ${type === 'dark' ? 'bg-zinc-900' : 'bg-white'}`}>
               <img
@@ -233,7 +318,7 @@ const AdminBranding = () => {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept="image/jpeg,image/png,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon"
             onChange={(e) => handleLogoUpload(e, type)}
             className="hidden"
           />
@@ -268,12 +353,12 @@ const AdminBranding = () => {
             <div>
               <h3 className="text-sm font-semibold">Logo</h3>
               <p className="text-[10px] text-muted-foreground">
-                Upload logos for light and dark themes (recommended: horizontal, max height 40px)
+                Upload logos for light/dark themes and favicon (recommended: horizontal logos, max height 40px)
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <LogoUploadCard
               type="light"
               label="Light Mode Logo"
@@ -290,9 +375,17 @@ const AdminBranding = () => {
               isUploading={isUploadingDark}
               fileInputRef={darkFileInputRef}
             />
+            <LogoUploadCard
+              type="favicon"
+              label="Favicon"
+              icon={AppWindow}
+              logoUrl={faviconUrl}
+              isUploading={isUploadingFavicon}
+              fileInputRef={faviconFileInputRef}
+            />
           </div>
           <p className="text-[10px] text-muted-foreground mt-3">
-            Max 5MB each (JPG, PNG, WebP, GIF). Logos auto-switch based on theme.
+            Max 5MB each (JPG, PNG, WebP, GIF, ICO). Logos auto-switch based on theme.
           </p>
         </div>
 

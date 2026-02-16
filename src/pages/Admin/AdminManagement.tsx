@@ -107,7 +107,7 @@ const AdminManagement = () => {
                     <SelectItem value="all">All Roles</SelectItem>
                     <SelectItem value="super_admin">Super Admin</SelectItem>
                     <SelectItem value="payments_admin">Payments Admin</SelectItem>
-                    <SelectItem value="signal_provider_admin">Signal Provider Admin</SelectItem>
+                    <SelectItem value="signal_provider_admin">Signal Provider</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as AdminStatus | 'all')}>
