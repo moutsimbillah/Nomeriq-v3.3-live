@@ -1,6 +1,9 @@
-project_id = "pbpzhujxkfefzumtihbl"
+project_id = "meauinecivxorripcrry"
 
 [functions.create-stripe-checkout-session]
+verify_jwt = false
+
+[functions.confirm-stripe-session]
 verify_jwt = false
 
 [functions.stripe-webhook]
@@ -13,4 +16,16 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.send-password-reset]
+verify_jwt = false
+
+[functions.verify-email-token]
+verify_jwt = false
+
+[functions.sync-market-symbols]
+verify_jwt = false
+
+[functions.twelve-data-quote]
+verify_jwt = false
+
+[functions.create-signal-live]
 verify_jwt = false

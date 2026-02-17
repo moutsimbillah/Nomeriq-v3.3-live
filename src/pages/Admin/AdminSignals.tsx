@@ -26,6 +26,11 @@ import {
   isLiveSignal,
   isUpcomingSignal,
 } from "@/lib/admin-metrics";
+import { useMarketMode } from "@/hooks/useMarketMode";
+import { searchMarketPairs, fetchLiveQuote, createSignalLive } from "@/lib/market-api";
+import type { MarketPair } from "@/lib/market-api";
+import { useCallback, useEffect, useRef } from "react";
+
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 const AdminSignals = () => {
   // Admins should never receive user-facing popups.
@@ -40,9 +45,8 @@ const AdminSignals = () => {
     signalIds: signals.map((s) => s.id),
     realtime: true,
   });
-  const {
-    user
-  } = useAuth();
+  const { user } = useAuth();
+  const { marketMode } = useMarketMode();
   const visibleSignals = signals.filter((s) => isLiveSignal(s) || isUpcomingSignal(s));
   const liveMetrics = computeLiveSignalMetrics(visibleSignals);
   const upcomingMetrics = computeUpcomingSignalMetrics(visibleSignals);
@@ -53,6 +57,13 @@ const AdminSignals = () => {
   const [editingSignalId, setEditingSignalId] = useState<string | null>(null);
   const [convertingSignalId, setConvertingSignalId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pairOptions, setPairOptions] = useState<MarketPair[]>([]);
+  const [pairSearchLoading, setPairSearchLoading] = useState(false);
+  const [liveLockedEntry, setLiveLockedEntry] = useState<number | null>(null);
+  const [liveLockedQuotedAt, setLiveLockedQuotedAt] = useState<string | null>(null);
+  const [twelveDataSymbol, setTwelveDataSymbol] = useState<string | null>(null);
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [formData, setFormData] = useState({
     pair: "",
     category: "",
@@ -88,7 +99,53 @@ const AdminSignals = () => {
       sendUpdatesToTelegram: false,
       sendClosedTradesToTelegram: false
     });
+    setPairOptions([]);
+    setLiveLockedEntry(null);
+    setLiveLockedQuotedAt(null);
+    setTwelveDataSymbol(null);
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
   };
+
+  const handlePairSearch = useCallback(async (category: string, query: string) => {
+    if (marketMode !== "live" || !category) return;
+    setPairSearchLoading(true);
+    try {
+      const list = await searchMarketPairs(category, query || null, "live");
+      setPairOptions(list);
+    } finally {
+      setPairSearchLoading(false);
+    }
+  }, [marketMode]);
+
+  const handlePairSelect = useCallback(async (p: MarketPair) => {
+    setTwelveDataSymbol(p.twelve_data_symbol);
+    try {
+      const { price, quoted_at } = await fetchLiveQuote(p.twelve_data_symbol);
+      setFormData((prev) => ({ ...prev, entry: String(price) }));
+      setLiveLockedEntry(price);
+      setLiveLockedQuotedAt(quoted_at);
+    } catch (e) {
+      toast.error("Failed to fetch entry price");
+    }
+    if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
+    refreshIntervalRef.current = setInterval(async () => {
+      try {
+        const { price } = await fetchLiveQuote(p.twelve_data_symbol);
+        setFormData((prev) => ({ ...prev, entry: String(price) }));
+      } catch {
+        // ignore refresh errors
+      }
+    }, 30000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
+    };
+  }, []);
   const validateDirectionalPriceSetup = (requireAll: boolean): string | null => {
     const entry = formData.entry.trim() === "" ? null : Number(formData.entry);
     const stopLoss = formData.stopLoss.trim() === "" ? null : Number(formData.stopLoss);
@@ -151,7 +208,6 @@ const AdminSignals = () => {
   };
 
   const handleCreate = async () => {
-    // Validate required fields - price fields only required for 'signal' type
     if (!formData.pair || !formData.category) {
       toast.error("Please fill in pair and category");
       return;
@@ -161,62 +217,108 @@ const AdminSignals = () => {
       toast.error(createPriceError);
       return;
     }
+    const isLiveActiveSignal = marketMode === "live" && formData.signalType === "signal";
+    if (isLiveActiveSignal && (!twelveDataSymbol || liveLockedEntry == null || !liveLockedQuotedAt)) {
+      toast.error("Select a pair to lock entry price first.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const baseSuccessMessage =
         formData.signalType === 'upcoming' ? "Upcoming trade created successfully." : "Signal created successfully.";
-      const {
-        error
-      } = await supabase.from('signals').insert({
-        pair: formData.pair.toUpperCase(),
-        category: formData.category,
-        direction: formData.direction,
-        entry_price: formData.entry ? parseFloat(formData.entry) : null,
-        stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
-        take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
-        status: formData.signalType === 'upcoming' ? 'upcoming' : 'active',
-        signal_type: formData.signalType,
-        upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
-        notes: formData.notes || null,
-        created_by: user?.id,
-        analysis_video_url: formData.analysisVideoUrl || null,
-        analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null,
-        send_updates_to_telegram: formData.sendUpdatesToTelegram,
-        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
-      });
-      if (error) throw error;
 
-      let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
-      if (formData.sendToTelegram) {
-        const res = await sendTelegramSignal({
-          action: "created",
-          signal: {
-            pair: formData.pair.toUpperCase(),
-            category: formData.category,
-            direction: formData.direction,
-            entry_price: formData.entry ? parseFloat(formData.entry) : null,
-            stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
-            take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
-            analysis_notes: formData.analysisNotes || null,
-            analysis_video_url: formData.analysisVideoUrl || null,
-            analysis_image_url: formData.analysisImageUrl || null,
-            signal_type: formData.signalType,
-            upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
-          },
+      if (isLiveActiveSignal) {
+        const { signal } = await createSignalLive({
+          pair: formData.pair.toUpperCase(),
+          category: formData.category,
+          direction: formData.direction,
+          stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : 0,
+          take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : 0,
+          signal_type: formData.signalType,
+          upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
+          notes: formData.notes || null,
+          analysis_video_url: formData.analysisVideoUrl || null,
+          analysis_notes: formData.analysisNotes || null,
+          analysis_image_url: formData.analysisImageUrl || null,
+          send_updates_to_telegram: formData.sendUpdatesToTelegram,
+          send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram,
+          entry_price_client: liveLockedEntry,
+          entry_quoted_at_client: liveLockedQuotedAt,
+          twelve_data_symbol: twelveDataSymbol!,
         });
 
-        telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
-      }
+        let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
+        if (formData.sendToTelegram) {
+          const res = await sendTelegramSignal({
+            action: "created",
+            signal: {
+              pair: formData.pair.toUpperCase(),
+              category: formData.category,
+              direction: formData.direction,
+              entry_price: liveLockedEntry,
+              stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
+              take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
+              analysis_notes: formData.analysisNotes || null,
+              analysis_video_url: formData.analysisVideoUrl || null,
+              analysis_image_url: formData.analysisImageUrl || null,
+              signal_type: formData.signalType,
+              upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
+            },
+          });
+          telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
+        }
+        showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+      } else {
+        const { error } = await supabase.from('signals').insert({
+          pair: formData.pair.toUpperCase(),
+          category: formData.category,
+          direction: formData.direction,
+          entry_price: formData.entry ? parseFloat(formData.entry) : null,
+          stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
+          take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
+          status: formData.signalType === 'upcoming' ? 'upcoming' : 'active',
+          signal_type: formData.signalType,
+          upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
+          notes: formData.notes || null,
+          created_by: user?.id,
+          analysis_video_url: formData.analysisVideoUrl || null,
+          analysis_notes: formData.analysisNotes || null,
+          analysis_image_url: formData.analysisImageUrl || null,
+          send_updates_to_telegram: formData.sendUpdatesToTelegram,
+          send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram
+        });
+        if (error) throw error;
 
-      showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+        let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
+        if (formData.sendToTelegram) {
+          const res = await sendTelegramSignal({
+            action: "created",
+            signal: {
+              pair: formData.pair.toUpperCase(),
+              category: formData.category,
+              direction: formData.direction,
+              entry_price: formData.entry ? parseFloat(formData.entry) : null,
+              stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
+              take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
+              analysis_notes: formData.analysisNotes || null,
+              analysis_video_url: formData.analysisVideoUrl || null,
+              analysis_image_url: formData.analysisImageUrl || null,
+              signal_type: formData.signalType,
+              upcoming_status: formData.signalType === 'upcoming' ? formData.upcomingStatus : null,
+            },
+          });
+          telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
+        }
+        showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+      }
 
       setIsCreateOpen(false);
       resetForm();
       refetch();
     } catch (err: unknown) {
       console.error('Error creating signal:', err);
-      toast.error("Failed to create signal. Please try again.");
+      toast.error(err instanceof Error ? err.message : "Failed to create signal. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -516,6 +618,13 @@ const AdminSignals = () => {
                 onSubmit={handleCreate}
                 submitLabel="Create & Notify Users"
                 showTelegramOption={true}
+                marketMode={marketMode}
+                pairOptions={pairOptions}
+                pairSearchLoading={pairSearchLoading}
+                onPairSearch={handlePairSearch}
+                onPairSelect={handlePairSelect}
+                entryReadOnly={marketMode === "live" && formData.signalType === "signal" && twelveDataSymbol != null}
+                entryQuotedAt={liveLockedQuotedAt}
               />
             </div>
           </ScrollArea>

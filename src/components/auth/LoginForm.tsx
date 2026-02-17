@@ -26,9 +26,10 @@ export const LoginForm = ({ onSwitchToSignup, onClose }: LoginFormProps) => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsLoading(true);
+        const normalizedEmail = email.trim().toLowerCase();
         try {
             const { data, error } = await supabase.auth.signInWithPassword({
-                email,
+                email: normalizedEmail,
                 password
             });
             if (error) {
@@ -47,7 +48,7 @@ export const LoginForm = ({ onSwitchToSignup, onClose }: LoginFormProps) => {
                 await supabase.auth.signOut();
                 try {
                     await supabase.functions.invoke("send-verification-email", {
-                        body: { email }
+                        body: { email: normalizedEmail }
                     });
                     toast({
                         title: "Verification Required",
@@ -60,6 +61,9 @@ export const LoginForm = ({ onSwitchToSignup, onClose }: LoginFormProps) => {
                         description: "Please verify your email. We couldn't send a new code - try again on the verification page.",
                         variant: "destructive"
                     });
+                }
+                if (typeof window !== "undefined") {
+                    window.sessionStorage.setItem("pending_verification_email", normalizedEmail);
                 }
                 openModal("verify-email");
                 setIsLoading(false);

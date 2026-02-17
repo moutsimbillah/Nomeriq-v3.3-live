@@ -46,6 +46,14 @@ function formatPackagePlanTitle(pkg: { duration_type: string; duration_months: n
   return `${duration} Plan`;
 }
 
+const PENDING_STRIPE_SESSION_ID_KEY = "pendingStripeSessionId";
+
+const isValidStripeSessionId = (value: string | null): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.startsWith("cs_") &&
+  !value.includes("CHECKOUT_SESSION_ID");
+
 const Subscription = () => {
   const {
     user,
@@ -80,19 +88,74 @@ const Subscription = () => {
     const stripeState = searchParams.get("stripe");
     if (!stripeState) return;
 
-    if (stripeState === "success") {
-      toast.info("Payment received. Verifying your subscription status...");
-      refetchSubscriptions();
-      refetchPayments();
-      refreshProfile().catch(() => undefined);
-    } else if (stripeState === "cancel") {
-      toast.message("Stripe checkout was cancelled.");
-    }
+    (async () => {
+      if (stripeState === "success") {
+        const urlSessionId = searchParams.get("session_id");
+        let fallbackSessionId: string | null = null;
+        try {
+          fallbackSessionId = sessionStorage.getItem(PENDING_STRIPE_SESSION_ID_KEY);
+        } catch (storageError) {
+          console.warn("Failed to read pending Stripe session id from storage:", storageError);
+        }
 
-    const next = new URLSearchParams(searchParams);
-    next.delete("stripe");
-    next.delete("session_id");
-    setSearchParams(next, { replace: true });
+        const sessionId = isValidStripeSessionId(urlSessionId)
+          ? urlSessionId
+          : isValidStripeSessionId(fallbackSessionId)
+            ? fallbackSessionId
+            : null;
+
+        if (!sessionId) {
+          console.error("Invalid Stripe session_id in return URL:", urlSessionId);
+          toast.error("We could not verify your Stripe session. Please contact support if payment was charged.");
+        } else {
+          if (!isValidStripeSessionId(urlSessionId)) {
+            console.warn("Using fallback Stripe session id from sessionStorage.");
+          }
+          toast.info("Payment received. Verifying your subscription status...");
+
+          try {
+            const {
+              data: { session },
+            } = await supabase.auth.getSession();
+
+            const accessToken = session?.access_token;
+            if (accessToken) {
+              const { error } = await supabase.functions.invoke("confirm-stripe-session", {
+                body: { sessionId, accessToken },
+              });
+
+              if (error) {
+                console.error("confirm-stripe-session error:", error);
+                toast.error("Payment verification failed. Please refresh and check your subscription status.");
+              } else {
+                try {
+                  sessionStorage.removeItem(PENDING_STRIPE_SESSION_ID_KEY);
+                } catch (storageError) {
+                  console.warn("Failed to clear pending Stripe session id:", storageError);
+                }
+              }
+            } else {
+              console.error("Missing access token while confirming Stripe session.");
+              toast.error("Please sign in again to complete payment verification.");
+            }
+          } catch (err) {
+            console.error("Error confirming Stripe session:", err);
+            toast.error("Unexpected error while verifying payment.");
+          }
+        }
+
+        refetchSubscriptions();
+        refetchPayments();
+        refreshProfile().catch(() => undefined);
+      } else if (stripeState === "cancel") {
+        toast.message("Stripe checkout was cancelled.");
+      }
+
+      const next = new URLSearchParams(searchParams);
+      next.delete("stripe");
+      next.delete("session_id");
+      setSearchParams(next, { replace: true });
+    })();
   }, [searchParams, setSearchParams, refetchSubscriptions, refetchPayments, refreshProfile]);
 
   const walletAddress = settings?.wallet_address || "TNYhMKhLQWz6d5oX7Kqj7sdUo8vNcRYuPE";

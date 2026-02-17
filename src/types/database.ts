@@ -143,6 +143,8 @@ export interface SubscriptionPackageFeature {
   created_at: string;
 }
 
+export type MarketMode = 'manual' | 'live';
+
 export interface Signal {
   id: string;
   pair: string;
@@ -159,6 +161,11 @@ export interface Signal {
   closed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Live mode / execution source
+  market_mode?: MarketMode | null;
+  entry_quote_id?: string | null;
+  entry_quoted_at?: string | null;
+  entry_source?: string | null;
   // Analysis content fields
   analysis_video_url: string | null;
   analysis_notes: string | null;

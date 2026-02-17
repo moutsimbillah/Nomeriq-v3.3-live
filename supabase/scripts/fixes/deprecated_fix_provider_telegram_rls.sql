@@ -1,3 +1,10 @@
+-- DEPRECATED
+-- This was a manual "quick fix" for Telegram settings RLS.
+-- It is now handled by the real migration:
+--   supabase/migrations/20260209170000_fix_telegram_rls_for_providers.sql
+--
+-- Keep this script only as a reference for manual troubleshooting.
+
 -- QUICK FIX: Allow providers to read Telegram settings
 -- Copy and paste this into Supabase Dashboard > SQL Editor > New Query > Run
 
@@ -13,3 +20,4 @@ USING (
     AND admin_roles.status = 'active'
   )
 );
+

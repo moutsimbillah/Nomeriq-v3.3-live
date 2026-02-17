@@ -139,6 +139,12 @@ const navItems: NavItem[] = [
     path: "/admin/settings",
     allowedRoles: ['super_admin']
   },
+  {
+    icon: Activity,
+    label: "Market Mode",
+    path: "/admin/market-mode",
+    allowedRoles: ['super_admin']
+  },
 ];
 
 export const AdminSidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {

@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.93.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
-const MAX_VERIFICATION_EMAILS_PER_HOUR = 3;
+const MAX_VERIFICATION_EMAILS_PER_HOUR = 10;
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -36,6 +36,61 @@ function renderTemplate(template: string, values: Record<string, string>): strin
 
 function toHtmlBody(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+interface AuthAdminUser {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}
+
+function getAuthAdminHeaders(serviceRoleKey: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${serviceRoleKey}`,
+    apikey: serviceRoleKey,
+    "Content-Type": "application/json",
+  };
+}
+
+async function listAuthUsersPage(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  page: number,
+  perPage: number
+): Promise<AuthAdminUser[]> {
+  const response = await fetch(
+    `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=${perPage}`,
+    {
+      method: "GET",
+      headers: getAuthAdminHeaders(serviceRoleKey),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.text();
+    throw new Error(`Failed to list auth users: ${errorData}`);
+  }
+
+  const json = (await response.json()) as { users?: AuthAdminUser[] };
+  return json.users ?? [];
+}
+
+async function updateAuthUserMetadata(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+  userMetadata: Record<string, unknown>
+) {
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+    method: "PUT",
+    headers: getAuthAdminHeaders(serviceRoleKey),
+    body: JSON.stringify({ user_metadata: userMetadata }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.text();
+    throw new Error(`Failed to update auth user metadata: ${errorData}`);
+  }
 }
 
 async function sendEmail(
@@ -140,6 +195,39 @@ async function checkRateLimit(
   return { allowed: true };
 }
 
+async function findAuthUserByEmail(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  email: string
+) {
+  const normalizedEmail = email.toLowerCase();
+  let page = 1;
+  const perPage = 200;
+
+  while (page <= 50) {
+    let users: AuthAdminUser[] = [];
+    try {
+      users = await listAuthUsersPage(supabaseUrl, serviceRoleKey, page, perPage);
+    } catch (error) {
+      console.error("Error fetching auth users:", error);
+      return null;
+    }
+
+    const matchedUser = users.find((u) => u.email?.toLowerCase() === normalizedEmail);
+    if (matchedUser) {
+      return matchedUser;
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return null;
+}
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -147,25 +235,36 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
-    const email = body?.email;
+    const rawEmail = body?.email;
 
-    if (!email) {
+    if (!rawEmail) {
       return new Response(JSON.stringify({ error: "Email is required" }), {
         status: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    if (typeof email !== "string" || !isValidEmail(email)) {
+    if (typeof rawEmail !== "string" || !isValidEmail(rawEmail)) {
       return new Response(JSON.stringify({ error: "Invalid email format" }), {
         status: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
+    const email = rawEmail.trim().toLowerCase();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(JSON.stringify({ error: "Supabase server configuration is missing" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+
     const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      supabaseUrl,
+      serviceRoleKey,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
     const resendApiKey = await resolveResendApiKey(supabaseAdmin);
@@ -184,16 +283,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.listUsers();
-    if (userError) {
-      console.error("Error fetching users:", userError);
-      return new Response(JSON.stringify({ error: "Verification failed" }), {
-        status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
-    }
-
-    const user = userData.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    const user = await findAuthUserByEmail(supabaseUrl, serviceRoleKey, email);
     if (!user) {
       return new Response(
         JSON.stringify({ success: true, message: "If an account exists, a verification code has been sent" }),
@@ -204,16 +294,14 @@ const handler = async (req: Request): Promise<Response> => {
     const otpCode = generateOTP();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-      user_metadata: {
-        ...user.user_metadata,
+    try {
+      await updateAuthUserMetadata(supabaseUrl, serviceRoleKey, user.id, {
+        ...(user.user_metadata || {}),
         email_otp_code: otpCode,
         email_otp_expires: otpExpiry,
         custom_email_verified: false,
-      },
-    });
-
-    if (updateError) {
+      });
+    } catch (updateError) {
       console.error("Error updating user metadata:", updateError);
       return new Response(JSON.stringify({ error: "Verification failed" }), {
         status: 500,

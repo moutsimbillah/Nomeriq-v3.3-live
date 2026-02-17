@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.93.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,6 +24,61 @@ function isValidEmail(email: string): boolean {
 // Validate code format (6 digits)
 function isValidCode(code: string): boolean {
   return /^\d{6}$/.test(code);
+}
+
+interface AuthAdminUser {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}
+
+function getAuthAdminHeaders(serviceRoleKey: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${serviceRoleKey}`,
+    apikey: serviceRoleKey,
+    "Content-Type": "application/json",
+  };
+}
+
+async function listAuthUsersPage(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  page: number,
+  perPage: number
+): Promise<AuthAdminUser[]> {
+  const response = await fetch(
+    `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=${perPage}`,
+    {
+      method: "GET",
+      headers: getAuthAdminHeaders(serviceRoleKey),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.text();
+    throw new Error(`Failed to list auth users: ${errorData}`);
+  }
+
+  const json = (await response.json()) as { users?: AuthAdminUser[] };
+  return json.users ?? [];
+}
+
+async function updateAuthUserMetadata(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+  userMetadata: Record<string, unknown>
+) {
+  const response = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+    method: "PUT",
+    headers: getAuthAdminHeaders(serviceRoleKey),
+    body: JSON.stringify({ user_metadata: userMetadata }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.text();
+    throw new Error(`Failed to update auth user metadata: ${errorData}`);
+  }
 }
 
 // Check rate limit for token verification
@@ -87,6 +142,39 @@ async function checkVerifyRateLimit(
   return { allowed: true };
 }
 
+async function findAuthUserByEmail(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  email: string
+) {
+  const normalizedEmail = email.toLowerCase();
+  let page = 1;
+  const perPage = 200;
+
+  while (page <= 50) {
+    let users: AuthAdminUser[] = [];
+    try {
+      users = await listAuthUsersPage(supabaseUrl, serviceRoleKey, page, perPage);
+    } catch (error) {
+      console.error("Error fetching auth users:", error);
+      return null;
+    }
+
+    const matchedUser = users.find((u) => u.email?.toLowerCase() === normalizedEmail);
+    if (matchedUser) {
+      return matchedUser;
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return null;
+}
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -94,11 +182,11 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
-    const email = body?.email;
-    const code = body?.code;
+    const rawEmail = body?.email;
+    const rawCode = body?.code;
 
     // Validate required fields
-    if (!email || !code) {
+    if (!rawEmail || !rawCode) {
       return new Response(
         JSON.stringify({ success: false, error: "Email and code are required" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -106,15 +194,27 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Validate email format
-    if (typeof email !== "string" || !isValidEmail(email)) {
+    if (typeof rawEmail !== "string" || !isValidEmail(rawEmail)) {
       return new Response(
         JSON.stringify({ success: false, error: "Invalid email format" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
+    const email = rawEmail.trim().toLowerCase();
+    const code = typeof rawCode === "string" ? rawCode.replace(/\s+/g, "") : String(rawCode).trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Supabase server configuration is missing" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     // Validate code format
-    if (typeof code !== "string" || !isValidCode(code)) {
+    if (!isValidCode(code)) {
       return new Response(
         JSON.stringify({ success: false, error: "Invalid code format" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -122,8 +222,8 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      supabaseUrl,
+      serviceRoleKey,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
@@ -137,18 +237,8 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Find the user by email using admin API
-    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.listUsers();
-    
-    if (userError) {
-      console.error("Error fetching users:", userError);
-      return new Response(
-        JSON.stringify({ success: false, error: "Verification failed" }),
-        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
-    const user = userData.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    // Find the auth user for this email.
+    const user = await findAuthUserByEmail(supabaseUrl, serviceRoleKey, email);
     
     if (!user) {
       // Don't reveal if user exists
@@ -161,15 +251,17 @@ const handler = async (req: Request): Promise<Response> => {
     // Check the OTP code
     const storedCode = user.user_metadata?.email_otp_code;
     const codeExpiry = user.user_metadata?.email_otp_expires;
+    const normalizedStoredCode =
+      typeof storedCode === "string" ? storedCode.trim() : storedCode ? String(storedCode).trim() : "";
 
-    if (!storedCode || storedCode !== code) {
+    if (!normalizedStoredCode || normalizedStoredCode !== code) {
       return new Response(
         JSON.stringify({ success: false, error: "Invalid verification code" }),
         { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    if (codeExpiry && new Date(codeExpiry) < new Date()) {
+    if (codeExpiry && new Date(String(codeExpiry)) < new Date()) {
       return new Response(
         JSON.stringify({ success: false, error: "Verification code has expired. Please request a new one." }),
         { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -177,17 +269,15 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Code is valid - mark user as verified
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-      user_metadata: {
-        ...user.user_metadata,
+    try {
+      await updateAuthUserMetadata(supabaseUrl, serviceRoleKey, user.id, {
+        ...(user.user_metadata || {}),
         email_otp_code: null,
         email_otp_expires: null,
         custom_email_verified: true,
         custom_email_verified_at: new Date().toISOString(),
-      },
-    });
-
-    if (updateError) {
+      });
+    } catch (updateError) {
       console.error("Error updating user verification status:", updateError);
       return new Response(
         JSON.stringify({ success: false, error: "Verification failed. Please try again." }),

@@ -5,6 +5,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 
+const PENDING_STRIPE_SESSION_ID_KEY = "pendingStripeSessionId";
+
 interface StripePaymentProps {
   subscriptionPrice: number;
   packageId: string;
@@ -70,6 +72,14 @@ export const StripePayment = ({
 
       if (!data?.url) {
         throw new Error("Stripe checkout URL was not returned");
+      }
+
+      if (typeof data.sessionId === "string" && data.sessionId.length > 0) {
+        try {
+          sessionStorage.setItem(PENDING_STRIPE_SESSION_ID_KEY, data.sessionId);
+        } catch (storageError) {
+          console.warn("Failed to persist pending Stripe session id:", storageError);
+        }
       }
 
       window.location.assign(data.url as string);

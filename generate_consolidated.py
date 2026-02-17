@@ -55,7 +55,7 @@ END $$;''')
     consolidated_content.append(f"\n-- ============================================\n-- End of {filename}\n-- ============================================\n\n")
 
 # Write the final consolidated file
-output_file = 'supabase/consolidated_migrations_fixed.sql'
+output_file = 'supabase/dev/consolidated_migrations_fixed.sql'
 with open(output_file, 'w', encoding='utf-8') as f:
     f.write(''.join(consolidated_content))
 

@@ -23,7 +23,10 @@ const appendStripeState = (url: string, state: "success" | "cancel") => {
   if (state === "success") {
     parsed.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
   }
-  return parsed.toString();
+  // Stripe requires the placeholder to remain raw (not URL-encoded) in success_url.
+  return parsed
+    .toString()
+    .replace(/%7BCHECKOUT_SESSION_ID%7D/gi, "{CHECKOUT_SESSION_ID}");
 };
 
 serve(async (req) => {

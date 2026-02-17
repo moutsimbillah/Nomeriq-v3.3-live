@@ -85,7 +85,7 @@ const getRrForTrade = (trade: UserTrade, targetTp?: number): number => {
 
 export const computeOpenTradeMetrics = (
   trades: UserTrade[],
-  options: OpenTradeMetricOptions = {},
+  options: OpenTradeMetricOptions & { liveUnrealizedPnL?: number } = {},
 ): OpenTradeMetrics => {
   const openTrades = trades.filter(isOpenTrade);
   const getRiskPercent = options.getRiskPercent ?? (() => 0);
@@ -106,9 +106,27 @@ export const computeOpenTradeMetrics = (
     totalRisk,
     totalPotentialProfit,
     averageRiskPercent,
-    unrealizedPnL: 0,
+    unrealizedPnL: options.liveUnrealizedPnL ?? 0,
   };
 };
+
+/** Compute live PnL for one trade given current price (for market_mode === 'live' signals only) */
+export function computeLiveTradePnL(
+  trade: UserTrade,
+  currentPrice: number
+): number {
+  const entry = Number(trade.signal?.entry_price ?? 0);
+  const sl = Number(trade.signal?.stop_loss ?? 0);
+  const riskAmount = Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
+  const direction = trade.signal?.direction;
+  if (!entry || !sl || riskAmount === 0) return 0;
+  const riskDistance = Math.abs(entry - sl);
+  if (riskDistance === 0) return 0;
+  const positionSize = riskAmount / riskDistance;
+  if (direction === "BUY") return (currentPrice - entry) * positionSize;
+  if (direction === "SELL") return (entry - currentPrice) * positionSize;
+  return 0;
+}
 
 export const computeLiveSignalMetrics = (
   signals: Array<Pick<Signal, "signal_type" | "status">>,

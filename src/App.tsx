@@ -54,6 +54,7 @@ import AdminUpcomingTrades from "./pages/Admin/AdminUpcomingTrades";
 import AdminSubscriptionSettings from "./pages/Admin/AdminSubscriptionSettings";
 import AdminTelegramIntegrations from "./pages/Admin/AdminTelegramIntegrations";
 import AdminPaymentSettings from "./pages/Admin/AdminPaymentSettings";
+import MarketMode from "./pages/Admin/MarketMode";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -235,6 +236,11 @@ const App = () => (
                   <Route path="/admin/management" element={
                     <AdminProtectedRoute allowedRoles={['super_admin']}>
                       <AdminManagement />
+                    </AdminProtectedRoute>
+                  } />
+                  <Route path="/admin/market-mode" element={
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
+                      <MarketMode />
                     </AdminProtectedRoute>
                   } />
                   <Route path="/admin/history" element={
