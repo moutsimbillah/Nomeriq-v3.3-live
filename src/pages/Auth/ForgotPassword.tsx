@@ -16,11 +16,22 @@ const ForgotPassword = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      toast({
+        title: "Email Required",
+        description: "Please enter your email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const { error } = await supabase.functions.invoke("send-password-reset", {
-        body: { email },
+        body: { email: normalizedEmail },
       });
 
       if (error) throw error;
@@ -31,7 +42,7 @@ const ForgotPassword = () => {
       });
 
       // Navigate to reset password page with email
-      navigate("/reset-password", { state: { email } });
+      navigate("/reset-password", { state: { email: normalizedEmail } });
     } catch (error) {
       console.error("Error sending password reset:", error);
       toast({
