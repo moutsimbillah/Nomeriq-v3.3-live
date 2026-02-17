@@ -53,7 +53,9 @@ const Settings = () => {
   const { toast } = useToast();
 
   const handleChangePassword = async () => {
-    if (!user?.email) {
+    const normalizedEmail = (user?.email || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
       toast({
         title: "Email not found",
         description: "No account email found for password reset.",
@@ -65,7 +67,7 @@ const Settings = () => {
     try {
       setIsSendingPasswordReset(true);
       const { error } = await supabase.functions.invoke("send-password-reset", {
-        body: { email: user.email },
+        body: { email: normalizedEmail },
       });
 
       if (error) throw error;
@@ -74,7 +76,7 @@ const Settings = () => {
         title: "Verification code sent",
         description: "Check your inbox for the 6-digit code to reset your password.",
       });
-      navigate("/reset-password", { state: { email: user.email } });
+      navigate("/reset-password", { state: { email: normalizedEmail } });
     } catch (error: any) {
       console.error("Error sending password reset code:", error);
       toast({

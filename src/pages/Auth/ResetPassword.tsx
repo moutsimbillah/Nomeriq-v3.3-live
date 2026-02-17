@@ -9,9 +9,43 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+const normalizeResetCode = (value: string) => value.replace(/\D/g, "").slice(0, 6);
+
+const extractFunctionErrorMessage = async (error: unknown, fallback: string): Promise<string> => {
+  if (error && typeof error === "object" && "context" in error) {
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      try {
+        const json = await response.clone().json();
+        if (json && typeof json === "object") {
+          if ("error" in json && typeof (json as { error?: unknown }).error === "string") {
+            return (json as { error: string }).error;
+          }
+          if ("message" in json && typeof (json as { message?: unknown }).message === "string") {
+            return (json as { message: string }).message;
+          }
+        }
+      } catch {
+        // Ignore and fallback.
+      }
+    }
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+  }
+
+  return fallback;
+};
+
 const ResetPassword = () => {
   const location = useLocation();
-  const email = location.state?.email || "";
+  const email = normalizeEmail(location.state?.email || "");
 
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -35,7 +69,9 @@ const ResetPassword = () => {
   const [isVerifying, setIsVerifying] = useState(false);
 
   const handleVerifyCode = async () => {
-    if (code.length !== 6) {
+    const normalizedCode = normalizeResetCode(code);
+
+    if (normalizedCode.length !== 6) {
       toast({
         title: "Invalid Code",
         description: "Please enter the 6-digit verification code.",
@@ -48,8 +84,33 @@ const ResetPassword = () => {
 
     try {
       const response = await supabase.functions.invoke("verify-reset-code", {
-        body: { email, code },
+        body: { email, code: normalizedCode },
       });
+
+      if (response.error) {
+        const reason = await extractFunctionErrorMessage(
+          response.error,
+          "Unable to verify the code. Please try again.",
+        );
+        const normalizedReason = reason.toLowerCase();
+        const isRateLimited = normalizedReason.includes("too many") || normalizedReason.includes("rate");
+        const isUnauthorized =
+          normalizedReason.includes("jwt") ||
+          normalizedReason.includes("unauthorized") ||
+          normalizedReason.includes("not allowed");
+
+        toast({
+          title: "Verification Failed",
+          description: isRateLimited
+            ? "Too many verification attempts. Please wait before trying again."
+            : isUnauthorized
+              ? "Verification request was rejected. Please request a new code and try again."
+              : reason,
+          variant: "destructive",
+        });
+        setCode("");
+        return;
+      }
 
       const data = response.data;
 
@@ -83,6 +144,17 @@ const ResetPassword = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedCode = normalizeResetCode(code);
+
+    if (normalizedCode.length !== 6) {
+      toast({
+        title: "Invalid Code",
+        description: "Please verify a valid 6-digit code first.",
+        variant: "destructive",
+      });
+      setStep("code");
+      return;
+    }
 
     if (password !== confirmPassword) {
       toast({
@@ -106,8 +178,35 @@ const ResetPassword = () => {
 
     try {
       const response = await supabase.functions.invoke("verify-password-reset", {
-        body: { email, code, newPassword: password },
+        body: { email, code: normalizedCode, newPassword: password },
       });
+
+      if (response.error) {
+        const reason = await extractFunctionErrorMessage(
+          response.error,
+          "Unable to reset password. Please try again.",
+        );
+        let userMessage = "Please try again.";
+        if (reason.includes("Invalid or expired") || reason.includes("expired") || reason.includes("not found")) {
+          userMessage = "The verification code is incorrect or has expired. Please request a new code.";
+        } else if (reason.includes("Too many")) {
+          userMessage = "Too many reset attempts. Please wait and try again.";
+        } else if (reason.includes("Password")) {
+          userMessage = reason;
+        } else {
+          userMessage = reason;
+        }
+
+        toast({
+          title: "Reset Failed",
+          description: userMessage,
+          variant: "destructive",
+        });
+        setStep("code");
+        setCode("");
+        setIsLoading(false);
+        return;
+      }
 
       // Handle both error formats from edge function
       const errorMessage = response.data?.error || response.error?.message;
@@ -248,7 +347,7 @@ const ResetPassword = () => {
               <InputOTP
                 maxLength={6}
                 value={code}
-                onChange={(value) => setCode(value)}
+                onChange={(value) => setCode(normalizeResetCode(value))}
               >
                 <InputOTPGroup>
                   <InputOTPSlot index={0} />

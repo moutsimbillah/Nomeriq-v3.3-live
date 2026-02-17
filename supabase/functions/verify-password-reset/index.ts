@@ -21,6 +21,15 @@ function isValidCode(code: string): boolean {
   return /^\d{6}$/.test(code);
 }
 
+function normalizeEmail(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeCode(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\D/g, "").slice(0, 6);
+}
+
 // Check rate limit for password reset
 async function checkResetRateLimit(
   supabaseAdmin: ReturnType<typeof createClient>,
@@ -90,8 +99,8 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
-    const email = body?.email;
-    const code = body?.code;
+    const email = normalizeEmail(body?.email);
+    const code = normalizeCode(body?.code);
     const newPassword = body?.newPassword;
 
     // Validate required fields
@@ -154,10 +163,12 @@ const handler = async (req: Request): Promise<Response> => {
     const { data: tokenData, error: tokenError } = await supabaseAdmin
       .from("password_reset_tokens")
       .select("*")
-      .eq("email", email.toLowerCase())
+      .eq("email", email)
       .eq("code", code)
       .eq("used", false)
-      .single();
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (tokenError || !tokenData) {
       return new Response(
@@ -185,7 +196,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    const user = userData?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+    const user = userData?.users?.find(u => u.email?.toLowerCase() === email);
     
     if (!user) {
       return new Response(
@@ -218,7 +229,7 @@ const handler = async (req: Request): Promise<Response> => {
     await supabaseAdmin
       .from("password_reset_tokens")
       .delete()
-      .eq("email", email.toLowerCase());
+      .eq("email", email);
 
     console.log("Password reset successful for:", email);
 
