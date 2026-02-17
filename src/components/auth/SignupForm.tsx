@@ -77,13 +77,14 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
             return;
         }
         setIsLoading(true);
+        const normalizedEmail = email.trim().toLowerCase();
 
         await supabase.auth.signOut();
         const normalizedTelegram = telegramUsername.startsWith("@")
             ? telegramUsername
             : `@${telegramUsername}`;
 
-        const { error } = await signUp(email, password, firstName, lastName, phone, country, normalizedTelegram);
+        const { error } = await signUp(normalizedEmail, password, firstName, lastName, phone, country, normalizedTelegram);
         if (error) {
             toast({
                 title: "Signup Failed",
@@ -98,7 +99,7 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
 
         try {
             const { error: emailError } = await supabase.functions.invoke("send-verification-email", {
-                body: { email }
+                body: { email: normalizedEmail }
             });
             if (emailError) {
                 console.error("Error sending verification email:", emailError);
@@ -118,15 +119,15 @@ export const SignupForm = ({ onSwitchToLogin, onClose, standalone = false }: Sig
             console.error("Error invoking verification function:", err);
         }
 
-        if (onClose) onClose();
         if (typeof window !== "undefined") {
-            window.sessionStorage.setItem("pending_verification_email", email);
+            window.sessionStorage.setItem("pending_verification_email", normalizedEmail);
         }
+        if (onClose) onClose();
         if (!standalone && authModal) {
             authModal.openModal("verify-email");
             return;
         }
-        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        navigate(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
     };
 
     return (

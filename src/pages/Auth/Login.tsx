@@ -20,13 +20,14 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    const normalizedEmail = email.trim().toLowerCase();
     try {
       // Sign in directly with supabase to check verification status before AuthContext processes it
       const {
         data,
         error
       } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password
       });
       if (error) {
@@ -50,7 +51,7 @@ const Login = () => {
         try {
           await supabase.functions.invoke("send-verification-email", {
             body: {
-              email
+              email: normalizedEmail
             }
           });
           toast({
@@ -67,9 +68,9 @@ const Login = () => {
         }
 
         if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("pending_verification_email", email);
+          window.sessionStorage.setItem("pending_verification_email", normalizedEmail);
         }
-        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        navigate(`/verify-email?email=${encodeURIComponent(normalizedEmail)}`);
         setIsLoading(false);
         return;
       }

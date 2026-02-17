@@ -63,7 +63,7 @@ for filename in sql_files:
         drop_stmt = f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};"
         functions_content.append(f"-- From {filename}\n{drop_stmt}\n{full_stmt}\n")
 
-output_file = 'supabase/functions_only.sql'
+output_file = 'supabase/dev/functions_only.sql'
 with open(output_file, 'w', encoding='utf-8') as f:
     f.write('\n'.join(functions_content))
 

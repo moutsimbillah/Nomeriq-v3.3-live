@@ -10,11 +10,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowDownRight, ArrowUpRight, Loader2, Send, Clock, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Loader2, Send, Clock, TrendingUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdminSignalFormAnalysis } from "./AdminSignalFormAnalysis";
+import type { MarketPair } from "@/lib/market-api";
 
 export type AdminSignalDirection = "BUY" | "SELL";
 export type SignalType = "signal" | "upcoming";
@@ -48,6 +54,14 @@ interface AdminSignalFormProps {
   onSubmit: () => void;
   submitLabel: string;
   showTelegramOption?: boolean;
+  /** Live Mode: pair options from DB, entry is server-locked */
+  marketMode?: "manual" | "live";
+  pairOptions?: MarketPair[];
+  pairSearchLoading?: boolean;
+  onPairSearch?: (category: string, query: string) => void;
+  onPairSelect?: (pair: MarketPair) => void;
+  entryReadOnly?: boolean;
+  entryQuotedAt?: string | null;
 }
 
 export const AdminSignalForm = React.memo(
@@ -61,6 +75,13 @@ export const AdminSignalForm = React.memo(
         onSubmit,
         submitLabel,
         showTelegramOption = false,
+        marketMode = "manual",
+        pairOptions = [],
+        pairSearchLoading = false,
+        onPairSearch,
+        onPairSelect,
+        entryReadOnly = false,
+        entryQuotedAt,
       }: AdminSignalFormProps,
       ref
     ) {
@@ -97,17 +118,80 @@ export const AdminSignalForm = React.memo(
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Pair</Label>
-          <Input
-            placeholder="e.g., XAUUSD"
-            value={formData.pair}
-            onChange={(e) => setFormData((prev) => ({ ...prev, pair: e.target.value }))}
-            className="bg-secondary/50"
-          />
+          {marketMode === "live" ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  className={cn(
+                    "w-full justify-between bg-secondary/50 font-normal",
+                    !formData.pair && "text-muted-foreground"
+                  )}
+                >
+                  {formData.pair || "Select pair (from catalog)"}
+                  <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <div className="p-2 border-b">
+                  <Input
+                    placeholder="Search pairs..."
+                    value={formData.pair}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFormData((prev) => ({ ...prev, pair: v }));
+                      onPairSearch?.(formData.category, v);
+                    }}
+                    onFocus={() => formData.category && onPairSearch?.(formData.category, formData.pair)}
+                  />
+                </div>
+                <div className="max-h-64 overflow-auto">
+                  {pairSearchLoading ? (
+                    <div className="p-4 flex items-center justify-center">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : pairOptions.length === 0 ? (
+                    <div className="p-4 text-sm text-muted-foreground text-center">
+                      {formData.category ? "Select category and type to search" : "Select category first"}
+                    </div>
+                  ) : (
+                    pairOptions.map((p) => (
+                      <button
+                        key={p.symbol}
+                        type="button"
+                        className="w-full px-4 py-2 text-left text-sm hover:bg-accent"
+                        onClick={() => {
+                          onPairSelect?.(p);
+                          setFormData((prev) => ({ ...prev, pair: p.symbol }));
+                        }}
+                      >
+                        {p.symbol} <span className="text-muted-foreground">({p.twelve_data_symbol})</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            <Input
+              placeholder="e.g., XAUUSD"
+              value={formData.pair}
+              onChange={(e) => setFormData((prev) => ({ ...prev, pair: e.target.value }))}
+              className="bg-secondary/50"
+            />
+          )}
         </div>
 
         <div className="space-y-2">
           <Label>Category</Label>
-          <Select value={formData.category} onValueChange={(v) => setFormData((prev) => ({ ...prev, category: v }))}>
+          <Select
+            value={formData.category}
+            onValueChange={(v) => {
+              setFormData((prev) => ({ ...prev, category: v }));
+              if (marketMode === "live") onPairSearch?.(v, formData.pair);
+            }}
+          >
             <SelectTrigger className="bg-secondary/50">
               <SelectValue placeholder="Select category" />
             </SelectTrigger>
@@ -175,14 +259,19 @@ export const AdminSignalForm = React.memo(
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="space-y-2">
-          <Label className="block text-xs uppercase tracking-wide text-muted-foreground">Entry Price</Label>
+          <Label className="block text-xs uppercase tracking-wide text-muted-foreground">
+            Entry Price {entryReadOnly && entryQuotedAt && (
+              <span className="text-muted-foreground font-normal">(locked from market · {new Date(entryQuotedAt).toLocaleTimeString()})</span>
+            )}
+          </Label>
           <Input
             type="number"
             step="any"
             placeholder="0.00"
             value={formData.entry}
-            onChange={(e) => setFormData((prev) => ({ ...prev, entry: e.target.value }))}
-            className="bg-secondary/50"
+            onChange={(e) => !entryReadOnly && setFormData((prev) => ({ ...prev, entry: e.target.value }))}
+            readOnly={entryReadOnly}
+            className={cn("bg-secondary/50", entryReadOnly && "cursor-not-allowed opacity-90")}
           />
         </div>
 

@@ -12,9 +12,8 @@ export const LandingHeader = () => {
 
   return (
     <>
-      <nav className="fixed top-4 left-0 right-0 z-50 px-4">
-        <div className="mx-auto max-w-7xl rounded-2xl border border-border/60 bg-background/80 backdrop-blur-xl shadow-[0_8px_24px_rgba(2,6,23,0.16)]">
-          <div className="px-4 sm:px-6 py-3 flex items-center justify-between gap-6">
+      <header className="fixed top-0 left-0 right-0 z-50 px-4 pt-4">
+        <nav className="nav-float mx-auto max-w-[82.8rem] rounded-2xl border border-border/60 bg-background/80 backdrop-blur-xl px-6 py-3 flex items-center justify-between gap-6 shadow-[0_8px_24px_rgba(2,6,23,0.16)]">
             <div className="flex items-center space-x-2">
               <Link to="/" className="flex items-center gap-2 group">
                 <BrandedLogo className="h-8 w-auto" showName={false} />
@@ -55,9 +54,8 @@ export const LandingHeader = () => {
                 {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             </div>
-          </div>
-        </div>
-      </nav>
+        </nav>
+      </header>
 
       {mobileMenuOpen && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 w-[92%] max-w-md rounded-2xl border border-border/60 bg-background/95 backdrop-blur-xl p-3 z-50 flex flex-col gap-1 md:hidden shadow-xl">

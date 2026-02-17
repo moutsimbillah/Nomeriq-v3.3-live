@@ -52,8 +52,6 @@ export const Footer = () => {
             ))}
           </div>
 
-          <div className="h-4 w-px bg-border mx-2" />
-
           {settings?.support_email ? (
             <a
               href={`mailto:${settings.support_email}`}

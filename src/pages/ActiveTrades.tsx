@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { cn } from "@/lib/utils";
-import { ArrowUpRight, ArrowDownRight, Loader2, FileText } from "lucide-react";
+import { Loader2, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { differenceInSeconds, differenceInMinutes, differenceInHours, differenceInDays } from "date-fns";
@@ -17,6 +17,8 @@ import { TradeUpdatesDialog } from "@/components/signals/TradeUpdatesDialog";
 import { Button } from "@/components/ui/button";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
+import { useLivePrices } from "@/hooks/useLivePrices";
+import { computeLiveTradePnL } from "@/lib/admin-metrics";
 
 const ActiveTrades = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -98,6 +100,23 @@ const ActiveTrades = () => {
 
   const signalIds = Array.from(new Set(displayTrades.map((t) => t.signal?.id).filter((id): id is string => !!id)));
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: true });
+
+  const liveModePairs = useMemo(
+    () => displayTrades
+      .filter((t) => (t.signal as Signal & { market_mode?: string })?.market_mode === "live" && t.signal?.pair)
+      .map((t) => t.signal!.pair),
+    [displayTrades]
+  );
+  const livePrices = useLivePrices(liveModePairs);
+  const unrealizedPnL = useMemo(() => {
+    return displayTrades.reduce((sum, trade) => {
+      const signal = trade.signal as (Signal & { market_mode?: string }) | undefined;
+      if (signal?.market_mode !== "live" || !signal?.pair) return sum;
+      const price = livePrices[signal.pair];
+      if (price == null) return sum;
+      return sum + computeLiveTradePnL(trade, price);
+    }, 0);
+  }, [displayTrades, livePrices]);
   const [seenUpdateCounts, setSeenUpdateCounts] = useState<Record<string, number>>({});
   const seenStorageKey = useMemo(
     () => (user?.id ? `trade-updates-seen:${user.id}` : null),
@@ -207,19 +226,6 @@ const ActiveTrades = () => {
 
   // Calculate total potential profit
   const totalPotentialProfit = displayTrades.reduce((sum, t) => sum + calculateTradePotentialProfit(t), 0);
-  const unrealizedPnL = 0;
-  const getSignalStatus = (status: string) => {
-    switch (status) {
-      case 'active':
-        return 'Running';
-      case 'tp_hit':
-        return 'Near TP';
-      case 'sl_hit':
-        return 'Near SL';
-      default:
-        return status;
-    }
-  };
   const getTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -282,7 +288,9 @@ const ActiveTrades = () => {
       <p className="text-sm mt-2">New signals will appear here automatically</p>
     </div> : <div className="grid gap-4 my-[24px]">
       {displayTrades.map(trade => {
-        const signal = trade.signal;
+        const signal = trade.signal as (Signal & { market_mode?: string }) | undefined;
+        const isLiveMode = signal?.market_mode === "live";
+        const currentPrice = signal?.pair ? livePrices[signal.pair] : undefined;
         const rr = calculateTradeRr(trade);
         const potentialProfit = calculateTradePotentialProfit(trade);
         const liveRiskPercent = getTradeRiskPercent(trade);
@@ -299,29 +307,24 @@ const ActiveTrades = () => {
         >
           {/* Mobile Layout (< lg) */}
           <div className="block lg:hidden space-y-4">
-            {/* Header Row: Direction + Pair + Status */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className={cn("p-2 rounded-xl shrink-0", signal?.direction === "BUY" ? "bg-success/20" : "bg-destructive/20")}>
-                  {signal?.direction === "BUY" ? <ArrowUpRight className="w-4 h-4 text-success" /> : <ArrowDownRight className="w-4 h-4 text-destructive" />}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm">{signal?.pair}</h3>
-                    <Badge variant="outline" className="text-xs">
-                      {signal?.category}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{getTimeAgo(trade.created_at)}</p>
-                </div>
-              </div>
+            {/* Header Row: Direction + Pair */}
+            <div className="flex items-center gap-3">
               <div className={cn("px-3 py-1.5 rounded-lg text-xs font-medium shrink-0", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
                 {signal?.direction}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-sm">{signal?.pair}</h3>
+                  <Badge variant="outline" className="text-xs">
+                    {signal?.category}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{getTimeAgo(trade.created_at)}</p>
               </div>
             </div>
 
             {/* Price Grid */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className={cn("grid gap-2", isLiveMode && currentPrice != null ? "grid-cols-4" : "grid-cols-3")}>
               <div className="py-2 px-3 rounded-lg bg-primary/10 text-center">
                 <p className="text-muted-foreground text-[10px] mb-0.5">Entry</p>
                 <p className="text-primary font-mono text-xs font-medium">{signal?.entry_price}</p>
@@ -334,14 +337,16 @@ const ActiveTrades = () => {
                 <p className="text-muted-foreground text-[10px] mb-0.5">TP</p>
                 <p className="text-success font-mono text-xs font-medium">{signal?.take_profit}</p>
               </div>
+              {isLiveMode && currentPrice != null && (
+                <div className="py-2 px-3 rounded-lg bg-secondary text-center">
+                  <p className="text-muted-foreground text-[10px] mb-0.5">Current</p>
+                  <p className="font-mono text-xs font-medium">{currentPrice}</p>
+                </div>
+              )}
             </div>
 
             {/* Stats Row */}
-            <div className="grid grid-cols-4 gap-2">
-              <div className="py-2 px-2 rounded-lg bg-primary/10 border border-primary/30 text-center">
-                <p className="text-muted-foreground text-[10px] mb-0.5">Status</p>
-                <p className="text-primary font-medium text-xs">{getSignalStatus(signal?.status || 'active')}</p>
-              </div>
+            <div className="grid grid-cols-3 gap-2">
               <div className="py-2 px-2 rounded-lg bg-secondary text-center">
                 <p className="text-muted-foreground text-[10px] mb-0.5">R:R</p>
                 <p className="text-secondary-foreground font-mono text-xs font-medium">1:{rr.toFixed(1)}</p>
@@ -385,10 +390,10 @@ const ActiveTrades = () => {
           </div>
 
           {/* Desktop Layout (lg+) */}
-          <div className="hidden lg:grid grid-cols-[repeat(14,minmax(0,1fr))] gap-4 items-center">
-            {/* Direction Icon - col-span-1 */}
-            <div className={cn("p-2.5 rounded-xl justify-self-start", signal?.direction === "BUY" ? "bg-success/20" : "bg-destructive/20")}>
-              {signal?.direction === "BUY" ? <ArrowUpRight className="w-5 h-5 text-success" /> : <ArrowDownRight className="w-5 h-5 text-destructive" />}
+          <div className="hidden lg:grid grid-cols-[repeat(13,minmax(0,1fr))] gap-4 items-center">
+            {/* Direction Badge - col-span-1 */}
+            <div className={cn("col-span-1 inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium w-full", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
+              {signal?.direction}
             </div>
 
             {/* Pair Info - col-span-2 */}
@@ -397,19 +402,6 @@ const ActiveTrades = () => {
               <Badge variant="outline" className="text-xs">
                 {signal?.category}
               </Badge>
-            </div>
-
-            {/* Direction Badge - col-span-1 */}
-            <div className={cn("col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium w-full", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
-              <ArrowUpRight className={cn("w-4 h-4", signal?.direction === "SELL" && "hidden")} />
-              <ArrowDownRight className={cn("w-4 h-4", signal?.direction === "BUY" && "hidden")} />
-              {signal?.direction}
-            </div>
-
-            {/* Status - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-primary/10 border border-primary/30 text-center w-full">
-              <p className="text-muted-foreground mb-1 text-xs">Status</p>
-              <p className="text-primary font-medium text-sm truncate">{getSignalStatus(signal?.status || 'active')}</p>
             </div>
 
             {/* Entry Price - col-span-1 */}
@@ -429,6 +421,14 @@ const ActiveTrades = () => {
               <p className="text-muted-foreground mb-1 text-xs">TP</p>
               <p className="text-success font-mono text-sm font-medium truncate">{signal?.take_profit}</p>
             </div>
+
+            {/* Current Price - col-span-1 (Live Mode only) */}
+            {isLiveMode && currentPrice != null && (
+              <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary text-center w-full">
+                <p className="text-muted-foreground mb-1 text-xs">Current</p>
+                <p className="font-mono text-sm font-medium truncate">{currentPrice}</p>
+              </div>
+            )}
 
             {/* Started Time - col-span-1 */}
             <div className="col-span-1 py-2 px-2 rounded-lg border border-border/50 text-center w-full">

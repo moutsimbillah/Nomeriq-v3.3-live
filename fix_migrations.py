@@ -1,7 +1,7 @@
 import re
 
 # Read the original file
-with open('supabase/consolidated_migrations.sql', 'r', encoding='utf-8') as f:
+with open('supabase/dev/consolidated_migrations.sql', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Only replace standalone ALTER PUBLICATION statements (not already in DO blocks)
@@ -29,7 +29,7 @@ END $$;''')
         result_lines.append(line)
 
 # Write the fixed file
-with open('supabase/consolidated_migrations_fixed.sql', 'w', encoding='utf-8') as f:
+with open('supabase/dev/consolidated_migrations_fixed.sql', 'w', encoding='utf-8') as f:
     f.write('\n'.join(result_lines))
 
 print("Fixed SQL file created successfully!")

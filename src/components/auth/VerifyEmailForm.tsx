@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, Mail, RefreshCw } from "lucide-react";
@@ -13,12 +13,44 @@ interface VerifyEmailFormProps {
     onClose?: () => void;
 }
 
+const getPendingVerificationEmail = () => {
+    if (typeof window === "undefined") return "";
+    return (window.sessionStorage.getItem("pending_verification_email") || "").trim().toLowerCase();
+};
+
+const extractFunctionErrorMessage = async (error: unknown, fallback: string): Promise<string> => {
+    if (error && typeof error === "object" && "context" in error) {
+        const response = (error as { context?: unknown }).context;
+        if (response instanceof Response) {
+            try {
+                const json = await response.clone().json();
+                if (json && typeof json === "object") {
+                    if ("error" in json && typeof (json as { error?: unknown }).error === "string") {
+                        return (json as { error: string }).error;
+                    }
+                    if ("message" in json && typeof (json as { message?: unknown }).message === "string") {
+                        return (json as { message: string }).message;
+                    }
+                }
+            } catch {
+                // Ignore and fallback.
+            }
+        }
+    }
+
+    if (error && typeof error === "object" && "message" in error) {
+        const message = (error as { message?: unknown }).message;
+        if (typeof message === "string" && message.trim()) {
+            return message;
+        }
+    }
+
+    return fallback;
+};
+
 export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }: VerifyEmailFormProps) => {
-    const storedEmail =
-        typeof window !== "undefined"
-            ? window.sessionStorage.getItem("pending_verification_email") || ""
-            : "";
-    const [email] = useState((initialEmail || storedEmail).trim().toLowerCase());
+    const normalizedInitialEmail = (initialEmail || "").trim().toLowerCase();
+    const email = normalizedInitialEmail || getPendingVerificationEmail();
     const [code, setCode] = useState("");
     const [isVerifying, setIsVerifying] = useState(false);
     const [isResending, setIsResending] = useState(false);
@@ -32,14 +64,9 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
         window.sessionStorage.setItem("pending_verification_email", email);
     }, [email]);
 
-    // Auto-submit when 6 digits entered
-    useEffect(() => {
-        if (code.length === 6 && !isVerifying && !isVerified && email) {
-            handleVerify();
-        }
-    }, [code, isVerifying, isVerified, email]);
+    const handleVerify = useCallback(async () => {
+        const emailToVerify = email || getPendingVerificationEmail();
 
-    const handleVerify = async () => {
         if (code.length !== 6 || isVerifying || isVerified) {
             if (code.length !== 6) {
                 toast({
@@ -51,7 +78,7 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
             return;
         }
 
-        if (!email) {
+        if (!emailToVerify) {
             toast({
                 title: "Email Required",
                 description: "Please enter your email address first.",
@@ -64,14 +91,19 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
 
         try {
             const { data, error } = await supabase.functions.invoke("verify-email-token", {
-                body: { email, code },
+                body: { email: emailToVerify, code },
             });
 
             if (error) {
                 console.error("Verification function error:", error);
+                const reason = await extractFunctionErrorMessage(error, "Invalid or expired verification code. Please try again.");
+                const isRateLimited =
+                    reason.toLowerCase().includes("too many") || reason.toLowerCase().includes("rate");
                 toast({
                     title: "Verification Failed",
-                    description: "Invalid or expired verification code. Please try again.",
+                    description: isRateLimited
+                        ? "Too many verification attempts. Please wait before trying again."
+                        : reason,
                     variant: "destructive",
                 });
                 setCode("");
@@ -119,10 +151,19 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
             setCode("");
             setIsVerifying(false);
         }
-    };
+    }, [authModal, code, email, isVerified, isVerifying, navigate, onClose, toast]);
+
+    // Auto-submit when 6 digits entered
+    useEffect(() => {
+        if (code.length === 6 && !isVerifying && !isVerified && email) {
+            void handleVerify();
+        }
+    }, [code, email, handleVerify, isVerified, isVerifying]);
 
     const handleResend = async () => {
-        if (!email) {
+        const emailToResend = email || getPendingVerificationEmail();
+
+        if (!emailToResend) {
             toast({
                 title: "Error",
                 description: "Email address not found. Please sign up again.",
@@ -135,14 +176,19 @@ export const VerifyEmailForm = ({ email: initialEmail, onBackToLogin, onClose }:
 
         try {
             const { data, error } = await supabase.functions.invoke("send-verification-email", {
-                body: { email },
+                body: { email: emailToResend },
             });
 
             if (error) {
                 console.error("Resend function error:", error);
+                const reason = await extractFunctionErrorMessage(error, "Please wait a moment and try again.");
+                const isRateLimited =
+                    reason.toLowerCase().includes("too many") || reason.toLowerCase().includes("rate");
                 toast({
                     title: "Unable to Send Code",
-                    description: "Please wait a moment and try again.",
+                    description: isRateLimited
+                        ? "Too many code requests. Please wait up to 1 hour before requesting another code."
+                        : reason,
                     variant: "destructive",
                 });
                 return;

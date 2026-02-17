@@ -1,4 +1,3 @@
-import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { useAuthModal } from "@/contexts/AuthModalContext";
 import { LoginForm } from "./LoginForm";
@@ -8,14 +7,6 @@ import { VerifyEmailForm } from "./VerifyEmailForm";
 
 export const AuthModal = () => {
     const { isOpen, view, closeModal, openModal } = useAuthModal();
-    const [email, setEmail] = useState("");
-
-    // Reset email when modal closes
-    useEffect(() => {
-        if (!isOpen) {
-            setEmail("");
-        }
-    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -28,7 +19,7 @@ export const AuthModal = () => {
             case "forgot-password":
                 return <ForgotPasswordForm onBackToLogin={() => openModal("login")} onClose={closeModal} />;
             case "verify-email":
-                return <VerifyEmailForm email={email} onBackToLogin={() => openModal("login")} onClose={closeModal} />;
+                return <VerifyEmailForm onBackToLogin={() => openModal("login")} onClose={closeModal} />;
             default:
                 return null;
         }
