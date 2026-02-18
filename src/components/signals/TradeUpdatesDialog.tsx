@@ -6,6 +6,8 @@ import { Bell, Info } from "lucide-react";
 import { SignalTakeProfitUpdate, UserTrade } from "@/types/database";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
+import { calculateSignedSignalRrForTarget } from "@/lib/trade-math";
+import { cn } from "@/lib/utils";
 
 interface TradeUpdatesDialogProps {
   trade: UserTrade;
@@ -17,16 +19,8 @@ interface TradeUpdatesDialogProps {
 
 const calculateRR = (trade: UserTrade, tpPrice: number): number => {
   const signal = trade.signal;
-  const entry = signal?.entry_price || 0;
-  const sl = signal?.stop_loss || 0;
-  if (!signal || entry === 0) return 1;
-
-  if (signal.direction === "BUY") {
-    if (entry - sl === 0) return 1;
-    return Math.abs((tpPrice - entry) / (entry - sl));
-  }
-  if (sl - entry === 0) return 1;
-  return Math.abs((entry - tpPrice) / (sl - entry));
+  if (!signal) return 0;
+  return calculateSignedSignalRrForTarget(signal, tpPrice);
 };
 
 export const TradeUpdatesDialog = ({
@@ -216,7 +210,14 @@ export const TradeUpdatesDialog = ({
                         </div>
                         <div className="rounded border border-border/40 px-2 py-1.5">
                           <p className="text-muted-foreground">Realized Profit</p>
-                          <p className="font-semibold text-success">+${row.realizedProfit.toFixed(2)}</p>
+                          <p
+                            className={cn(
+                              "font-semibold",
+                              row.realizedProfit >= 0 ? "text-success" : "text-destructive"
+                            )}
+                          >
+                            {row.realizedProfit >= 0 ? "+" : ""}${row.realizedProfit.toFixed(2)}
+                          </p>
                         </div>
                         <div className="rounded border border-border/40 px-2 py-1.5">
                           <p className="text-muted-foreground">Remaining</p>
@@ -248,7 +249,14 @@ export const TradeUpdatesDialog = ({
                 <Badge variant="outline">{row.tp_label}</Badge>
                 <span className="text-sm font-mono">TP: {row.tp_price}</span>
                 <span className="text-sm text-primary font-semibold">Close: {row.closePercent.toFixed(2)}%</span>
-                <span className="text-sm text-success font-semibold">+${row.realizedProfit.toFixed(2)}</span>
+                <span
+                  className={cn(
+                    "text-sm font-semibold",
+                    row.realizedProfit >= 0 ? "text-success" : "text-destructive"
+                  )}
+                >
+                  {row.realizedProfit >= 0 ? "+" : ""}${row.realizedProfit.toFixed(2)}
+                </span>
                 <span className="text-xs text-muted-foreground">Remaining: {row.remainingAfterPercent.toFixed(2)}%</span>
               </div>
               {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}

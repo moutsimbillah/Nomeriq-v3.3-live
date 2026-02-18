@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import {
   calculateDisplayedPotentialProfit,
   calculateSignalRrForTarget,
+  calculateSignedSignalRrForTarget,
 } from "@/lib/trade-math";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -811,7 +812,7 @@ export const DayDetailModal = ({
                                               if (closePercent >= 100) {
                                                 remainingAfterRisk = 0;
                                               }
-                                              const updateRr = calculateSignalRrForTarget(
+                                              const updateRr = calculateSignedSignalRrForTarget(
                                                 trade.signal,
                                                 Number(u.tp_price)
                                               );
@@ -823,7 +824,14 @@ export const DayDetailModal = ({
                                                   <span className="px-2 py-0.5 rounded-full border border-border/50 text-xs">{u.tp_label}</span>
                                                   <span className="font-mono">Price: {u.tp_price}</span>
                                                   <span className="text-primary">Close: {closePercent.toFixed(2)}%</span>
-                                                  <span className="text-success font-semibold">Profit: +${realizedProfit.toFixed(2)}</span>
+                                                  <span
+                                                    className={cn(
+                                                      "font-semibold",
+                                                      realizedProfit >= 0 ? "text-success" : "text-destructive"
+                                                    )}
+                                                  >
+                                                    Profit: {realizedProfit >= 0 ? "+" : ""}${realizedProfit.toFixed(2)}
+                                                  </span>
                                                   <span className="text-muted-foreground">Remaining: {remainingAfterPercent.toFixed(2)}%</span>
                                                   {u.note && <span className="text-muted-foreground">- {u.note}</span>}
                                                 </div>

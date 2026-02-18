@@ -12,6 +12,7 @@ import { resolveAnalysisImageUrl } from "@/lib/signalAnalysisMedia";
 import {
   calculateDisplayedPotentialProfit,
   calculateSignalRrForTarget,
+  calculateSignedSignalRrForTarget,
 } from "@/lib/trade-math";
 
 interface TradeDetailsDialogProps {
@@ -58,7 +59,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
       if (closePercent >= 100) {
         remainingAfterRisk = 0;
       }
-      const rrAtTp = calculateSignalRrForTarget(signal, Number(u.tp_price));
+      const rrAtTp = calculateSignedSignalRrForTarget(signal, Number(u.tp_price));
       const realizedProfit = reducedRisk * rrAtTp;
       const remainingAfterPercent = initialRisk > 0 ? (remainingAfterRisk / initialRisk) * 100 : 0;
       runningRemainingRisk = remainingAfterRisk;
@@ -214,7 +215,14 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
                       <Badge variant="outline">{u.tp_label}</Badge>
                       <span className="font-mono">Price: {u.tp_price}</span>
                       <span className="text-primary">Close: {u.closePercent.toFixed(2)}%</span>
-                      <span className="text-success font-semibold">Profit: +${u.realizedProfit.toFixed(2)}</span>
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          u.realizedProfit >= 0 ? "text-success" : "text-destructive"
+                        )}
+                      >
+                        Profit: {u.realizedProfit >= 0 ? "+" : ""}${u.realizedProfit.toFixed(2)}
+                      </span>
                       <span className="text-muted-foreground">Remaining: {u.remainingAfterPercent.toFixed(2)}%</span>
                       {u.note && <span className="text-muted-foreground">- {u.note}</span>}
                     </div>
