@@ -18,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useLivePrices } from "@/hooks/useLivePrices";
-import { computeLiveTradePnL } from "@/lib/admin-metrics";
+import { computeLiveTradePnL, getExposureRiskAmount, getOpenRiskAmount } from "@/lib/admin-metrics";
+import { calculateSignalRrForTarget } from "@/lib/trade-math";
 
 const ActiveTrades = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -193,7 +194,7 @@ const ActiveTrades = () => {
 
     previousUpdateIdsRef.current = currentIds;
   }, [updatesBySignal, initialUpdatesLoaded, isProvider]);
-  const getOpenRisk = (trade: UserTrade) => Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
+  const getOpenRisk = (trade: UserTrade) => getOpenRiskAmount(trade);
   const getTradeRiskPercent = (trade: UserTrade) => Number(trade.risk_percent ?? settings?.global_risk_percent ?? 2);
   const getTargetTpFromUpdates = (trade: UserTrade) => {
     const signal = trade.signal;
@@ -210,20 +211,11 @@ const ActiveTrades = () => {
       : Math.max(...tpPrices);
   };
   const calculateTradeRr = (trade: UserTrade) => {
-    const signal = trade.signal;
-    const entry = signal?.entry_price || 0;
-    const sl = signal?.stop_loss || 0;
     const targetTp = getTargetTpFromUpdates(trade);
-    let rr = 0;
-    if (signal?.direction === "BUY" && entry - sl !== 0) {
-      rr = Math.abs((targetTp - entry) / (entry - sl));
-    } else if (signal?.direction === "SELL" && sl - entry !== 0) {
-      rr = Math.abs((entry - targetTp) / (sl - entry));
-    }
-    return rr;
+    return calculateSignalRrForTarget(trade.signal, targetTp);
   };
   const calculateTradePotentialProfit = (trade: UserTrade) => {
-    return getOpenRisk(trade) * calculateTradeRr(trade);
+    return getExposureRiskAmount(trade) * calculateTradeRr(trade);
   };
   const totalRisk = displayTrades.reduce((sum, t) => sum + getOpenRisk(t), 0);
   const averageLiveRiskPercent = displayTrades.length

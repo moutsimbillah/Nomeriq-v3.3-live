@@ -30,6 +30,17 @@ export interface TelegramTradeUpdatePayload {
   note?: string | null;
 }
 
+export interface TelegramMoveSlToBreakevenPayload {
+  pair: string;
+  category: string;
+  direction: string;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  previous_stop_loss?: number | null;
+  note?: string | null;
+}
+
 export interface TelegramTradeClosedPayload {
   pair: string;
   category: string;
@@ -321,6 +332,30 @@ export async function sendTelegramTradeUpdate(params: {
     `${signal.tp_label}\n` +
     `Price: ${signal.tp_price}\n` +
     `Close: ${signal.close_percent}%` +
+    `${noteLine}`;
+
+  return sendTelegramMessageToCategory(signal.category, message);
+}
+
+export async function sendTelegramMoveSlToBreakeven(params: {
+  signal: TelegramMoveSlToBreakevenPayload;
+}): Promise<TelegramDeliveryResult> {
+  const { signal } = params;
+  const noteLine = signal.note ? `\nNote: ${signal.note}` : "";
+  const coreLines = buildCoreTradeLines({
+    category: signal.category,
+    direction: signal.direction,
+    pair: signal.pair,
+    entry: signal.entry_price,
+    stopLoss: signal.stop_loss,
+    takeProfit: signal.take_profit,
+  });
+  const message =
+    `TRADE UPDATE\n\n` +
+    `${coreLines}\n\n` +
+    `Move SL to Break Even\n` +
+    `Previous SL: ${signal.previous_stop_loss ?? "-"}\n` +
+    `New SL: ${signal.entry_price ?? "-"}` +
     `${noteLine}`;
 
   return sendTelegramMessageToCategory(signal.category, message);

@@ -160,6 +160,17 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
             fetchTrades();
           }
         )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'signals',
+          },
+          () => {
+            fetchTrades();
+          }
+        )
         .subscribe();
 
       return () => {

@@ -18,8 +18,9 @@ import { Button } from "@/components/ui/button";
 import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useProviderNameMap } from "@/hooks/useProviderNameMap";
 import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
-import { computeOpenTradeMetrics, computeLiveTradePnL } from "@/lib/admin-metrics";
+import { computeOpenTradeMetrics, computeLiveTradePnL, getExposureRiskAmount, getOpenRiskAmount } from "@/lib/admin-metrics";
 import { useLivePrices } from "@/hooks/useLivePrices";
+import { calculateSignalRrForTarget } from "@/lib/trade-math";
 
 interface ActiveTradesTableProps {
   adminGlobalView?: boolean;
@@ -212,8 +213,7 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     currentIds.forEach((id) => prevUpdateIdsRef.add(id));
   }, [updatesBySignal, isProvider, adminGlobalView, isInitialUpdateLoad, prevUpdateIdsRef]);
 
-  const getOpenRisk = (trade: UserTrade) =>
-    Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
+  const getOpenRisk = (trade: UserTrade) => getOpenRiskAmount(trade);
   const getTradeRiskPercent = (trade: UserTrade) => Number(trade.risk_percent ?? settings?.global_risk_percent ?? 2);
   const getTargetTpFromUpdates = (trade: UserTrade) => {
     const signal = trade.signal;
@@ -230,20 +230,11 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
       : Math.max(...tpPrices);
   };
   const calculateTradeRr = (trade: UserTrade) => {
-    const signal = trade.signal;
-    const entry = signal?.entry_price || 0;
-    const sl = signal?.stop_loss || 0;
     const targetTp = getTargetTpFromUpdates(trade);
-    let rr = 0;
-    if (signal?.direction === "BUY" && entry - sl !== 0) {
-      rr = Math.abs((targetTp - entry) / (entry - sl));
-    } else if (signal?.direction === "SELL" && sl - entry !== 0) {
-      rr = Math.abs((entry - targetTp) / (sl - entry));
-    }
-    return rr;
+    return calculateSignalRrForTarget(trade.signal, targetTp);
   };
   const calculateTradePotentialProfit = (trade: UserTrade) => {
-    return getOpenRisk(trade) * calculateTradeRr(trade);
+    return getExposureRiskAmount(trade) * calculateTradeRr(trade);
   };
   const openTradeMetrics = computeOpenTradeMetrics(displayTrades, {
     getRiskPercent: getTradeRiskPercent,

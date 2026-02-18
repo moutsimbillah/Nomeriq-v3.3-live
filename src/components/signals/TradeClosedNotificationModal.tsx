@@ -8,7 +8,7 @@ import { TrendingUp, TrendingDown, Target, ShieldAlert, CheckCircle2, XCircle, M
 import { cn } from "@/lib/utils";
 import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
 
-type NotificationType = "trade_closed" | "new_signal" | "signal_active" | "trade_update";
+type NotificationType = "trade_closed" | "new_signal" | "signal_active" | "trade_update" | "sl_breakeven";
 type TradeClosedStatus = "tp_hit" | "sl_hit" | "breakeven";
 
 interface UserTrade {
@@ -33,6 +33,7 @@ interface NotificationItem {
   userTrade?: UserTrade | null;
   tradeUpdate?: SignalTakeProfitUpdate | null;
   appliedTradeUpdate?: UserTradeTakeProfitUpdate | null;
+  previousStopLoss?: number | null;
 }
 
 interface TradeClosedNotificationModalProps {
@@ -49,6 +50,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const shownNotificationsRef = useRef<Set<string>>(new Set());
   const knownUpcomingSignalIdsRef = useRef<Set<string>>(new Set());
+  const lastSignalStopLossRef = useRef<Map<string, number | null>>(new Map());
   const lastSyncAtRef = useRef<string>(new Date().toISOString());
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wentOfflineRef = useRef(false);
@@ -203,6 +205,14 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
   const processSignalInsert = useCallback((newSignal: Signal, source: "realtime" | "catchup" = "realtime") => {
     if (!canReceiveRef.current) return;
+    const currentStopLoss =
+      newSignal.stop_loss === null || newSignal.stop_loss === undefined
+        ? null
+        : Number(newSignal.stop_loss);
+    lastSignalStopLossRef.current.set(
+      newSignal.id,
+      currentStopLoss !== null && Number.isFinite(currentStopLoss) ? currentStopLoss : null
+    );
     bumpLastSync(newSignal.created_at || newSignal.updated_at);
     if (
       allowedCategoriesRef.current.length > 0 &&
@@ -242,6 +252,45 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     ) {
       return;
     }
+    const rememberStopLoss = () => {
+      const currentStopLoss =
+        updatedSignal.stop_loss === null || updatedSignal.stop_loss === undefined
+          ? null
+          : Number(updatedSignal.stop_loss);
+      lastSignalStopLossRef.current.set(
+        updatedSignal.id,
+        currentStopLoss !== null && Number.isFinite(currentStopLoss) ? currentStopLoss : null
+      );
+    };
+
+    const knownPreviousStopLoss = lastSignalStopLossRef.current.get(updatedSignal.id);
+    const previousStopLossFromPayload =
+      oldSignal?.stop_loss === null || oldSignal?.stop_loss === undefined
+        ? null
+        : Number(oldSignal.stop_loss);
+    const previousStopLossNum =
+      previousStopLossFromPayload !== null && Number.isFinite(previousStopLossFromPayload)
+        ? previousStopLossFromPayload
+        : knownPreviousStopLoss ?? null;
+
+    const entryPrice = Number(updatedSignal.entry_price);
+    const stopLoss = Number(updatedSignal.stop_loss);
+    const trackingStatus = (updatedSignal.tracking_status || "").toLowerCase();
+    const previousTrackingStatus = ((oldSignal as { tracking_status?: string | null } | null)?.tracking_status || "").toLowerCase();
+
+    const movedToBreakeven =
+      updatedSignal.signal_type === "signal" &&
+      updatedSignal.status === "active" &&
+      Number.isFinite(entryPrice) &&
+      Number.isFinite(stopLoss) &&
+      Math.abs(stopLoss - entryPrice) < 1e-8 &&
+      (
+        (trackingStatus === "breakeven_moved" && previousTrackingStatus !== "breakeven_moved") ||
+        (previousStopLossNum !== null &&
+          Number.isFinite(previousStopLossNum) &&
+          Math.abs(previousStopLossNum - entryPrice) > 1e-8)
+      );
+
     if (updatedSignal.signal_type === "upcoming" || updatedSignal.status === "upcoming") {
       knownUpcomingSignalIdsRef.current.add(updatedSignal.id);
     }
@@ -255,7 +304,10 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
     if (isClosingTrade && wasNotClosed) {
       const closureKey = `trade-closed-${updatedSignal.id}-${currentStatus}`;
-      if (shownNotificationsRef.current.has(closureKey)) return;
+      if (shownNotificationsRef.current.has(closureKey)) {
+        rememberStopLoss();
+        return;
+      }
 
       const trade = await fetchUserTrade(updatedSignal.id);
       shownNotificationsRef.current.add(closureKey);
@@ -267,6 +319,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         status: currentStatus as TradeClosedStatus,
         userTrade: trade,
       });
+      rememberStopLoss();
       return;
     }
 
@@ -299,7 +352,10 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       const newSignalKey = `new-signal-${updatedSignal.id}`;
       // Prevent duplicate UX: a directly published live signal should only show "Buy/Sell Signal",
       // not an additional "Signal Now Active" card for the same signal id.
-      if (shownNotificationsRef.current.has(newSignalKey)) return;
+      if (shownNotificationsRef.current.has(newSignalKey)) {
+        rememberStopLoss();
+        return;
+      }
 
       if (!wasKnownUpcoming) {
         shownNotificationsRef.current.add(newSignalKey);
@@ -308,6 +364,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
           signal: updatedSignal,
           type: "new_signal",
         });
+        rememberStopLoss();
         return;
       }
 
@@ -319,8 +376,29 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         signal: updatedSignal,
         type: "signal_active",
       });
+      rememberStopLoss();
+      return;
     }
-  }, [addNotification, bumpLastSync]);
+
+    if (movedToBreakeven) {
+      const beKey = `sl-breakeven-${updatedSignal.id}-${updatedSignal.updated_at || ""}`;
+      if (!shownNotificationsRef.current.has(beKey)) {
+        const trade = await fetchUserTrade(updatedSignal.id);
+        shownNotificationsRef.current.add(beKey);
+        addNotification({
+          id: beKey,
+          signal: updatedSignal,
+          type: "sl_breakeven",
+          userTrade: trade,
+          previousStopLoss: previousStopLossNum,
+        });
+      }
+      rememberStopLoss();
+      return;
+    }
+
+    rememberStopLoss();
+  }, [addNotification, bumpLastSync, fetchUserTrade]);
 
   const processTradeUpdateInsert = useCallback(async (
     updateRow: SignalTakeProfitUpdate,
@@ -395,6 +473,12 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
           }
           await processSignalUpdate(sig, null, "catchup");
         } else {
+          const stopLoss =
+            sig.stop_loss === null || sig.stop_loss === undefined ? null : Number(sig.stop_loss);
+          lastSignalStopLossRef.current.set(
+            sig.id,
+            stopLoss !== null && Number.isFinite(stopLoss) ? stopLoss : null
+          );
           bumpLastSync(sig.updated_at || sig.created_at);
         }
       }
@@ -622,6 +706,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       if (type === 'new_signal') return `${count} New Signal${count > 1 ? 's' : ''}`;
       if (type === 'signal_active') return `${count} Signal${count > 1 ? 's' : ''} Now Active`;
       if (type === 'trade_update') return `${count} Trade Update${count > 1 ? 's' : ''}`;
+      if (type === 'sl_breakeven') return `${count} Risk Update${count > 1 ? 's' : ''}`;
     }
     return `${count} Notification${count > 1 ? 's' : ''}`;
   };
@@ -1002,6 +1087,74 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     );
   };
 
+  const renderStopMovedToBreakevenNotification = (notification: NotificationItem) => {
+    const { signal, previousStopLoss } = notification;
+    const isBuy = signal.direction === "BUY";
+
+    return (
+      <div
+        key={notification.id}
+        className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+      >
+        <div className="px-5 py-4 border-b border-[#1e293b] relative">
+          <button
+            onClick={() => removeNotification(notification.id)}
+            className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
+          >
+            <X className="w-4 h-4 text-slate-400" />
+          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-full bg-warning/20">
+              <ShieldAlert className="w-5 h-5 text-warning" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-warning">SL Moved To Break Even</h3>
+              <p className="text-xs font-medium text-slate-400">Provider/Admin updated risk protection</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 flex flex-wrap items-center gap-2 bg-black/20">
+          <span className={cn(
+            "px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white",
+            isBuy ? "bg-[#00c07f]" : "bg-[#ef4444]"
+          )}>
+            {signal.direction}
+          </span>
+          <span className="text-lg font-bold text-white">{signal.pair}</span>
+          <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{signal.category}</span>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl p-3 text-center border border-white/5 bg-white/5">
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest mb-1">Entry</p>
+              <p className="font-mono font-bold text-base text-white">{signal.entry_price ?? "-"}</p>
+            </div>
+            <div className="rounded-xl p-3 text-center border border-[#ef4444]/20 bg-[#ef4444]/10">
+              <p className="text-[10px] text-[#ef4444] uppercase tracking-widest mb-1">Previous SL</p>
+              <p className="font-mono font-bold text-base text-[#ef4444]">{previousStopLoss ?? "-"}</p>
+            </div>
+            <div className="rounded-xl p-3 text-center border border-warning/20 bg-warning/10">
+              <p className="text-[10px] text-warning uppercase tracking-widest mb-1">New SL</p>
+              <p className="font-mono font-bold text-base text-warning">{signal.stop_loss ?? "-"}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-5 pb-5">
+          <Button
+            onClick={() => removeNotification(notification.id)}
+            className="w-full h-12 font-bold text-white bg-warning hover:bg-warning/90 shadow-lg border-0"
+          >
+            Got it
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
   // Render notification based on type
   const renderNotification = (notification: NotificationItem) => {
     switch (notification.type) {
@@ -1013,6 +1166,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         return renderTradeClosedNotification(notification);
       case 'trade_update':
         return renderTradeUpdateNotification(notification);
+      case 'sl_breakeven':
+        return renderStopMovedToBreakevenNotification(notification);
       default:
         return null;
     }
