@@ -1,5 +1,6 @@
 import { Signal, UserTrade } from "@/types/database";
 import { calculateWinRatePercent } from "@/lib/kpi-math";
+import { calculateSignalRrForTarget, calculateSignedSignalRrForTarget } from "@/lib/trade-math";
 
 export interface ClosedTradeMetrics {
   totalClosedTrades: number;
@@ -63,24 +64,24 @@ interface OpenTradeMetricOptions {
   getTargetTp?: (trade: UserTrade) => number;
 }
 
-const getOpenRiskAmount = (trade: UserTrade): number =>
+export const getOpenRiskAmount = (trade: UserTrade): number => {
+  const baseRisk = Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
+  const entry = Number(trade.signal?.entry_price);
+  const stopLoss = Number(trade.signal?.stop_loss);
+
+  // When SL is at entry, downside risk is effectively zero.
+  if (Number.isFinite(entry) && Number.isFinite(stopLoss) && Math.abs(entry - stopLoss) < 1e-8) {
+    return 0;
+  }
+
+  return baseRisk;
+};
+
+export const getExposureRiskAmount = (trade: UserTrade): number =>
   Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
 
 const getRrForTrade = (trade: UserTrade, targetTp?: number): number => {
-  const entry = Number(trade.signal?.entry_price || 0);
-  const stopLoss = Number(trade.signal?.stop_loss || 0);
-  const tp = Number(targetTp ?? trade.signal?.take_profit ?? 0);
-  const direction = trade.signal?.direction;
-
-  if (direction === "BUY" && entry - stopLoss !== 0) {
-    return Math.abs((tp - entry) / (entry - stopLoss));
-  }
-
-  if (direction === "SELL" && stopLoss - entry !== 0) {
-    return Math.abs((entry - tp) / (stopLoss - entry));
-  }
-
-  return 0;
+  return calculateSignalRrForTarget(trade.signal, targetTp ?? trade.signal?.take_profit ?? 0);
 };
 
 export const computeOpenTradeMetrics = (
@@ -94,7 +95,7 @@ export const computeOpenTradeMetrics = (
   const totalRisk = openTrades.reduce((sum, trade) => sum + getOpenRiskAmount(trade), 0);
   const totalPotentialProfit = openTrades.reduce((sum, trade) => {
     const rr = getRrForTrade(trade, getTargetTp?.(trade));
-    return sum + getOpenRiskAmount(trade) * rr;
+    return sum + getExposureRiskAmount(trade) * rr;
   }, 0);
   const averageRiskPercent =
     openTrades.length > 0
@@ -115,17 +116,10 @@ export function computeLiveTradePnL(
   trade: UserTrade,
   currentPrice: number
 ): number {
-  const entry = Number(trade.signal?.entry_price ?? 0);
-  const sl = Number(trade.signal?.stop_loss ?? 0);
-  const riskAmount = Math.max(0, Number(trade.remaining_risk_amount ?? trade.risk_amount ?? 0));
-  const direction = trade.signal?.direction;
-  if (!entry || !sl || riskAmount === 0) return 0;
-  const riskDistance = Math.abs(entry - sl);
-  if (riskDistance === 0) return 0;
-  const positionSize = riskAmount / riskDistance;
-  if (direction === "BUY") return (currentPrice - entry) * positionSize;
-  if (direction === "SELL") return (entry - currentPrice) * positionSize;
-  return 0;
+  const riskAmount = getExposureRiskAmount(trade);
+  if (riskAmount === 0) return 0;
+  const rrNow = calculateSignedSignalRrForTarget(trade.signal, currentPrice);
+  return riskAmount * rrNow;
 }
 
 export const computeLiveSignalMetrics = (

@@ -1,37 +1,21 @@
 import { supabase } from "@/integrations/supabase/client";
 import { fetchLiveQuote, pairToTwelveDataSymbol } from "@/lib/market-api";
 import type { Signal } from "@/types/database";
+import { calculateSignedSignalRrForTarget } from "@/lib/trade-math";
 
 export type LiveCloseStatus = "tp_hit" | "sl_hit" | "breakeven";
 
 const EPSILON = 1e-9;
 
 export function deriveLiveCloseOutcome(
-  signal: Pick<Signal, "direction" | "entry_price" | "stop_loss">,
+  signal: Pick<Signal, "direction" | "entry_price" | "stop_loss" | "take_profit" | "risk_reference_sl">,
   closePrice: number
 ): { status: LiveCloseStatus; rr: number } {
-  const entry = Number(signal.entry_price);
-  const stop = Number(signal.stop_loss);
-
-  if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(closePrice)) {
+  if (!Number.isFinite(Number(closePrice))) {
     return { status: "breakeven", rr: 0 };
   }
 
-  const riskPerUnit =
-    signal.direction === "BUY" ? entry - stop : stop - entry;
-
-  if (!Number.isFinite(riskPerUnit) || Math.abs(riskPerUnit) < EPSILON) {
-    const directionalDiff =
-      signal.direction === "BUY" ? closePrice - entry : entry - closePrice;
-    if (directionalDiff > EPSILON) return { status: "tp_hit", rr: 0 };
-    if (directionalDiff < -EPSILON) return { status: "sl_hit", rr: 0 };
-    return { status: "breakeven", rr: 0 };
-  }
-
-  const rr =
-    signal.direction === "BUY"
-      ? (closePrice - entry) / riskPerUnit
-      : (entry - closePrice) / riskPerUnit;
+  const rr = calculateSignedSignalRrForTarget(signal, closePrice);
 
   if (rr > EPSILON) return { status: "tp_hit", rr };
   if (rr < -EPSILON) return { status: "sl_hit", rr };
@@ -65,7 +49,7 @@ export async function resolveLiveQuoteSymbol(
 export async function getLiveCloseSnapshot(
   signal: Pick<
     Signal,
-    "entry_quote_id" | "pair" | "category" | "direction" | "entry_price" | "stop_loss"
+    "entry_quote_id" | "pair" | "category" | "direction" | "entry_price" | "stop_loss" | "take_profit" | "risk_reference_sl"
   >
 ): Promise<{
   symbol: string;

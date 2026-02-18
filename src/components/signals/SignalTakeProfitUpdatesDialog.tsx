@@ -15,11 +15,12 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
-import { sendTelegramTradeUpdate } from "@/lib/telegram";
+import { sendTelegramMoveSlToBreakeven, sendTelegramTradeUpdate } from "@/lib/telegram";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
 import { supabase } from "@/integrations/supabase/client";
+import { calculateSignedSignalRrForTarget } from "@/lib/trade-math";
 
 interface FormRow {
   tpPrice: string;
@@ -39,31 +40,11 @@ interface MarketPriceLock {
   price: number;
   quotedAt: string;
   symbol: string;
-  expiresAtMs: number;
 }
 
 const calculateRr = (signal: Signal, tpPrice: number): number => {
-  const entry = Number(signal.entry_price);
-  const sl = Number(signal.stop_loss);
-  if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tpPrice)) return 0;
-
-  if (signal.direction === "BUY") {
-    const risk = entry - sl;
-    if (risk === 0) {
-      if (tpPrice > entry) return 1;
-      if (tpPrice < entry) return -1;
-      return 0;
-    }
-    return (tpPrice - entry) / risk;
-  }
-
-  const risk = sl - entry;
-  if (risk === 0) {
-    if (tpPrice < entry) return 1;
-    if (tpPrice > entry) return -1;
-    return 0;
-  }
-  return (entry - tpPrice) / risk;
+  if (!Number.isFinite(Number(signal.entry_price)) || !Number.isFinite(Number(tpPrice))) return 0;
+  return calculateSignedSignalRrForTarget(signal, tpPrice);
 };
 
 export const SignalTakeProfitUpdatesDialog = ({
@@ -81,7 +62,8 @@ export const SignalTakeProfitUpdatesDialog = ({
   const [tpMode, setTpMode] = useState<TpUpdateMode>("limit");
   const [marketPriceLock, setMarketPriceLock] = useState<MarketPriceLock | null>(null);
   const [isLockingMarketPrice, setIsLockingMarketPrice] = useState(false);
-  const [lockClockMs, setLockClockMs] = useState(() => Date.now());
+  const [marketLockFailed, setMarketLockFailed] = useState(false);
+  const [isMovingSlToBreakeven, setIsMovingSlToBreakeven] = useState(false);
   const isLiveSignal = signal.market_mode === "live";
   const isMarketMode = isLiveSignal && tpMode === "market";
   const livePrices = useLivePrices(open && isLiveSignal && signal.pair ? [signal.pair] : []);
@@ -98,9 +80,6 @@ export const SignalTakeProfitUpdatesDialog = ({
         : "text-destructive";
   const currentLivePnlLabel =
     currentLiveRr == null ? "--" : `${currentLiveRr >= 0 ? "+" : ""}${currentLiveRr.toFixed(2)}R`;
-  const marketLockRemainingMs = marketPriceLock ? Math.max(0, marketPriceLock.expiresAtMs - lockClockMs) : 0;
-  const marketLockRemainingSeconds = Math.ceil(marketLockRemainingMs / 1000);
-  const marketLockExpired = isMarketMode && (!!marketPriceLock && marketLockRemainingMs <= 0);
 
   const { updatesBySignal, refetch } = useSignalTakeProfitUpdates({
     signalIds: [signal.id],
@@ -157,14 +136,6 @@ export const SignalTakeProfitUpdatesDialog = ({
     if (!open) return;
     void fetchRemainingExposure();
   }, [open, fetchRemainingExposure]);
-  useEffect(() => {
-    if (!open || !isMarketMode) return;
-    setLockClockMs(Date.now());
-    const timer = setInterval(() => {
-      setLockClockMs(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [open, isMarketMode]);
 
   const totalPlannedClosePercent = useMemo(
     () =>
@@ -181,6 +152,33 @@ export const SignalTakeProfitUpdatesDialog = ({
     typeof accountBalance === "number" && accountBalance > 0
       ? (accountBalance * riskPercent) / 100
       : null;
+  const EPSILON = 1e-9;
+  const entryPriceValue = Number(signal.entry_price);
+  const stopLossValue = Number(signal.stop_loss);
+  const canMoveSlBase =
+    Number.isFinite(entryPriceValue) &&
+    Number.isFinite(stopLossValue) &&
+    Math.abs(stopLossValue - entryPriceValue) > EPSILON;
+  const hasLivePriceForBreakeven =
+    isLiveSignal &&
+    Number.isFinite(entryPriceValue) &&
+    typeof currentMarketPrice === "number" &&
+    Number.isFinite(currentMarketPrice);
+  const isCurrentPriceInProfitForBreakeven = !isLiveSignal
+    ? true
+    : hasLivePriceForBreakeven
+      ? signal.direction === "BUY"
+        ? currentMarketPrice > entryPriceValue + EPSILON
+        : currentMarketPrice < entryPriceValue - EPSILON
+      : false;
+  const canMoveSlToBreakeven = canMoveSlBase && isCurrentPriceInProfitForBreakeven;
+  const moveSlDisabledReason = !canMoveSlBase
+    ? "SL is already at break even."
+    : isLiveSignal && !hasLivePriceForBreakeven
+      ? "Waiting for live price..."
+      : isLiveSignal && !isCurrentPriceInProfitForBreakeven
+        ? "Allowed only when current price is in profit."
+        : undefined;
 
   const addRow = () => {
     if (isMarketMode) return;
@@ -220,49 +218,31 @@ export const SignalTakeProfitUpdatesDialog = ({
         price: Number(snapshot.closePrice),
         quotedAt: snapshot.closeQuotedAt,
         symbol: snapshot.symbol,
-        expiresAtMs: Date.now() + 15000,
       };
       setMarketPriceLock(nextLock);
+      setMarketLockFailed(false);
       setRows((prev) => {
         const first = prev[0] || { tpPrice: "", closePercent: "", note: "" };
         return [{ ...first, tpPrice: nextLock.price.toString() }];
       });
       return nextLock;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to fetch market price.";
-      toast.error(getSafeErrorMessage(msg, "Failed to lock current market price."));
+      console.warn("Market quote sync failed:", err);
+      setMarketLockFailed(true);
       return null;
     } finally {
       setIsLockingMarketPrice(false);
     }
   }, [isLiveSignal, signal]);
 
-  const ensureFreshMarketLock = useCallback(async (): Promise<MarketPriceLock | null> => {
-    if (!isMarketMode) return null;
-    if (marketPriceLock && marketPriceLock.expiresAtMs > Date.now()) {
-      return marketPriceLock;
-    }
-    return lockMarketPrice();
-  }, [isMarketMode, marketPriceLock, lockMarketPrice]);
-
   useEffect(() => {
     if (!open || !isMarketMode) return;
-    setRows((prev) => {
-      const first = prev[0] || { tpPrice: "", closePercent: "", note: "" };
-      return [
-        {
-          ...first,
-          tpPrice:
-            marketPriceLock?.price != null
-              ? marketPriceLock.price.toString()
-              : first.tpPrice,
-        },
-      ];
-    });
-    if (!marketPriceLock || marketPriceLock.expiresAtMs <= Date.now()) {
+    void lockMarketPrice();
+    const interval = setInterval(() => {
       void lockMarketPrice();
-    }
-  }, [open, isMarketMode, marketPriceLock?.price, marketPriceLock?.expiresAtMs, lockMarketPrice]);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [open, isMarketMode, lockMarketPrice]);
 
   const publishRows = useCallback(
     async (
@@ -457,7 +437,7 @@ export const SignalTakeProfitUpdatesDialog = ({
       return;
     }
 
-    const lock = await ensureFreshMarketLock();
+    const lock = marketPriceLock ?? (await lockMarketPrice());
     if (!lock) {
       return;
     }
@@ -477,6 +457,75 @@ export const SignalTakeProfitUpdatesDialog = ({
     });
   };
 
+  const handleMoveSlToBreakeven = async () => {
+    if (!Number.isFinite(entryPriceValue)) {
+      toast.error("Entry price is missing. Cannot move SL to break even.");
+      return;
+    }
+    if (!canMoveSlBase) {
+      toast.info("Stop loss is already at break even.");
+      return;
+    }
+    if (isLiveSignal && !hasLivePriceForBreakeven) {
+      toast.error("Live current price is unavailable. Please wait for quote sync.");
+      return;
+    }
+    if (isLiveSignal && !isCurrentPriceInProfitForBreakeven) {
+      toast.error("Move to break-even is allowed only when current price is in profit.");
+      return;
+    }
+
+    setIsMovingSlToBreakeven(true);
+    try {
+      const { error } = await supabase
+        .from("signals")
+        .update({
+          stop_loss: entryPriceValue,
+          updated_at: new Date().toISOString(),
+        } as any)
+        .eq("id", signal.id);
+
+      if (error) throw error;
+
+      if (signal.send_updates_to_telegram) {
+        const telegramResult = await sendTelegramMoveSlToBreakeven({
+          signal: {
+            pair: signal.pair,
+            category: signal.category,
+            direction: signal.direction,
+            entry_price: signal.entry_price,
+            stop_loss: signal.stop_loss,
+            take_profit: signal.take_profit,
+            previous_stop_loss: signal.stop_loss,
+          },
+        });
+        if (telegramResult.ok === false) {
+          toast.warning(
+            getSafeErrorMessage(
+              telegramResult.error,
+              "SL moved to break even, but Telegram update failed."
+            )
+          );
+        }
+      }
+
+      toast.success("Stop loss moved to break even.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to move SL to break even.";
+      const normalized = msg.toLowerCase();
+      if (
+        normalized.includes("strictly lower than entry") ||
+        normalized.includes("strictly higher than entry")
+      ) {
+        toast.error("Backend rule still blocks break-even SL. Apply latest migration.");
+      } else {
+        toast.error(getSafeErrorMessage(msg, "Failed to move SL to break even."));
+      }
+    } finally {
+      setIsMovingSlToBreakeven(false);
+    }
+  };
+
   return (
     <Dialog
       open={open}
@@ -485,6 +534,7 @@ export const SignalTakeProfitUpdatesDialog = ({
         if (!next) {
           setTpMode("limit");
           setMarketPriceLock(null);
+          setMarketLockFailed(false);
           setRows([{ tpPrice: "", closePercent: "", note: "" }]);
         }
       }}
@@ -521,7 +571,7 @@ export const SignalTakeProfitUpdatesDialog = ({
           </div>
           <DialogDescription>
             {isMarketMode
-              ? "Market mode: TP price is locked from the live quote for 15 seconds. Set Close % and note, then press Close."
+              ? "Market mode: TP price auto-locks from the live quote every 5 seconds. Set Close % and note, then press Close."
               : "Add TP updates (TP1, TP2, TP3...) with price and close percentage."}
           </DialogDescription>
         </DialogHeader>
@@ -549,12 +599,7 @@ export const SignalTakeProfitUpdatesDialog = ({
                     type="button"
                     size="sm"
                     variant={isMarketMode ? "default" : "outline"}
-                    onClick={() => {
-                      setTpMode("market");
-                      if (!marketPriceLock || marketPriceLock.expiresAtMs <= Date.now()) {
-                        void lockMarketPrice();
-                      }
-                    }}
+                    onClick={() => setTpMode("market")}
                     disabled={isSubmitting}
                     className={cn(isMarketMode && "pointer-events-none")}
                   >
@@ -589,20 +634,11 @@ export const SignalTakeProfitUpdatesDialog = ({
                     )}
                     <span>
                       {isLockingMarketPrice
-                        ? "Locking..."
-                        : marketLockExpired
-                          ? "Expired"
-                          : `Expires in ${marketLockRemainingSeconds}s`}
+                        ? "Syncing..."
+                        : marketLockFailed
+                          ? "Live quote unavailable, retrying..."
+                          : "Auto-sync every 5s"}
                     </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void lockMarketPrice()}
-                      disabled={isLockingMarketPrice || isSubmitting}
-                    >
-                      Refresh Price
-                    </Button>
                   </div>
                 )}
               </div>
@@ -740,6 +776,18 @@ export const SignalTakeProfitUpdatesDialog = ({
             </div>
             <div className="flex items-center gap-2">
               <Button
+                variant="outline"
+                onClick={handleMoveSlToBreakeven}
+                disabled={
+                  isSubmitting ||
+                  isMovingSlToBreakeven ||
+                  !canMoveSlToBreakeven
+                }
+                title={!canMoveSlToBreakeven ? moveSlDisabledReason : undefined}
+              >
+                {isMovingSlToBreakeven ? "Moving..." : "Move SL to Break Even"}
+              </Button>
+              <Button
                 onClick={handleSubmit}
                 disabled={
                   isSubmitting ||
@@ -757,7 +805,7 @@ export const SignalTakeProfitUpdatesDialog = ({
                   onClick={handleMarketClose}
                   disabled={
                     isSubmitting ||
-                    isLockingMarketPrice ||
+                    !marketPriceLock ||
                     isRemainingLoading ||
                     (typeof remainingExposure === "number" && remainingExposure <= 0)
                   }

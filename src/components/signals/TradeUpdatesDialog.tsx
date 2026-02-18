@@ -94,11 +94,18 @@ export const TradeUpdatesDialog = ({
   const accountBalanceText = hasAccountBalance
     ? `$${Number(rawAccountBalance).toFixed(2)}`
     : "Not set";
+  const entryPrice = Number(trade.signal?.entry_price);
+  const stopLossPrice = Number(trade.signal?.stop_loss);
+  const hasBreakevenUpdate =
+    trade.result === "pending" &&
+    Number.isFinite(entryPrice) &&
+    Number.isFinite(stopLossPrice) &&
+    Math.abs(stopLossPrice - entryPrice) < 1e-8;
   const tradeRiskPercent = Math.max(0, Number(trade.risk_percent ?? 0));
   const tradeRiskAmount = Math.max(0, Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0));
   const tooltipRows = rows.slice(0, 4);
 
-  if (updates.length === 0) {
+  if (updates.length === 0 && !hasBreakevenUpdate) {
     return (
       <Button size="sm" variant="ghost" disabled className="opacity-50">
         <Bell className="w-4 h-4" />
@@ -106,7 +113,7 @@ export const TradeUpdatesDialog = ({
     );
   }
 
-  const displayCount = unseenCount > 0 ? unseenCount : updates.length;
+  const displayCount = unseenCount > 0 ? unseenCount : updates.length + (hasBreakevenUpdate ? 1 : 0);
 
   return (
     <Dialog
@@ -262,6 +269,17 @@ export const TradeUpdatesDialog = ({
               {row.note && <p className="text-xs text-muted-foreground">{row.note}</p>}
             </div>
           ))}
+          {hasBreakevenUpdate && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 p-3">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <Badge variant="outline" className="border-warning/40 text-warning">Risk Update</Badge>
+                <span className="text-sm font-semibold text-warning">SL moved to break-even</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Stop loss now equals entry price, so downside risk is protected at 0R.
+              </p>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -169,6 +169,8 @@ export interface Signal {
   close_price?: number | null;
   close_quoted_at?: string | null;
   close_source?: string | null;
+  risk_reference_sl?: number | null;
+  tracking_status?: string | null;
   // Analysis content fields
   analysis_video_url: string | null;
   analysis_notes: string | null;
