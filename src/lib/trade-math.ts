@@ -22,6 +22,12 @@ type TradePotentialInput = TradeMathInput & {
 export const calculateSignalRrForTarget = (
   signal: TradeMathSignal | null | undefined,
   targetTp: number | null | undefined,
+): number =>
+  Math.abs(calculateSignedSignalRrForTarget(signal, targetTp));
+
+export const calculateSignedSignalRrForTarget = (
+  signal: TradeMathSignal | null | undefined,
+  targetTp: number | null | undefined,
 ): number => {
   const entry = Number(signal?.entry_price || 0);
   const stopLoss = Number(signal?.stop_loss || 0);
@@ -29,10 +35,10 @@ export const calculateSignalRrForTarget = (
   const direction = signal?.direction;
 
   if (direction === "BUY" && entry - stopLoss !== 0) {
-    return Math.abs((resolvedTargetTp - entry) / (entry - stopLoss));
+    return (resolvedTargetTp - entry) / (entry - stopLoss);
   }
   if (direction === "SELL" && stopLoss - entry !== 0) {
-    return Math.abs((entry - resolvedTargetTp) / (stopLoss - entry));
+    return (entry - resolvedTargetTp) / (stopLoss - entry);
   }
   return 0;
 };
