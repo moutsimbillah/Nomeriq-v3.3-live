@@ -76,17 +76,23 @@ const ActiveTrades = () => {
   const displayTrades = useMemo(() => {
     if (!isProvider) return filteredTrades;
 
-    const uniqueBySignal = new Map<string, UserTrade>();
+    const groupedBySignal = new Map<string, UserTrade[]>();
     filteredTrades.forEach((trade) => {
       const signalId = trade.signal?.id;
       if (!signalId) return;
-      if (!uniqueBySignal.has(signalId)) {
-        uniqueBySignal.set(signalId, trade);
-      }
+      const existing = groupedBySignal.get(signalId) ?? [];
+      existing.push(trade);
+      groupedBySignal.set(signalId, existing);
     });
 
-    return Array.from(uniqueBySignal.values());
-  }, [filteredTrades, isProvider]);
+    return Array.from(groupedBySignal.values()).map((tradesForSignal) => {
+      if (user?.id) {
+        const ownTrade = tradesForSignal.find((t) => t.user_id === user.id);
+        if (ownTrade) return ownTrade;
+      }
+      return tradesForSignal[0];
+    });
+  }, [filteredTrades, isProvider, user?.id]);
 
   useEffect(() => {
     const signalsToPreload = displayTrades
@@ -291,13 +297,21 @@ const ActiveTrades = () => {
         const signal = trade.signal as (Signal & { market_mode?: string }) | undefined;
         const isLiveMode = signal?.market_mode === "live";
         const currentPrice = signal?.pair ? livePrices[signal.pair] : undefined;
-        const rr = calculateTradeRr(trade);
+        const tradeLivePnL = isLiveMode && currentPrice != null ? computeLiveTradePnL(trade, currentPrice) : null;
         const potentialProfit = calculateTradePotentialProfit(trade);
         const liveRiskPercent = getTradeRiskPercent(trade);
         const hasAnalysis = hasAnalysisContent(signal as Signal);
         const tradeUpdates = updatesBySignal[signal?.id || ""] || [];
         const unseenCount = signal?.id ? (unseenCountBySignal[signal.id] ?? 0) : 0;
         const hasUnseenUpdates = unseenCount > 0;
+        const livePnlLabel = tradeLivePnL === null
+          ? "--"
+          : `${tradeLivePnL >= 0 ? "+" : ""}$${tradeLivePnL.toFixed(2)}`;
+        const livePnlClass = tradeLivePnL === null
+          ? "text-muted-foreground"
+          : tradeLivePnL >= 0
+            ? "text-success"
+            : "text-destructive";
         return <div
           key={trade.id}
           className={cn(
@@ -346,11 +360,7 @@ const ActiveTrades = () => {
             </div>
 
             {/* Stats Row */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="py-2 px-2 rounded-lg bg-secondary text-center">
-                <p className="text-muted-foreground text-[10px] mb-0.5">R:R</p>
-                <p className="text-secondary-foreground font-mono text-xs font-medium">1:{rr.toFixed(1)}</p>
-              </div>
+            <div className={cn("grid gap-2", isLiveMode ? "grid-cols-3" : "grid-cols-2")}>
               <div className="py-2 px-2 rounded-lg bg-muted/50 text-center">
                 <p className="text-muted-foreground text-[10px] mb-0.5">Risk {liveRiskPercent.toFixed(2)}%</p>
                 <p className="text-primary font-mono text-xs font-bold">${getOpenRisk(trade).toFixed(0)}</p>
@@ -359,6 +369,12 @@ const ActiveTrades = () => {
                 <p className="text-muted-foreground text-[10px] mb-0.5">Potential Profit</p>
                 <p className="text-success font-mono text-xs font-bold">+${potentialProfit.toFixed(0)}</p>
               </div>
+              {isLiveMode && (
+                <div className="py-2 px-2 rounded-lg bg-secondary text-center">
+                  <p className="text-muted-foreground text-[10px] mb-0.5">Live P&L</p>
+                  <p className={cn("font-mono text-xs font-bold", livePnlClass)}>{livePnlLabel}</p>
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2">
               <Button
@@ -436,12 +452,6 @@ const ActiveTrades = () => {
               <p className="font-mono text-sm font-medium truncate">{getTimeAgo(trade.created_at)}</p>
             </div>
 
-            {/* R:R Ratio - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary text-center w-full">
-              <p className="text-muted-foreground mb-1 text-xs">R:R</p>
-              <p className="text-secondary-foreground font-mono text-sm font-medium">1:{rr.toFixed(1)}</p>
-            </div>
-
             {/* Risk Info - col-span-1 */}
             <div className="col-span-1 py-2 px-2 rounded-lg bg-muted/50 text-center w-full">
               <p className="text-muted-foreground mb-1 text-xs">Risk {liveRiskPercent.toFixed(2)}%</p>
@@ -453,6 +463,13 @@ const ActiveTrades = () => {
               <p className="text-muted-foreground mb-1 text-xs">Potential Profit</p>
               <p className="text-success font-mono text-sm font-bold truncate">+${potentialProfit.toFixed(0)}</p>
             </div>
+
+            {isLiveMode && (
+              <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary text-center w-full">
+                <p className="text-muted-foreground mb-1 text-xs">Live P&L</p>
+                <p className={cn("font-mono text-sm font-bold truncate", livePnlClass)}>{livePnlLabel}</p>
+              </div>
+            )}
 
             <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary/20 text-center w-full">
               <p className="text-muted-foreground mb-1 text-xs">Updates</p>

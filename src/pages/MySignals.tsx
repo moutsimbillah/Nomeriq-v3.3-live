@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +39,11 @@ import { getTelegramDeliveryFeedback, sendTelegramSignal, sendTelegramTradeClose
 import { SignalTakeProfitUpdatesDialog } from "@/components/signals/SignalTakeProfitUpdatesDialog";
 import { useSignalTakeProfitUpdates } from "@/hooks/useSignalTakeProfitUpdates";
 import { getSafeErrorMessage } from "@/lib/error-sanitizer";
+import { useMarketMode } from "@/hooks/useMarketMode";
+import { searchMarketPairs, fetchLiveQuote, createSignalLive } from "@/lib/market-api";
+import type { MarketPair } from "@/lib/market-api";
+import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
+import { useLivePrices } from "@/hooks/useLivePrices";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -49,11 +54,18 @@ const MySignals = () => {
     realtime: true,
   });
   const { user, profile } = useAuth();
+  const { marketMode } = useMarketMode();
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSignalId, setEditingSignalId] = useState<string | null>(null);
   const [convertingSignalId, setConvertingSignalId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pairOptions, setPairOptions] = useState<MarketPair[]>([]);
+  const [pairSearchLoading, setPairSearchLoading] = useState(false);
+  const [liveLockedEntry, setLiveLockedEntry] = useState<number | null>(null);
+  const [liveLockedQuotedAt, setLiveLockedQuotedAt] = useState<string | null>(null);
+  const [twelveDataSymbol, setTwelveDataSymbol] = useState<string | null>(null);
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [formData, setFormData] = useState({
     pair: "",
     category: "",
@@ -90,7 +102,54 @@ const MySignals = () => {
       sendUpdatesToTelegram: false,
       sendClosedTradesToTelegram: false
     });
+    setPairOptions([]);
+    setLiveLockedEntry(null);
+    setLiveLockedQuotedAt(null);
+    setTwelveDataSymbol(null);
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
   };
+
+  const handlePairSearch = useCallback(async (category: string, query: string) => {
+    if (marketMode !== "live" || !category) return;
+    setPairSearchLoading(true);
+    try {
+      const list = await searchMarketPairs(category, query || null, "live");
+      setPairOptions(list);
+    } finally {
+      setPairSearchLoading(false);
+    }
+  }, [marketMode]);
+
+  const handlePairSelect = useCallback(async (p: MarketPair) => {
+    setTwelveDataSymbol(p.twelve_data_symbol);
+    try {
+      const { price, quoted_at } = await fetchLiveQuote(p.twelve_data_symbol);
+      setFormData((prev) => ({ ...prev, entry: String(price) }));
+      setLiveLockedEntry(price);
+      setLiveLockedQuotedAt(quoted_at);
+    } catch {
+      toast.error("Failed to fetch entry price");
+    }
+
+    if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
+    refreshIntervalRef.current = setInterval(async () => {
+      try {
+        const { price } = await fetchLiveQuote(p.twelve_data_symbol);
+        setFormData((prev) => ({ ...prev, entry: String(price) }));
+      } catch {
+        // ignore refresh errors
+      }
+    }, 30000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
+    };
+  }, []);
 
   const validateDirectionalPriceSetup = (requireAll: boolean): string | null => {
     const entry = formData.entry.trim() === "" ? null : Number(formData.entry);
@@ -163,58 +222,105 @@ const MySignals = () => {
       toast.error(createPriceError);
       return;
     }
+    const isLiveActiveSignal = marketMode === "live" && formData.signalType === "signal";
+    if (isLiveActiveSignal && (!twelveDataSymbol || liveLockedEntry == null || !liveLockedQuotedAt)) {
+      toast.error("Select a pair to lock entry price first.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
       const baseSuccessMessage =
         formData.signalType === "upcoming" ? "Upcoming trade created successfully." : "Signal created successfully.";
-      const signalData = {
-        pair: formData.pair.toUpperCase(),
-        category: formData.category,
-        direction: formData.direction,
-        entry_price: formData.entry ? parseFloat(formData.entry) : null,
-        stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
-        take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
-        status: formData.signalType === "upcoming" ? "upcoming" : "active",
-        signal_type: formData.signalType,
-        upcoming_status:
-          formData.signalType === "upcoming" ? formData.upcomingStatus : null,
-        notes: formData.notes || null,
-        created_by: user?.id,
-        analysis_video_url: formData.analysisVideoUrl || null,
-        analysis_notes: formData.analysisNotes || null,
-        analysis_image_url: formData.analysisImageUrl || null,
-        send_updates_to_telegram: formData.sendUpdatesToTelegram,
-        send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram,
-      };
-
-      const { error } = await supabase.from("signals").insert(signalData);
-
-      if (error) throw error;
-
-      let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
-      if (formData.sendToTelegram) {
-        const res = await sendTelegramSignal({
-          action: "created",
-          signal: {
-            pair: signalData.pair,
-            category: signalData.category,
-            direction: signalData.direction,
-            entry_price: signalData.entry_price,
-            stop_loss: signalData.stop_loss,
-            take_profit: signalData.take_profit,
-            analysis_notes: signalData.analysis_notes,
-            analysis_video_url: signalData.analysis_video_url,
-            analysis_image_url: signalData.analysis_image_url,
-            signal_type: signalData.signal_type,
-            upcoming_status: signalData.upcoming_status,
-          },
+      if (isLiveActiveSignal) {
+        await createSignalLive({
+          pair: formData.pair.toUpperCase(),
+          category: formData.category,
+          direction: formData.direction,
+          stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : 0,
+          take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : 0,
+          signal_type: formData.signalType,
+          upcoming_status: formData.signalType === "upcoming" ? formData.upcomingStatus : null,
+          notes: formData.notes || null,
+          analysis_video_url: formData.analysisVideoUrl || null,
+          analysis_notes: formData.analysisNotes || null,
+          analysis_image_url: formData.analysisImageUrl || null,
+          send_updates_to_telegram: formData.sendUpdatesToTelegram,
+          send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram,
+          entry_price_client: liveLockedEntry,
+          entry_quoted_at_client: liveLockedQuotedAt,
+          twelve_data_symbol: twelveDataSymbol!,
         });
+        let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
+        if (formData.sendToTelegram) {
+          const res = await sendTelegramSignal({
+            action: "created",
+            signal: {
+              pair: formData.pair.toUpperCase(),
+              category: formData.category,
+              direction: formData.direction,
+              entry_price: liveLockedEntry,
+              stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
+              take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
+              analysis_notes: formData.analysisNotes || null,
+              analysis_video_url: formData.analysisVideoUrl || null,
+              analysis_image_url: formData.analysisImageUrl || null,
+              signal_type: formData.signalType,
+              upcoming_status: formData.signalType === "upcoming" ? formData.upcomingStatus : null,
+            },
+          });
+          telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
+        }
+        showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
+      } else {
+        const signalData = {
+          pair: formData.pair.toUpperCase(),
+          category: formData.category,
+          direction: formData.direction,
+          entry_price: formData.entry ? parseFloat(formData.entry) : null,
+          stop_loss: formData.stopLoss ? parseFloat(formData.stopLoss) : null,
+          take_profit: formData.takeProfit ? parseFloat(formData.takeProfit) : null,
+          status: formData.signalType === "upcoming" ? "upcoming" : "active",
+          signal_type: formData.signalType,
+          upcoming_status:
+            formData.signalType === "upcoming" ? formData.upcomingStatus : null,
+          notes: formData.notes || null,
+          created_by: user?.id,
+          analysis_video_url: formData.analysisVideoUrl || null,
+          analysis_notes: formData.analysisNotes || null,
+          analysis_image_url: formData.analysisImageUrl || null,
+          send_updates_to_telegram: formData.sendUpdatesToTelegram,
+          send_closed_trades_to_telegram: formData.sendClosedTradesToTelegram,
+        };
 
-        telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
+        const { error } = await supabase.from("signals").insert(signalData);
+
+        if (error) throw error;
+
+        let telegramFeedback: ReturnType<typeof getTelegramDeliveryFeedback> | null = null;
+        if (formData.sendToTelegram) {
+          const res = await sendTelegramSignal({
+            action: "created",
+            signal: {
+              pair: signalData.pair,
+              category: signalData.category,
+              direction: signalData.direction,
+              entry_price: signalData.entry_price,
+              stop_loss: signalData.stop_loss,
+              take_profit: signalData.take_profit,
+              analysis_notes: signalData.analysis_notes,
+              analysis_video_url: signalData.analysis_video_url,
+              analysis_image_url: signalData.analysis_image_url,
+              signal_type: signalData.signal_type,
+              upcoming_status: signalData.upcoming_status,
+            },
+          });
+
+          telegramFeedback = getTelegramDeliveryFeedback(res, "Telegram alert");
+        }
+
+        showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
       }
-
-      showCreateOrPublishResultToast(baseSuccessMessage, telegramFeedback);
 
       setIsCreateOpen(false);
       resetForm();
@@ -353,22 +459,57 @@ const MySignals = () => {
     }
   };
 
-  const updateStatus = async (id: string, status: string) => {
+  const updateStatus = async (id: string, requestedStatus: "tp_hit" | "sl_hit" | "breakeven") => {
     try {
       const signal = signals.find((s) => s.id === id);
-      const { error } = await supabase.from('signals').update({
-        status,
-        closed_at: status !== 'active' ? new Date().toISOString() : null
-      }).eq('id', id).eq('created_by', user?.id);
+      if (!signal) {
+        toast.error("Signal not found");
+        return;
+      }
+
+      const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+      let resolvedStatus = requestedStatus;
+      let closePrice: number | null = null;
+      let closeQuotedAt: string | null = null;
+      let closeSource: string | null = null;
+      let closeRr: number | null = null;
+
+      if (isLiveCloseOnlySignal) {
+        if (requestedStatus !== "sl_hit") {
+          toast.error("In live mode, use only the red close button.");
+          return;
+        }
+        const snapshot = await getLiveCloseSnapshot(signal);
+        resolvedStatus = snapshot.status;
+        closePrice = snapshot.closePrice;
+        closeQuotedAt = snapshot.closeQuotedAt;
+        closeSource = snapshot.symbol;
+        closeRr = snapshot.rr;
+      }
+
+      const updatePayload: Record<string, unknown> = {
+        status: resolvedStatus,
+        closed_at: new Date().toISOString(),
+      };
+      if (isLiveCloseOnlySignal) {
+        updatePayload.close_price = closePrice;
+        updatePayload.close_quoted_at = closeQuotedAt;
+        updatePayload.close_source = closeSource;
+      }
+
+      const { error } = await supabase
+        .from('signals')
+        .update(updatePayload as any)
+        .eq('id', id)
+        .eq('created_by', user?.id);
 
       if (error) throw error;
 
       if (
-        signal &&
         signal.send_closed_trades_to_telegram &&
-        (status === "tp_hit" || status === "sl_hit" || status === "breakeven")
+        (resolvedStatus === "tp_hit" || resolvedStatus === "sl_hit" || resolvedStatus === "breakeven")
       ) {
-        const closedStatus = status as "tp_hit" | "sl_hit" | "breakeven";
+        const closedStatus = resolvedStatus as "tp_hit" | "sl_hit" | "breakeven";
         const res = await sendTelegramTradeClosed({
           signal: {
             pair: signal.pair,
@@ -378,6 +519,9 @@ const MySignals = () => {
             stop_loss: signal.stop_loss,
             take_profit: signal.take_profit,
             status: closedStatus,
+            close_price: closePrice,
+            close_quoted_at: closeQuotedAt,
+            rr_multiple: closeRr,
           },
         });
         if (res.ok === false) {
@@ -385,7 +529,11 @@ const MySignals = () => {
         }
       }
 
-      toast.success(`Signal marked as ${status.replace('_', ' ')}`);
+      if (isLiveCloseOnlySignal && closePrice != null) {
+        toast.success(`Signal closed at ${closePrice} (${resolvedStatus.replace('_', ' ')})`);
+      } else {
+        toast.success(`Signal marked as ${resolvedStatus.replace('_', ' ')}`);
+      }
       refetch();
     } catch (err) {
       console.error('Error updating status:', err);
@@ -435,46 +583,21 @@ const MySignals = () => {
     setConvertingSignalId(signal.id);
   };
 
-  const getStatusDisplay = (signal: Signal) => {
-    if (signal.signal_type === 'upcoming') {
-      switch (signal.upcoming_status) {
-        case 'near_entry': return 'Near Entry';
-        case 'preparing': return 'Preparing';
-        case 'waiting': return 'Waiting';
-        default: return 'Upcoming';
-      }
-    }
-    switch (signal.status) {
-      case 'active': return 'Running';
-      case 'tp_hit': return 'TP Hit';
-      case 'sl_hit': return 'SL Hit';
-      case 'breakeven': return 'Breakeven';
-      case 'closed': return 'Closed';
-      default: return signal.status;
-    }
-  };
-
-  const getStatusBadgeClass = (signal: Signal) => {
-    if (signal.signal_type === 'upcoming') {
-      switch (signal.upcoming_status) {
-        case 'near_entry': return 'border-warning/30 text-warning bg-warning/10';
-        case 'preparing': return 'border-primary/30 text-primary bg-primary/10';
-        default: return 'border-muted-foreground/30 text-muted-foreground bg-muted/50';
-      }
-    }
-    switch (signal.status) {
-      case 'active': return 'border-primary/30 text-primary bg-primary/10';
-      case 'tp_hit': return 'border-success/30 text-success bg-success/10';
-      case 'sl_hit': return 'border-destructive/30 text-destructive bg-destructive/10';
-      case 'breakeven': return 'border-warning/30 text-warning bg-warning/10';
-      default: return 'border-muted-foreground/30 text-muted-foreground';
-    }
-  };
-
   const providerName = profile?.first_name || 'Provider';
   const visibleSignals = signals.filter(
     (s) => s.signal_type === "upcoming" || s.status === "active"
   );
+  const showLiveColumns = marketMode === "live";
+  const liveModePairs = useMemo(
+    () =>
+      showLiveColumns
+        ? visibleSignals
+            .filter((s) => s.market_mode === "live" && !!s.pair)
+            .map((s) => s.pair)
+        : [],
+    [visibleSignals, showLiveColumns]
+  );
+  const livePrices = useLivePrices(liveModePairs);
 
   return (
     <DashboardLayout title="Live Trades">
@@ -523,6 +646,13 @@ const MySignals = () => {
                   onSubmit={handleCreate}
                   submitLabel="Create & Notify Users"
                   showTelegramOption={true}
+                  marketMode={marketMode}
+                  pairOptions={pairOptions}
+                  pairSearchLoading={pairSearchLoading}
+                  onPairSearch={handlePairSearch}
+                  onPairSelect={handlePairSelect}
+                  entryReadOnly={marketMode === "live" && formData.signalType === "signal" && twelveDataSymbol != null}
+                  entryQuotedAt={liveLockedQuotedAt}
                 />
               </div>
             </ScrollArea>
@@ -552,7 +682,12 @@ const MySignals = () => {
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Direction</th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Entry</th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">SL / TP</th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Status</th>
+                  {showLiveColumns && (
+                    <>
+                      <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Current</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Live P&amp;L</th>
+                    </>
+                  )}
                   <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Updates</th>
                   <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Actions</th>
                 </tr>
@@ -560,6 +695,26 @@ const MySignals = () => {
               <tbody className="divide-y divide-border/30">
                 {visibleSignals.map(signal => {
                   const hasPublishedTpUpdates = (updatesBySignal[signal.id]?.length || 0) > 0;
+                  const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+                  const currentPrice =
+                    showLiveColumns && isLiveCloseOnlySignal ? livePrices[signal.pair] : undefined;
+                  const liveRr =
+                    currentPrice != null
+                      ? deriveLiveCloseOutcome(signal, currentPrice).rr
+                      : null;
+                  const livePnlLabel =
+                    liveRr == null ? "--" : `${liveRr >= 0 ? "+" : ""}${liveRr.toFixed(2)}R`;
+                  const livePnlClass =
+                    liveRr == null
+                      ? "text-muted-foreground"
+                      : liveRr >= 0
+                        ? "text-success"
+                        : "text-destructive";
+                  const disabledReason = hasPublishedTpUpdates
+                    ? "Disabled after first TP update is published."
+                    : isLiveCloseOnlySignal
+                      ? "Disabled in live mode. Use red button to close at market price."
+                      : undefined;
                   return (
                   <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
                     <td className="px-6 py-4">
@@ -592,11 +747,20 @@ const MySignals = () => {
                         <span className="text-success">{signal.take_profit ?? "-"}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-center">
-                      <Badge variant="outline" className={getStatusBadgeClass(signal)}>
-                        {getStatusDisplay(signal)}
-                      </Badge>
-                    </td>
+                    {showLiveColumns && (
+                      <>
+                        <td className="px-6 py-4">
+                          <span className="font-mono text-sm">
+                            {currentPrice != null ? currentPrice.toFixed(5) : "--"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn("font-mono text-sm font-semibold", livePnlClass)}>
+                            {livePnlLabel}
+                          </span>
+                        </td>
+                      </>
+                    )}
                     <td className="px-6 py-4 text-center">
                       {signal.signal_type === "signal" ? (
                         <SignalTakeProfitUpdatesDialog
@@ -660,8 +824,8 @@ const MySignals = () => {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={hasPublishedTpUpdates}
-                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              disabled={hasPublishedTpUpdates || isLiveCloseOnlySignal}
+                              title={disabledReason}
                               className="border-success/30 text-success hover:bg-success/10 disabled:opacity-40 disabled:cursor-not-allowed"
                               onClick={() => updateStatus(signal.id, "tp_hit")}
                             >
@@ -670,8 +834,8 @@ const MySignals = () => {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={hasPublishedTpUpdates}
-                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              disabled={hasPublishedTpUpdates || isLiveCloseOnlySignal}
+                              title={disabledReason}
                               className="border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
                               onClick={() => updateStatus(signal.id, "breakeven")}
                             >
@@ -681,7 +845,13 @@ const MySignals = () => {
                               size="sm"
                               variant="outline"
                               disabled={hasPublishedTpUpdates}
-                              title={hasPublishedTpUpdates ? "Disabled after first TP update is published." : undefined}
+                              title={
+                                hasPublishedTpUpdates
+                                  ? "Disabled after first TP update is published."
+                                  : isLiveCloseOnlySignal
+                                    ? "Close trade at current live market price."
+                                    : undefined
+                              }
                               className="border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-40 disabled:cursor-not-allowed"
                               onClick={() => updateStatus(signal.id, "sl_hit")}
                             >

@@ -8,12 +8,12 @@ import { fetchBatchQuotes, pairToTwelveDataSymbol } from "@/lib/market-api";
  */
 export function useLivePrices(pairs: string[]) {
   const twelveDataSymbols = useMemo(
-    () => [...new Set(pairs.map(pairToTwelveDataSymbol).filter(Boolean))],
-    [pairs.join(",")]
+    () => [...new Set(pairs.map(pairToTwelveDataSymbol).filter(Boolean))].sort(),
+    [pairs]
   );
 
   const { data: pricesByTwelve } = useQuery({
-    queryKey: ["live-prices", twelveDataSymbols.join(",")],
+    queryKey: ["live-prices", twelveDataSymbols],
     queryFn: () => fetchBatchQuotes(twelveDataSymbols),
     enabled: twelveDataSymbols.length > 0,
     refetchInterval: 15000,

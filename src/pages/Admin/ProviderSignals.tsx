@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,8 @@ import { getSafeErrorMessage } from "@/lib/error-sanitizer";
 import { useMarketMode } from "@/hooks/useMarketMode";
 import { searchMarketPairs, fetchLiveQuote, createSignalLive } from "@/lib/market-api";
 import type { MarketPair } from "@/lib/market-api";
+import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
+import { useLivePrices } from "@/hooks/useLivePrices";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -414,21 +416,56 @@ const ProviderSignals = () => {
     }
   };
 
-  const updateStatus = async (id: string, status: string) => {
+  const updateStatus = async (id: string, requestedStatus: "tp_hit" | "sl_hit" | "breakeven") => {
     try {
       const signal = signals.find((s) => s.id === id);
-      const { error } = await supabase.from('signals').update({
-        status,
-        closed_at: status !== 'active' ? new Date().toISOString() : null
-      }).eq('id', id).eq('created_by', user?.id);
+      if (!signal) {
+        toast.error("Signal not found");
+        return;
+      }
+
+      const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+      let resolvedStatus = requestedStatus;
+      let closePrice: number | null = null;
+      let closeQuotedAt: string | null = null;
+      let closeSource: string | null = null;
+      let closeRr: number | null = null;
+
+      if (isLiveCloseOnlySignal) {
+        if (requestedStatus !== "sl_hit") {
+          toast.error("In live mode, use only the red close button.");
+          return;
+        }
+        const snapshot = await getLiveCloseSnapshot(signal);
+        resolvedStatus = snapshot.status;
+        closePrice = snapshot.closePrice;
+        closeQuotedAt = snapshot.closeQuotedAt;
+        closeSource = snapshot.symbol;
+        closeRr = snapshot.rr;
+      }
+
+      const updatePayload: Record<string, unknown> = {
+        status: resolvedStatus,
+        closed_at: new Date().toISOString(),
+      };
+      if (isLiveCloseOnlySignal) {
+        updatePayload.close_price = closePrice;
+        updatePayload.close_quoted_at = closeQuotedAt;
+        updatePayload.close_source = closeSource;
+      }
+
+      const { error } = await supabase
+        .from('signals')
+        .update(updatePayload as any)
+        .eq('id', id)
+        .eq('created_by', user?.id);
 
       if (error) throw error;
       if (
-        signal &&
         signal.send_closed_trades_to_telegram &&
-        (status === "tp_hit" || status === "sl_hit" || status === "breakeven")
+        (resolvedStatus === "tp_hit" || resolvedStatus === "sl_hit" || resolvedStatus === "breakeven")
       ) {
-        const closedStatus = status as "tp_hit" | "sl_hit" | "breakeven";
+        const closedStatus = resolvedStatus as "tp_hit" | "sl_hit" | "breakeven";
         const res = await sendTelegramTradeClosed({
           signal: {
             pair: signal.pair,
@@ -438,13 +475,21 @@ const ProviderSignals = () => {
             stop_loss: signal.stop_loss,
             take_profit: signal.take_profit,
             status: closedStatus,
+            close_price: closePrice,
+            close_quoted_at: closeQuotedAt,
+            rr_multiple: closeRr,
           },
         });
         if (res.ok === false) {
           toast.error(getSafeErrorMessage(res.error, "Unable to send Telegram close update right now."));
         }
       }
-      toast.success(`Signal marked as ${status.replace('_', ' ')}`);
+
+      if (isLiveCloseOnlySignal && closePrice != null) {
+        toast.success(`Signal closed at ${closePrice} (${resolvedStatus.replace('_', ' ')})`);
+      } else {
+        toast.success(`Signal marked as ${resolvedStatus.replace('_', ' ')}`);
+      }
       refetch();
     } catch (err) {
       console.error('Error updating status:', err);
@@ -494,46 +539,21 @@ const ProviderSignals = () => {
     setConvertingSignalId(signal.id);
   };
 
-  const getStatusDisplay = (signal: Signal) => {
-    if (signal.signal_type === 'upcoming') {
-      switch (signal.upcoming_status) {
-        case 'near_entry': return 'Near Entry';
-        case 'preparing': return 'Preparing';
-        case 'waiting': return 'Waiting';
-        default: return 'Upcoming';
-      }
-    }
-    switch (signal.status) {
-      case 'active': return 'Running';
-      case 'tp_hit': return 'TP Hit';
-      case 'sl_hit': return 'SL Hit';
-      case 'breakeven': return 'Breakeven';
-      case 'closed': return 'Closed';
-      default: return signal.status;
-    }
-  };
-
-  const getStatusBadgeClass = (signal: Signal) => {
-    if (signal.signal_type === 'upcoming') {
-      switch (signal.upcoming_status) {
-        case 'near_entry': return 'border-warning/30 text-warning bg-warning/10';
-        case 'preparing': return 'border-primary/30 text-primary bg-primary/10';
-        default: return 'border-muted-foreground/30 text-muted-foreground bg-muted/50';
-      }
-    }
-    switch (signal.status) {
-      case 'active': return 'border-primary/30 text-primary bg-primary/10';
-      case 'tp_hit': return 'border-success/30 text-success bg-success/10';
-      case 'sl_hit': return 'border-destructive/30 text-destructive bg-destructive/10';
-      case 'breakeven': return 'border-warning/30 text-warning bg-warning/10';
-      default: return 'border-muted-foreground/30 text-muted-foreground';
-    }
-  };
-
   const providerName = profile?.first_name || 'Provider';
   const visibleSignals = signals.filter(
     (s) => s.signal_type === "upcoming" || s.status === "active"
   );
+  const showLiveColumns = marketMode === "live";
+  const liveModePairs = useMemo(
+    () =>
+      showLiveColumns
+        ? visibleSignals
+            .filter((s) => s.market_mode === "live" && !!s.pair)
+            .map((s) => s.pair)
+        : [],
+    [visibleSignals, showLiveColumns]
+  );
+  const livePrices = useLivePrices(liveModePairs);
 
   return (
     <AdminLayout title="Live Trades">
@@ -618,13 +638,34 @@ const ProviderSignals = () => {
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Direction</th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Entry</th>
                   <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">SL / TP</th>
-                  <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Status</th>
+                  {showLiveColumns && (
+                    <>
+                      <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Current</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Live P&amp;L</th>
+                    </>
+                  )}
                   <th className="text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Updates</th>
                   <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-6 py-4">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/30">
-                {visibleSignals.map(signal => (
+                {visibleSignals.map(signal => {
+                  const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+                  const currentPrice =
+                    showLiveColumns && isLiveCloseOnlySignal ? livePrices[signal.pair] : undefined;
+                  const liveRr =
+                    currentPrice != null
+                      ? deriveLiveCloseOutcome(signal, currentPrice).rr
+                      : null;
+                  const livePnlLabel =
+                    liveRr == null ? "--" : `${liveRr >= 0 ? "+" : ""}${liveRr.toFixed(2)}R`;
+                  const livePnlClass =
+                    liveRr == null
+                      ? "text-muted-foreground"
+                      : liveRr >= 0
+                        ? "text-success"
+                        : "text-destructive";
+                  return (
                   <tr key={signal.id} className="hover:bg-accent/30 transition-colors">
                     <td className="px-6 py-4">
                       <div>
@@ -656,11 +697,20 @@ const ProviderSignals = () => {
                         <span className="text-success">{signal.take_profit ?? "-"}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-center">
-                      <Badge variant="outline" className={getStatusBadgeClass(signal)}>
-                        {getStatusDisplay(signal)}
-                      </Badge>
-                    </td>
+                    {showLiveColumns && (
+                      <>
+                        <td className="px-6 py-4">
+                          <span className="font-mono text-sm">
+                            {currentPrice != null ? currentPrice.toFixed(5) : "--"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn("font-mono text-sm font-semibold", livePnlClass)}>
+                            {livePnlLabel}
+                          </span>
+                        </td>
+                      </>
+                    )}
                     <td className="px-6 py-4 text-center">
                       {signal.signal_type === "signal" ? (
                         <SignalTakeProfitUpdatesDialog
@@ -709,13 +759,33 @@ const ProviderSignals = () => {
 
                         {signal.status === "active" && signal.signal_type === "signal" && (
                           <>
-                            <Button size="sm" variant="outline" className="border-success/30 text-success hover:bg-success/10" onClick={() => updateStatus(signal.id, "tp_hit")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isLiveCloseOnlySignal}
+                              title={isLiveCloseOnlySignal ? "Disabled in live mode. Use red button to close at market price." : undefined}
+                              className="border-success/30 text-success hover:bg-success/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => updateStatus(signal.id, "tp_hit")}
+                            >
                               <CheckCircle2 className="w-4 h-4" />
                             </Button>
-                            <Button size="sm" variant="outline" className="border-warning/30 text-warning hover:bg-warning/10" onClick={() => updateStatus(signal.id, "breakeven")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isLiveCloseOnlySignal}
+                              title={isLiveCloseOnlySignal ? "Disabled in live mode. Use red button to close at market price." : undefined}
+                              className="border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                              onClick={() => updateStatus(signal.id, "breakeven")}
+                            >
                               <MinusCircle className="w-4 h-4" />
                             </Button>
-                            <Button size="sm" variant="outline" className="border-destructive/30 text-destructive hover:bg-destructive/10" onClick={() => updateStatus(signal.id, "sl_hit")}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              title={isLiveCloseOnlySignal ? "Close trade at current live market price." : undefined}
+                              className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                              onClick={() => updateStatus(signal.id, "sl_hit")}
+                            >
                               <XCircle className="w-4 h-4" />
                             </Button>
                           </>
@@ -758,7 +828,8 @@ const ProviderSignals = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
