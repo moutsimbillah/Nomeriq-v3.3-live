@@ -166,6 +166,9 @@ export interface Signal {
   entry_quote_id?: string | null;
   entry_quoted_at?: string | null;
   entry_source?: string | null;
+  close_price?: number | null;
+  close_quoted_at?: string | null;
+  close_source?: string | null;
   // Analysis content fields
   analysis_video_url: string | null;
   analysis_notes: string | null;

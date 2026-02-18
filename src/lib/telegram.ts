@@ -38,6 +38,9 @@ export interface TelegramTradeClosedPayload {
   stop_loss: number | null;
   take_profit: number | null;
   status: "tp_hit" | "sl_hit" | "breakeven";
+  close_price?: number | null;
+  close_quoted_at?: string | null;
+  rr_multiple?: number | null;
 }
 
 export type TelegramDeliveryResult =
@@ -341,9 +344,19 @@ export async function sendTelegramTradeClosed(params: {
       : signal.status === "sl_hit"
         ? "SL Hit"
         : "Breakeven";
+  const closePriceLine =
+    signal.close_price !== undefined && signal.close_price !== null
+      ? `\nClose Price: ${signal.close_price}`
+      : "";
+  const rrLine =
+    signal.rr_multiple !== undefined && signal.rr_multiple !== null
+      ? `\nR Multiple: ${signal.rr_multiple >= 0 ? "+" : ""}${signal.rr_multiple.toFixed(2)}R`
+      : "";
   const message =
     `TRADE CLOSED\n\n` +
-    `${coreLines}\n` +
+    `${coreLines}` +
+    `${closePriceLine}` +
+    `${rrLine}\n` +
     `Status: ${statusLabel}`;
 
   return sendTelegramMessageToCategory(signal.category, message);
