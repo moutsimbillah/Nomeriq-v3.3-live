@@ -86,6 +86,8 @@ export const AdminSignalForm = React.memo(
       ref
     ) {
   const isUpcoming = formData.signalType === "upcoming";
+  const lockedEntryTimeLabel =
+    entryReadOnly && entryQuotedAt ? new Date(entryQuotedAt).toLocaleTimeString() : null;
 
   return (
     <div className="space-y-4">
@@ -253,6 +255,11 @@ export const AdminSignalForm = React.memo(
       <div className="space-y-2">
         <div className="space-y-1">
           <Label className="text-sm font-medium">Price Setup</Label>
+          {lockedEntryTimeLabel && (
+            <p className="text-xs text-muted-foreground">
+              Entry locked from market quote - {lockedEntryTimeLabel}
+            </p>
+          )}
           {isUpcoming && (
             <p className="text-xs text-muted-foreground">All fields optional for upcoming trade</p>
           )}
@@ -260,9 +267,7 @@ export const AdminSignalForm = React.memo(
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="space-y-2">
           <Label className="block text-xs uppercase tracking-wide text-muted-foreground">
-            Entry Price {entryReadOnly && entryQuotedAt && (
-              <span className="text-muted-foreground font-normal">(locked from market · {new Date(entryQuotedAt).toLocaleTimeString()})</span>
-            )}
+            Entry Price
           </Label>
           <Input
             type="number"
@@ -382,3 +387,4 @@ export const AdminSignalForm = React.memo(
     }
   )
 );
+

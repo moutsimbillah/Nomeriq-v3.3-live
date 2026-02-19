@@ -805,14 +805,14 @@ export const SignalTakeProfitUpdatesDialog = ({
     }
   }, [isLiveSignal, signal]);
 
-  useEffect(() => {
-    if (!open || !isMarketMode) return;
-    void lockMarketPrice();
-    const interval = setInterval(() => {
+    useEffect(() => {
+      if (!open || !isMarketMode) return;
       void lockMarketPrice();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [open, isMarketMode, lockMarketPrice]);
+      const interval = setInterval(() => {
+        void lockMarketPrice();
+      }, 1000);
+      return () => clearInterval(interval);
+    }, [open, isMarketMode, lockMarketPrice]);
 
   const publishRows = useCallback(
     async (
@@ -1303,7 +1303,7 @@ export const SignalTakeProfitUpdatesDialog = ({
                         ? "Syncing..."
                         : marketLockFailed
                           ? "Live quote unavailable, retrying..."
-                          : "Auto-sync every 5s"}
+                          : "Auto-sync every 1s"}
                     </span>
                   </div>
                 )}

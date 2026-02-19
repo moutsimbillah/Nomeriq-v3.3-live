@@ -25,6 +25,8 @@ dist-ssr
 
 # Environment variables (IMPORTANT: Never commit these!)
 .env
+.env.worker
+.env.worker.local
 .env.local
 .env.production
 .env.development

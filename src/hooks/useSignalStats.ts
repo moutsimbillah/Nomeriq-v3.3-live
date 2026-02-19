@@ -13,6 +13,7 @@ interface Signal {
   take_profit: number | null;
   status: string;
   signal_type: string;
+  market_mode?: "manual" | "live" | null;
   created_at: string;
   closed_at: string | null;
 }
