@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Dialog,
@@ -85,7 +85,7 @@ export const SignalAnalysisModal = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden">
+      <DialogContent aria-describedby={undefined} className="max-w-2xl max-h-[90vh] overflow-hidden">
         <DialogHeader className="pr-10">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <DialogTitle className="flex items-center gap-2">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -562,7 +562,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     0,
     Number(trade.remaining_risk_amount ?? (trade.result === "pending" ? initialRisk : 0))
   );
-  const remainingRisk = isLiveSignal
+  const remainingRiskForPercent = isLiveSignal
     ? Math.min(backendRemainingRisk, fallbackRemainingRisk)
     : backendRemainingRisk;
   const entryPriceValue = Number(signal?.entry_price);
@@ -571,6 +571,8 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     Number.isFinite(entryPriceValue) &&
     Number.isFinite(stopLossValue) &&
     Math.abs(stopLossValue - entryPriceValue) < 1e-8;
+  const displayRemainingRisk =
+    trade.result === "pending" && hasBreakevenUpdate ? 0 : remainingRiskForPercent;
   const realizedFromTpRows = useMemo(
     () =>
       tpRows.reduce(
@@ -690,7 +692,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
     });
   }, [tpRows, hasBreakevenUpdate, breakevenEventAt, trade.last_update_at, signal?.updated_at, finalCloseItem]);
   const remainingPercent =
-    initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : fallbackRemainingPercent;
+    initialRisk > 0 ? (remainingRiskForPercent / initialRisk) * 100 : fallbackRemainingPercent;
   const duration = getDuration(trade.created_at, trade.closed_at);
   const hasAnalysis = Boolean(signal?.analysis_notes || signal?.analysis_video_url || signal?.analysis_image_url);
   const videoId = signal?.analysis_video_url ? extractYouTubeId(signal.analysis_video_url) : null;
@@ -725,7 +727,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
           Details
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl">
+      <DialogContent aria-describedby={undefined} className="max-w-3xl">
         <DialogHeader className="pr-10">
           <DialogTitle className="flex flex-wrap items-center gap-2">
             <span>{signal?.pair || "Trade"}</span>
@@ -766,7 +768,7 @@ export const TradeDetailsDialog = ({ trade }: TradeDetailsDialogProps) => {
               <div className="rounded-lg border border-border/50 p-3">
                 <p className="text-xs text-muted-foreground">Remaining Position</p>
                 <p className="font-semibold">
-                  {remainingPercent.toFixed(2)}% (${remainingRisk.toFixed(2)})
+                  {remainingPercent.toFixed(2)}% (${displayRemainingRisk.toFixed(2)})
                 </p>
               </div>
               <div className="rounded-lg border border-border/50 p-3">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -236,7 +236,7 @@ const AdminPayments = () => {
 
     {/* Payment Details Dialog */}
     <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent aria-describedby={undefined} className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold">Payment Details</DialogTitle>
         </DialogHeader>
@@ -303,7 +303,7 @@ const AdminPayments = () => {
                               ? 'month(s)'
                               : 'months'
                           }`}
-                      {selectedPayment.package.currency && ` · ${selectedPayment.package.currency} ${Number(selectedPayment.package.price).toFixed(2)}`}
+                      {selectedPayment.package.currency && ` Â· ${selectedPayment.package.currency} ${Number(selectedPayment.package.price).toFixed(2)}`}
                     </p>
                   </div>
                 ) : (

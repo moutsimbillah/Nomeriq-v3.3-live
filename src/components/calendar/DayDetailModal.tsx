@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from "react";
+﻿import { Fragment, useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { X, ChevronDown, ChevronUp, ExternalLink, FileText, Play, Image as ImageIcon } from "lucide-react";
 import {
@@ -520,7 +520,7 @@ export const DayDetailModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[90vh] p-0 gap-0 bg-background border-border/50 shadow-2xl overflow-hidden">
+      <DialogContent aria-describedby={undefined} className="max-w-5xl max-h-[90vh] p-0 gap-0 bg-background border-border/50 shadow-2xl overflow-hidden">
         {/* Sticky Header */}
         <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/30 px-6 py-4">
           <DialogHeader className="space-y-0">
@@ -684,7 +684,7 @@ export const DayDetailModal = ({
                       label="Profit Factor"
                       value={
                         stats.profitFactor === Infinity
-                          ? "∞"
+                          ? "âˆž"
                           : stats.profitFactor.toFixed(2)
                       }
                     />
@@ -887,15 +887,24 @@ export const DayDetailModal = ({
                                           <p className="font-semibold font-mono">
                                             {(() => {
                                               const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-                                              const remainingRisk = Math.max(
+                                              const remainingRiskForPercent = Math.max(
                                                 0,
                                                 Number(
                                                   trade.remaining_risk_amount ??
                                                     (trade.result === "pending" ? initialRisk : 0)
                                                 )
                                               );
-                                              const remainingPercent = initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : 0;
-                                              return `${remainingPercent.toFixed(2)}% ($${remainingRisk.toFixed(2)})`;
+                                              const remainingPercent = initialRisk > 0 ? (remainingRiskForPercent / initialRisk) * 100 : 0;
+                                              const entryPrice = Number(signal?.entry_price);
+                                              const stopLoss = Number(signal?.stop_loss);
+                                              const displayRemainingRisk =
+                                                trade.result === "pending" &&
+                                                Number.isFinite(entryPrice) &&
+                                                Number.isFinite(stopLoss) &&
+                                                Math.abs(stopLoss - entryPrice) < 1e-8
+                                                  ? 0
+                                                  : remainingRiskForPercent;
+                                              return `${remainingPercent.toFixed(2)}% ($${displayRemainingRisk.toFixed(2)})`;
                                             })()}
                                           </p>
                                         </div>
@@ -907,15 +916,24 @@ export const DayDetailModal = ({
                                           Remaining Position:{" "}
                                           {(() => {
                                             const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
-                                            const remainingRisk = Math.max(
+                                            const remainingRiskForPercent = Math.max(
                                               0,
                                               Number(
                                                 trade.remaining_risk_amount ??
                                                   (trade.result === "pending" ? initialRisk : 0)
                                               )
                                             );
-                                            const remainingPercent = initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : 0;
-                                            return `${remainingPercent.toFixed(2)}% ($${remainingRisk.toFixed(2)})`;
+                                            const remainingPercent = initialRisk > 0 ? (remainingRiskForPercent / initialRisk) * 100 : 0;
+                                            const entryPrice = Number(signal?.entry_price);
+                                            const stopLoss = Number(signal?.stop_loss);
+                                            const displayRemainingRisk =
+                                              trade.result === "pending" &&
+                                              Number.isFinite(entryPrice) &&
+                                              Number.isFinite(stopLoss) &&
+                                              Math.abs(stopLoss - entryPrice) < 1e-8
+                                                ? 0
+                                                : remainingRiskForPercent;
+                                            return `${remainingPercent.toFixed(2)}% ($${displayRemainingRisk.toFixed(2)})`;
                                           })()}
                                         </p>
                                         {updates.length === 0 && !hasBreakevenUpdate ? (

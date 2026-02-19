@@ -141,6 +141,18 @@ export const useTrades = (options: UseTradesOptions = {}) => {
             fetchTrades(true); // Pass true to indicate realtime update - no loading flicker
           }
         )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'signals',
+          },
+          () => {
+            // Trade rows include nested signal fields; refresh when signal metadata changes.
+            fetchTrades(true);
+          }
+        )
         .subscribe();
 
       return () => {

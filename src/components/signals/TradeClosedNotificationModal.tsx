@@ -115,8 +115,10 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== "undefined" ? !navigator.onLine : false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const shownNotificationsRef = useRef<Set<string>>(new Set());
+  const processingNotificationsRef = useRef<Set<string>>(new Set());
   const knownUpcomingSignalIdsRef = useRef<Set<string>>(new Set());
   const lastSignalStopLossRef = useRef<Map<string, number | null>>(new Map());
+  const lastSignalStatusRef = useRef<Map<string, string | null>>(new Map());
   const lastSyncAtRef = useRef<string>(new Date().toISOString());
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wentOfflineRef = useRef(false);
@@ -181,13 +183,34 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     }
   }, [persistLastSync]);
 
+  const reserveNotificationKey = useCallback((key: string) => {
+    if (shownNotificationsRef.current.has(key) || processingNotificationsRef.current.has(key)) {
+      return false;
+    }
+    processingNotificationsRef.current.add(key);
+    return true;
+  }, []);
+
+  const releaseNotificationKey = useCallback((key: string) => {
+    processingNotificationsRef.current.delete(key);
+  }, []);
+
   useEffect(() => {
     if (!userId) return;
     const saved = localStorage.getItem(`notifications:last-sync:${userId}`);
-    // Keep lookback window small if no saved state yet.
-    const fallback = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    lastSyncAtRef.current = saved || fallback;
-  }, [userId]);
+    // Prevent replaying historical notifications if stored sync is stale/corrupted.
+    const nowMs = Date.now();
+    const maxBackfillMs = 5 * 60 * 1000;
+    const savedMs = saved ? new Date(saved).getTime() : NaN;
+    const effectiveMs = Number.isFinite(savedMs)
+      ? Math.max(savedMs, nowMs - maxBackfillMs)
+      : nowMs;
+    const initialSync = new Date(effectiveMs).toISOString();
+    lastSyncAtRef.current = initialSync;
+    if (!saved || saved !== initialSync) {
+      persistLastSync(initialSync);
+    }
+  }, [userId, persistLastSync]);
 
   // Use global risk percent for all users
   const riskPercent = settings?.global_risk_percent || 2;
@@ -383,7 +406,13 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
   // Add new notification
   const addNotification = useCallback((notification: NotificationItem) => {
-    setNotifications(prev => [...prev, notification]);
+    if (shownNotificationsRef.current.has(notification.id)) return;
+    shownNotificationsRef.current.add(notification.id);
+    setNotifications(prev => (
+      prev.some((item) => item.id === notification.id)
+        ? prev
+        : [...prev, notification]
+    ));
     setIsVisible(true);
 
     // Play notification sound
@@ -392,7 +421,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     }
   }, []);
 
-  const processSignalInsert = useCallback((newSignal: Signal, source: "realtime" | "catchup" = "realtime") => {
+  const processSignalInsert = useCallback((newSignal: Signal, _source: "realtime" | "catchup" = "realtime") => {
     if (!canReceiveRef.current) return;
     const currentStopLoss =
       newSignal.stop_loss === null || newSignal.stop_loss === undefined
@@ -402,6 +431,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       newSignal.id,
       currentStopLoss !== null && Number.isFinite(currentStopLoss) ? currentStopLoss : null
     );
+    lastSignalStatusRef.current.set(newSignal.id, newSignal.status || null);
     bumpLastSync(newSignal.created_at || newSignal.updated_at);
     if (
       allowedCategoriesRef.current.length > 0 &&
@@ -418,21 +448,23 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     const notificationKey = `new-signal-${newSignal.id}`;
     if (shownNotificationsRef.current.has(notificationKey)) return;
 
-    if (source === "realtime") {
-      const signalTime = new Date(newSignal.created_at).getTime();
-      const now = Date.now();
-      if (now - signalTime > 300000) return;
+    const signalTime = new Date(newSignal.created_at).getTime();
+    const now = Date.now();
+    if (Number.isFinite(signalTime) && now - signalTime > 300000) return;
+
+    if (!reserveNotificationKey(notificationKey)) return;
+    try {
+      addNotification({
+        id: notificationKey,
+        signal: newSignal,
+        type: "new_signal",
+      });
+    } finally {
+      releaseNotificationKey(notificationKey);
     }
+  }, [addNotification, bumpLastSync, releaseNotificationKey, reserveNotificationKey]);
 
-    shownNotificationsRef.current.add(notificationKey);
-    addNotification({
-      id: notificationKey,
-      signal: newSignal,
-      type: "new_signal",
-    });
-  }, [addNotification, bumpLastSync]);
-
-  const processSignalUpdate = useCallback(async (updatedSignal: Signal, oldSignal?: Partial<Signal> | null, source: "realtime" | "catchup" = "realtime") => {
+  const processSignalUpdate = useCallback(async (updatedSignal: Signal, oldSignal?: Partial<Signal> | null, _source: "realtime" | "catchup" = "realtime") => {
     if (!canReceiveRef.current) return;
     bumpLastSync(updatedSignal.updated_at || updatedSignal.created_at);
     if (
@@ -441,7 +473,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     ) {
       return;
     }
-    const rememberStopLoss = () => {
+    const rememberSignalSnapshot = () => {
       const currentStopLoss =
         updatedSignal.stop_loss === null || updatedSignal.stop_loss === undefined
           ? null
@@ -450,6 +482,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         updatedSignal.id,
         currentStopLoss !== null && Number.isFinite(currentStopLoss) ? currentStopLoss : null
       );
+      lastSignalStatusRef.current.set(updatedSignal.id, updatedSignal.status || null);
     };
 
     const knownPreviousStopLoss = lastSignalStopLossRef.current.get(updatedSignal.id);
@@ -484,8 +517,20 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       knownUpcomingSignalIdsRef.current.add(updatedSignal.id);
     }
 
+    const freshUpdatedAtMs = new Date(updatedSignal.updated_at || updatedSignal.created_at).getTime();
+    if (Number.isFinite(freshUpdatedAtMs) && Date.now() - freshUpdatedAtMs > 300000) {
+      rememberSignalSnapshot();
+      return;
+    }
+
     const currentStatus = updatedSignal.status?.toLowerCase();
-    const previousStatus = oldSignal?.status?.toLowerCase();
+    const previousStatusFromPayload = oldSignal?.status;
+    const previousStatusFromRef = lastSignalStatusRef.current.get(updatedSignal.id);
+    const previousStatus = (
+      previousStatusFromPayload ??
+      previousStatusFromRef ??
+      ""
+    ).toLowerCase();
 
     const closedStatuses = ["tp_hit", "sl_hit", "breakeven"];
     const isClosingTrade = closedStatuses.includes(currentStatus || "");
@@ -493,22 +538,23 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
     if (isClosingTrade && wasNotClosed) {
       const closureKey = `trade-closed-${updatedSignal.id}-${currentStatus}`;
-      if (shownNotificationsRef.current.has(closureKey)) {
-        rememberStopLoss();
+      if (!reserveNotificationKey(closureKey)) {
+        rememberSignalSnapshot();
         return;
       }
-
-      const trade = await fetchUserTrade(updatedSignal.id);
-      shownNotificationsRef.current.add(closureKey);
-
-      addNotification({
-        id: closureKey,
-        signal: updatedSignal,
-        type: "trade_closed",
-        status: currentStatus as TradeClosedStatus,
-        userTrade: trade,
-      });
-      rememberStopLoss();
+      try {
+        const trade = await fetchUserTrade(updatedSignal.id);
+        addNotification({
+          id: closureKey,
+          signal: updatedSignal,
+          type: "trade_closed",
+          status: currentStatus as TradeClosedStatus,
+          userTrade: trade,
+        });
+      } finally {
+        releaseNotificationKey(closureKey);
+      }
+      rememberSignalSnapshot();
       return;
     }
 
@@ -541,113 +587,137 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       const newSignalKey = `new-signal-${updatedSignal.id}`;
       // Prevent duplicate UX: a directly published live signal should only show "Buy/Sell Signal",
       // not an additional "Signal Now Active" card for the same signal id.
-      if (shownNotificationsRef.current.has(newSignalKey)) {
-        rememberStopLoss();
+      if (!reserveNotificationKey(newSignalKey)) {
+        rememberSignalSnapshot();
         return;
       }
 
       if (!wasKnownUpcoming) {
-        shownNotificationsRef.current.add(newSignalKey);
-        addNotification({
-          id: newSignalKey,
-          signal: updatedSignal,
-          type: "new_signal",
-        });
-        rememberStopLoss();
+        try {
+          addNotification({
+            id: newSignalKey,
+            signal: updatedSignal,
+            type: "new_signal",
+          });
+        } finally {
+          releaseNotificationKey(newSignalKey);
+        }
+        rememberSignalSnapshot();
         return;
       }
+      releaseNotificationKey(newSignalKey);
 
       const activationKey = `signal-active-${updatedSignal.id}`;
-      if (shownNotificationsRef.current.has(activationKey)) return;
-      shownNotificationsRef.current.add(activationKey);
-      addNotification({
-        id: activationKey,
-        signal: updatedSignal,
-        type: "signal_active",
-      });
-      rememberStopLoss();
+      if (!reserveNotificationKey(activationKey)) {
+        rememberSignalSnapshot();
+        return;
+      }
+      try {
+        addNotification({
+          id: activationKey,
+          signal: updatedSignal,
+          type: "signal_active",
+        });
+      } finally {
+        releaseNotificationKey(activationKey);
+      }
+      rememberSignalSnapshot();
       return;
     }
 
     if (movedToBreakeven) {
       const beKey = `sl-breakeven-${updatedSignal.id}-${updatedSignal.updated_at || ""}`;
-      if (!shownNotificationsRef.current.has(beKey)) {
-        const trade = await fetchUserTrade(updatedSignal.id);
-        shownNotificationsRef.current.add(beKey);
-        addNotification({
-          id: beKey,
-          signal: updatedSignal,
-          type: "sl_breakeven",
-          userTrade: trade,
-          previousStopLoss: previousStopLossNum,
-        });
+      if (reserveNotificationKey(beKey)) {
+        try {
+          const trade = await fetchUserTrade(updatedSignal.id);
+          addNotification({
+            id: beKey,
+            signal: updatedSignal,
+            type: "sl_breakeven",
+            userTrade: trade,
+            previousStopLoss: previousStopLossNum,
+          });
+        } finally {
+          releaseNotificationKey(beKey);
+        }
       }
-      rememberStopLoss();
+      rememberSignalSnapshot();
       return;
     }
 
-    rememberStopLoss();
-  }, [addNotification, bumpLastSync, fetchUserTrade]);
+    rememberSignalSnapshot();
+  }, [
+    addNotification,
+    bumpLastSync,
+    fetchUserTrade,
+    releaseNotificationKey,
+    reserveNotificationKey,
+  ]);
 
   const processTradeUpdateInsert = useCallback(async (
     updateRow: SignalTakeProfitUpdate,
-    source: "realtime" | "catchup" = "realtime"
+    _source: "realtime" | "catchup" = "realtime"
   ) => {
     if (!canReceiveRef.current) return;
     bumpLastSync(updateRow.created_at);
 
     const notificationKey = `trade-update-${updateRow.id}`;
-    if (shownNotificationsRef.current.has(notificationKey)) return;
 
-    if (source === "realtime") {
-      const updateTimeMs = new Date(updateRow.created_at).getTime();
-      if (Number.isFinite(updateTimeMs) && Date.now() - updateTimeMs > 300000) {
-        return;
-      }
-    }
-
-    const signal = await fetchSignalById(updateRow.signal_id);
-    if (!signal) return;
-
-    if (
-      allowedCategoriesRef.current.length > 0 &&
-      !allowedCategoriesRef.current.includes(signal.category)
-    ) {
+    const updateTimeMs = new Date(updateRow.created_at).getTime();
+    if (Number.isFinite(updateTimeMs) && Date.now() - updateTimeMs > 300000) {
       return;
     }
+    if (!reserveNotificationKey(notificationKey)) return;
 
-    const trade = await fetchUserTrade(signal.id);
-    if (!trade) return;
+    try {
+      const signal = await fetchSignalById(updateRow.signal_id);
+      if (!signal) return;
 
-    const applied = await fetchAppliedTradeUpdate(trade.id, updateRow.id);
-    // Skip popup when this update did not actually apply to this user's trade
-    // (prevents misleading values after trade is already fully closed).
-    if (!applied) return;
+      if (
+        allowedCategoriesRef.current.length > 0 &&
+        !allowedCategoriesRef.current.includes(signal.category)
+      ) {
+        return;
+      }
 
-    const refreshedTrade = await fetchUserTrade(signal.id);
-    const tradeForDisplay = refreshedTrade || trade;
-    const historyUpdateType = await fetchHistoryUpdateType(signal.id, updateRow.id);
-    const triggeredQuotePrice = await fetchTriggeredQuotePrice(signal.id, updateRow.id);
-    const remainingSnapshot = await fetchRemainingPositionSnapshot(
-      tradeForDisplay,
-      signal.id,
-      updateRow.id
-    );
+      const trade = await fetchUserTrade(signal.id);
+      if (!trade) return;
 
-    shownNotificationsRef.current.add(notificationKey);
-    addNotification({
-      id: notificationKey,
-      signal,
-      type: "trade_update",
-      tradeUpdateAction: "published",
-      userTrade: tradeForDisplay,
-      tradeUpdate: updateRow,
-      historyUpdateType,
-      appliedTradeUpdate: applied,
-      triggeredQuotePrice,
-      remainingAfterPercent: remainingSnapshot?.remainingAfterPercent ?? null,
-      remainingAfterRisk: remainingSnapshot?.remainingAfterRisk ?? null,
-    });
+      const historyUpdateType = await fetchHistoryUpdateType(signal.id, updateRow.id);
+      const resolvedUpdateType = resolveTradeUpdateDisplayType({
+        rawUpdateType: updateRow.update_type,
+        historyUpdateType,
+      });
+      const applied = await fetchAppliedTradeUpdate(trade.id, updateRow.id);
+      // Keep blocking non-applied market updates (usually stale/irrelevant),
+      // but allow pending limit updates to notify immediately.
+      if (!applied && resolvedUpdateType.type !== "limit") return;
+
+      const refreshedTrade = await fetchUserTrade(signal.id);
+      const tradeForDisplay = refreshedTrade || trade;
+      const triggeredQuotePrice = await fetchTriggeredQuotePrice(signal.id, updateRow.id);
+      const remainingSnapshot = await fetchRemainingPositionSnapshot(
+        tradeForDisplay,
+        signal.id,
+        updateRow.id
+      );
+
+      addNotification({
+        id: notificationKey,
+        signal,
+        type: "trade_update",
+        tradeUpdateAction: "published",
+        userTrade: tradeForDisplay,
+        tradeUpdate: updateRow,
+        historyUpdateType,
+        appliedTradeUpdate: applied,
+        triggeredQuotePrice,
+        remainingAfterPercent: remainingSnapshot?.remainingAfterPercent ?? null,
+        remainingAfterRisk: remainingSnapshot?.remainingAfterRisk ?? null,
+      });
+    } finally {
+      releaseNotificationKey(notificationKey);
+    }
   }, [
     addNotification,
     bumpLastSync,
@@ -657,11 +727,13 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     fetchRemainingPositionSnapshot,
     fetchSignalById,
     fetchUserTrade,
+    releaseNotificationKey,
+    reserveNotificationKey,
   ]);
 
   const processTradeUpdateChangeEventInsert = useCallback(async (
     eventRow: SignalEventHistoryRow,
-    source: "realtime" | "catchup" = "realtime"
+    _source: "realtime" | "catchup" = "realtime"
   ) => {
     if (!canReceiveRef.current) return;
     if (eventRow.event_type !== "tp_update_edited" && eventRow.event_type !== "tp_update_deleted") {
@@ -670,83 +742,90 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
     bumpLastSync(eventRow.created_at);
     const notificationKey = `${eventRow.event_type}-${eventRow.id}`;
-    if (shownNotificationsRef.current.has(notificationKey)) return;
 
-    if (source === "realtime") {
-      const eventTimeMs = new Date(eventRow.created_at).getTime();
-      if (Number.isFinite(eventTimeMs) && Date.now() - eventTimeMs > 300000) {
-        return;
-      }
-    }
-
-    const payload =
-      eventRow.payload && typeof eventRow.payload === "object"
-        ? (eventRow.payload as Record<string, unknown>)
-        : null;
-    if (!payload) return;
-    const updateId = typeof payload.update_id === "string" ? payload.update_id : null;
-    if (!updateId) return;
-
-    const signal = await fetchSignalById(eventRow.signal_id);
-    if (!signal) return;
-    if (
-      allowedCategoriesRef.current.length > 0 &&
-      !allowedCategoriesRef.current.includes(signal.category)
-    ) {
+    const eventTimeMs = new Date(eventRow.created_at).getTime();
+    if (Number.isFinite(eventTimeMs) && Date.now() - eventTimeMs > 300000) {
       return;
     }
+    if (!reserveNotificationKey(notificationKey)) return;
 
-    const trade = await fetchUserTrade(signal.id);
-    if (!trade) return;
+    try {
+      const payload =
+        eventRow.payload && typeof eventRow.payload === "object"
+          ? (eventRow.payload as Record<string, unknown>)
+          : null;
+      if (!payload) return;
+      const updateId = typeof payload.update_id === "string" ? payload.update_id : null;
+      if (!updateId) return;
 
-    if (eventRow.event_type === "tp_update_edited") {
-      const nextUpdate = parseTpPayloadRow(payload.new, {
+      const signal = await fetchSignalById(eventRow.signal_id);
+      if (!signal) return;
+      if (
+        allowedCategoriesRef.current.length > 0 &&
+        !allowedCategoriesRef.current.includes(signal.category)
+      ) {
+        return;
+      }
+
+      const trade = await fetchUserTrade(signal.id);
+      if (!trade) return;
+
+      if (eventRow.event_type === "tp_update_edited") {
+        const nextUpdate = parseTpPayloadRow(payload.new, {
+          id: updateId,
+          signalId: signal.id,
+          createdAt: eventRow.created_at,
+          createdBy: eventRow.actor_user_id || null,
+        });
+        if (nextUpdate.update_type !== "limit") return;
+        const previousUpdate = parseTpPayloadRow(payload.old, {
+          id: updateId,
+          signalId: signal.id,
+          createdAt: eventRow.created_at,
+          createdBy: eventRow.actor_user_id || null,
+        });
+
+        addNotification({
+          id: notificationKey,
+          signal,
+          type: "trade_update_edited",
+          tradeUpdateAction: "edited",
+          userTrade: trade,
+          tradeUpdate: nextUpdate,
+          previousTradeUpdate: previousUpdate,
+          historyUpdateType: "limit",
+        });
+        return;
+      }
+
+      const deletedUpdate = parseTpPayloadRow(payload, {
         id: updateId,
         signalId: signal.id,
         createdAt: eventRow.created_at,
         createdBy: eventRow.actor_user_id || null,
       });
-      if (nextUpdate.update_type !== "limit") return;
-      const previousUpdate = parseTpPayloadRow(payload.old, {
-        id: updateId,
-        signalId: signal.id,
-        createdAt: eventRow.created_at,
-        createdBy: eventRow.actor_user_id || null,
-      });
+      if (deletedUpdate.update_type !== "limit") return;
 
-      shownNotificationsRef.current.add(notificationKey);
       addNotification({
         id: notificationKey,
         signal,
-        type: "trade_update_edited",
-        tradeUpdateAction: "edited",
+        type: "trade_update_deleted",
+        tradeUpdateAction: "deleted",
         userTrade: trade,
-        tradeUpdate: nextUpdate,
-        previousTradeUpdate: previousUpdate,
+        tradeUpdate: deletedUpdate,
         historyUpdateType: "limit",
       });
-      return;
+    } finally {
+      releaseNotificationKey(notificationKey);
     }
-
-    const deletedUpdate = parseTpPayloadRow(payload, {
-      id: updateId,
-      signalId: signal.id,
-      createdAt: eventRow.created_at,
-      createdBy: eventRow.actor_user_id || null,
-    });
-    if (deletedUpdate.update_type !== "limit") return;
-
-    shownNotificationsRef.current.add(notificationKey);
-    addNotification({
-      id: notificationKey,
-      signal,
-      type: "trade_update_deleted",
-      tradeUpdateAction: "deleted",
-      userTrade: trade,
-      tradeUpdate: deletedUpdate,
-      historyUpdateType: "limit",
-    });
-  }, [addNotification, bumpLastSync, fetchSignalById, fetchUserTrade]);
+  }, [
+    addNotification,
+    bumpLastSync,
+    fetchSignalById,
+    fetchUserTrade,
+    releaseNotificationKey,
+    reserveNotificationKey,
+  ]);
 
   const fetchMissedNotifications = useCallback(async (emitNotifications = false) => {
     if (!userIdRef.current || !canReceiveRef.current) return;
@@ -781,6 +860,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
             sig.id,
             stopLoss !== null && Number.isFinite(stopLoss) ? stopLoss : null
           );
+          lastSignalStatusRef.current.set(sig.id, sig.status || null);
           bumpLastSync(sig.updated_at || sig.created_at);
         }
       }
@@ -1379,6 +1459,14 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       Number(userTrade?.remaining_risk_amount ?? (riskBase > 0 ? riskBase : 0))
     );
     const fallbackRemainingPercent = riskBase > 0 ? (fallbackRemainingRisk / riskBase) * 100 : 0;
+    const entryPrice = Number(signal.entry_price);
+    const stopLoss = Number(signal.stop_loss);
+    const isBreakevenRiskProtected =
+      userTrade?.result === "pending" &&
+      Number.isFinite(entryPrice) &&
+      Number.isFinite(stopLoss) &&
+      Math.abs(stopLoss - entryPrice) < 1e-8;
+    const displayFallbackRemainingRisk = isBreakevenRiskProtected ? 0 : fallbackRemainingRisk;
 
     if (action !== "published") {
       const previousPrice = Number(previousTradeUpdate?.tp_price ?? tradeUpdate.tp_price);
@@ -1471,7 +1559,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
               <p className="mt-1 text-xs text-slate-400">
                 Remaining Position:{" "}
                 <span className="font-semibold text-foreground">
-                  {fallbackRemainingPercent.toFixed(2)}% (${fallbackRemainingRisk.toFixed(2)})
+                  {fallbackRemainingPercent.toFixed(2)}% (${displayFallbackRemainingRisk.toFixed(2)})
                 </span>
               </p>
             </div>
@@ -1489,7 +1577,97 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       );
     }
 
-    if (!userTrade || !appliedTradeUpdate) return null;
+    if (!userTrade) return null;
+
+    if (!appliedTradeUpdate) {
+      const plannedClosePercent = Math.max(0, Math.min(100, Number(tradeUpdate.close_percent || 0)));
+      const remainingPercent = fallbackRemainingPercent;
+      const displayRemainingRisk = displayFallbackRemainingRisk;
+
+      return (
+        <div
+          key={notification.id}
+          className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+        >
+          <div className="px-5 py-4 border-b border-[#1e293b] relative">
+            <button
+              onClick={() => removeNotification(notification.id)}
+              className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
+            >
+              <X className="w-4 h-4 text-slate-400" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-full bg-primary/20">
+                <Bell className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Trade Update</h3>
+                <p className="text-xs font-medium text-slate-400">
+                  {updateType === "limit"
+                    ? "Provider/Admin placed a new limit TP order"
+                    : "Provider/Admin posted a TP update"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-5 py-3 flex flex-wrap items-center gap-2 bg-black/20">
+            <span className="px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white bg-primary/20">
+              Pair: {signal.pair}
+            </span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">Entry: {signal.entry_price ?? "-"}</span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">SL: {signal.stop_loss ?? "-"}</span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">TP: {signal.take_profit ?? "-"}</span>
+          </div>
+
+          <div className="p-4">
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <span className="px-2 py-0.5 rounded text-xs font-semibold border border-primary/40 text-primary">
+                  {tradeUpdate.tp_label}
+                </span>
+                <span
+                  className={cn(
+                    "px-2 py-0.5 rounded text-xs font-semibold border",
+                    updateType === "market"
+                      ? "border-warning/40 text-warning"
+                      : "border-primary/40 text-primary"
+                  )}
+                >
+                  {updateType === "market" ? "Market Close" : "Limit Order"}
+                </span>
+                {updateType === "limit" && (
+                  <span className="px-2 py-0.5 rounded text-xs font-semibold border border-warning/40 text-warning">
+                    Pending
+                  </span>
+                )}
+                <span className="text-sm font-mono text-white">TP: {tradeUpdate.tp_price}</span>
+                <span className="text-sm text-primary font-semibold">Close: {plannedClosePercent.toFixed(2)}%</span>
+              </div>
+              {tradeUpdate.note && (
+                <p className="mt-1 text-xs text-slate-400">{tradeUpdate.note}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-400">
+                Remaining Position:{" "}
+                <span className="font-semibold text-foreground">
+                  {remainingPercent.toFixed(2)}% (${displayRemainingRisk.toFixed(2)})
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="px-5 pb-5">
+            <Button
+              onClick={() => removeNotification(notification.id)}
+              className="w-full h-12 font-bold text-white shadow-lg transition-all border-0 bg-primary hover:bg-primary/90"
+            >
+              Got it
+            </Button>
+          </div>
+        </div>
+      );
+    }
 
     const closePercent = Math.max(0, Math.min(100, Number(appliedTradeUpdate.close_percent || 0)));
     const realizedAmount = Number(appliedTradeUpdate.realized_pnl || 0);
@@ -1505,7 +1683,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         ? Math.max(0, Number(notification.remainingAfterPercent))
         : null;
 
-    const remainingRisk = snapshotRemainingRisk ?? Math.max(
+    const remainingRiskForPercent = snapshotRemainingRisk ?? Math.max(
       0,
       Number(
         userTrade.remaining_risk_amount ??
@@ -1513,7 +1691,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       )
     );
     const remainingPercent =
-      snapshotRemainingPercent ?? (riskBase > 0 ? (remainingRisk / riskBase) * 100 : 0);
+      snapshotRemainingPercent ?? (riskBase > 0 ? (remainingRiskForPercent / riskBase) * 100 : 0);
+    const displayRemainingRisk = isBreakevenRiskProtected ? 0 : remainingRiskForPercent;
 
     return (
       <div
@@ -1592,7 +1771,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
             <p className="mt-1 text-xs text-slate-400">
               Remaining Position:{" "}
               <span className="font-semibold text-foreground">
-                {remainingPercent.toFixed(2)}% (${remainingRisk.toFixed(2)})
+                {remainingPercent.toFixed(2)}% (${displayRemainingRisk.toFixed(2)})
               </span>
             </p>
           </div>
