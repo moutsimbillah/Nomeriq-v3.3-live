@@ -21,6 +21,7 @@ import { MetricInfoTooltip } from "@/components/common/MetricInfoTooltip";
 import { computeOpenTradeMetrics, computeLiveTradePnL, getExposureRiskAmount, getOpenRiskAmount } from "@/lib/admin-metrics";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { calculateSignalRrForTarget } from "@/lib/trade-math";
+import { useLiveSignalAutoTriggers } from "@/hooks/useLiveSignalAutoTriggers";
 
 interface ActiveTradesTableProps {
   adminGlobalView?: boolean;
@@ -120,6 +121,25 @@ export const ActiveTradesTable = ({ adminGlobalView = false, renderFilters }: Ac
     [displayTrades]
   );
   const livePrices = useLivePrices(liveModePairs);
+  const liveSignalsForAutoTriggers = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          displayTrades
+            .map((t) => t.signal)
+            .filter(
+              (s): s is Signal =>
+                !!s &&
+                s.signal_type === "signal" &&
+                s.status === "active" &&
+                s.market_mode === "live"
+            )
+            .map((s) => [s.id, s])
+        ).values()
+      ),
+    [displayTrades]
+  );
+  useLiveSignalAutoTriggers(liveSignalsForAutoTriggers, livePrices, { enabled: true });
   const liveUnrealizedPnL = useMemo(() => {
     return displayTrades.reduce((sum, trade) => {
       const signal = trade.signal as (Signal & { market_mode?: string }) | undefined;

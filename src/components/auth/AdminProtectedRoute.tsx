@@ -107,7 +107,7 @@ export const AdminProtectedRoute = ({
         case 'signal_provider_admin':
           return '/admin/provider-dashboard';
         case 'payments_admin':
-          return '/admin';
+          return '/admin/payments';
         case 'super_admin':
           return '/admin';
         default:

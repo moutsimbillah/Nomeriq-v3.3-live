@@ -27,8 +27,9 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
   const [isLoading, setIsLoading] = useState(true);
   const { user, isAdmin } = useAuth();
   const userId = user?.id ?? null;
-  const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { isProvider, adminRole, isLoading: roleLoading } = useAdminRole();
   const { allowedCategories } = useUserSubscriptionCategories();
+  const canUseGlobalView = adminGlobalView && adminRole === "super_admin";
   
   // Analysis modal state
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -48,12 +49,14 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
         ascending: false
       });
       
-      // If user is a provider, filter to only their signals
-      if (!adminGlobalView && isProvider && userId) {
+      // Global scope is super-admin only.
+      if (canUseGlobalView) {
+        // No scope filter.
+      } else if ((isProvider || isAdmin) && userId) {
+        // Providers and non-super admins should only see their own issued signals.
         query = query.eq('created_by', userId);
-      }
-      // Regular users should only see subscribed categories.
-      if (!adminGlobalView && !isProvider && !isAdmin && allowedCategories.length > 0) {
+      } else if (allowedCategories.length > 0) {
+        // Regular users should only see subscribed categories.
         query = query.in('category', allowedCategories);
       }
 
@@ -75,7 +78,7 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
     } finally {
       setIsLoading(false);
     }
-  }, [roleLoading, isProvider, userId, isAdmin, allowedCategories, adminGlobalView]);
+  }, [roleLoading, isProvider, userId, isAdmin, allowedCategories, canUseGlobalView]);
 
   useEffect(() => {
     if (!roleLoading) {
@@ -146,7 +149,7 @@ export const UpcomingTradesSection = ({ adminGlobalView = false }: UpcomingTrade
     });
   }, [upcomingTrades, timeFilter, dateRange, directionFilter, categoryFilter, sortBy]);
   const providerNameMap = useProviderNameMap(
-    adminGlobalView ? filteredTrades.map((s) => s.created_by || "") : []
+    canUseGlobalView ? filteredTrades.map((s) => s.created_by || "") : []
   );
 
   useEffect(() => {

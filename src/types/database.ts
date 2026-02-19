@@ -203,6 +203,7 @@ export interface SignalTakeProfitUpdate {
   tp_label: string;
   tp_price: number;
   close_percent: number;
+  update_type?: "limit" | "market";
   note: string | null;
   created_by: string;
   created_at: string;

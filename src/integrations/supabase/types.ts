@@ -663,6 +663,7 @@ export type Database = {
           signal_id: string
           tp_label: string
           tp_price: number
+          update_type: string
         }
         Insert: {
           close_percent: number
@@ -673,6 +674,7 @@ export type Database = {
           signal_id: string
           tp_label: string
           tp_price: number
+          update_type?: string
         }
         Update: {
           close_percent?: number
@@ -683,6 +685,7 @@ export type Database = {
           signal_id?: string
           tp_label?: string
           tp_price?: number
+          update_type?: string
         }
         Relationships: [
           {

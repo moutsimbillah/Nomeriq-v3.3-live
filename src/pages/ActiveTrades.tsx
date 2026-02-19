@@ -20,6 +20,7 @@ import { preloadSignalAnalysisMedia } from "@/lib/signalAnalysisMedia";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { computeLiveTradePnL, getExposureRiskAmount, getOpenRiskAmount } from "@/lib/admin-metrics";
 import { calculateSignalRrForTarget } from "@/lib/trade-math";
+import { useLiveSignalAutoTriggers } from "@/hooks/useLiveSignalAutoTriggers";
 
 const ActiveTrades = () => {
   const { selectedSignal, isOpen, openAnalysis, handleOpenChange } = useSignalAnalysisModal();
@@ -115,6 +116,26 @@ const ActiveTrades = () => {
     [displayTrades]
   );
   const livePrices = useLivePrices(liveModePairs);
+  const liveSignalsForAutoTriggers = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          displayTrades
+            .map((t) => t.signal)
+            .filter(
+              (s): s is Signal =>
+                !!s &&
+                s.signal_type === "signal" &&
+                s.status === "active" &&
+                s.market_mode === "live"
+            )
+            .map((s) => [s.id, s])
+        ).values()
+      ),
+    [displayTrades]
+  );
+  useLiveSignalAutoTriggers(liveSignalsForAutoTriggers, livePrices, { enabled: true });
+
   const unrealizedPnL = useMemo(() => {
     return displayTrades.reduce((sum, trade) => {
       const signal = trade.signal as (Signal & { market_mode?: string }) | undefined;

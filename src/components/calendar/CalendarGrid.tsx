@@ -74,7 +74,7 @@ export const CalendarGrid = ({
             {week.map((day, dayIndex) => {
           const isSelected = selectedDate && isSameDay(day.date, selectedDate);
           const isCurrentDay = isToday(day.date);
-          const hasData = day.trades > 0;
+          const hasData = day.trades > 0 || Math.abs(day.pnl) > 0.005;
           const isProfit = day.pnl > 0;
           const isLoss = day.pnl < 0;
           return <div key={dayIndex} onClick={() => {

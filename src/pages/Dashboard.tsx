@@ -8,10 +8,12 @@ import { TradeHistorySection } from "@/components/dashboard/TradeHistorySection"
 import { PerformanceAnalytics } from "@/components/dashboard/PerformanceAnalytics";
 import { CalendarSection } from "@/components/dashboard/CalendarSection";
 import { useProviderAwareTradeStats } from "@/hooks/useProviderAwareTrades";
+import { useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBrand } from "@/contexts/BrandContext";
 import { useAdminRole } from "@/hooks/useAdminRole";
 import { Badge } from "@/components/ui/badge";
+import { useMemo } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -25,6 +27,11 @@ import { DashboardCustomizer } from "@/components/dashboard/DashboardCustomizer"
 
 const Dashboard = () => {
   const { stats, isLoading: statsLoading, isProvider } = useProviderAwareTradeStats();
+  const { trades: pendingTrades, isLoading: pendingTradesLoading } = useProviderAwareTrades({
+    result: "pending",
+    fetchAll: true,
+    realtime: true,
+  });
   const { profile } = useAuth();
   const { settings } = useBrand();
   const { adminRole } = useAdminRole();
@@ -36,6 +43,24 @@ const Dashboard = () => {
   // Calculate unrealized P&L from active trades (simplified - would need real price data)
   const unrealizedPnL = stats.totalPnL > 0 ? stats.totalPnL : 0;
 
+  const visibleActiveTrades = useMemo(() => {
+    const activeTrades = pendingTrades.filter(
+      (trade) =>
+        trade.signal?.status === "active" &&
+        (trade.signal?.signal_type || "signal") === "signal",
+    );
+
+    if (!isProvider) {
+      return activeTrades.length;
+    }
+
+    return new Set(
+      activeTrades
+        .map((trade) => trade.signal?.id)
+        .filter((signalId): signalId is string => Boolean(signalId)),
+    ).size;
+  }, [pendingTrades, isProvider]);
+
   const { sections, updateOrder, resetLayout, isLoaded } = useDashboardLayout();
 
   if (!isLoaded) return null;
@@ -46,7 +71,7 @@ const Dashboard = () => {
         <StatCard
           title="Total Trades"
           value={statsLoading ? "..." : stats.totalTrades.toString()}
-          change={`${stats.pending} active`}
+          change={statsLoading || pendingTradesLoading ? "..." : `${visibleActiveTrades} active`}
           changeType="neutral"
           icon={Activity}
           iconColor="text-primary"

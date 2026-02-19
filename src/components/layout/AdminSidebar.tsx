@@ -38,12 +38,12 @@ type NavItem = {
 
 // Define which roles can access each page
 const navItems: NavItem[] = [
-  // Super Admin & Payments Admin Dashboard
+  // Super Admin Dashboard
   {
     icon: LayoutDashboard,
     label: "Dashboard",
     path: "/admin",
-    allowedRoles: ['super_admin', 'payments_admin']
+    allowedRoles: ['super_admin']
   },
   // Provider-specific Dashboard
   {

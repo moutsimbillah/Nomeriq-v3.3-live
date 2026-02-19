@@ -27,6 +27,40 @@ export interface TelegramTradeUpdatePayload {
   tp_label: string;
   tp_price: number;
   close_percent: number;
+  update_type?: "limit" | "market" | null;
+  remaining_after_percent?: number | null;
+  remaining_after_exposure?: number | null;
+  note?: string | null;
+}
+
+export interface TelegramTradeUpdateEditedPayload {
+  pair: string;
+  category: string;
+  direction: string;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  tp_label: string;
+  update_type?: "limit" | "market" | null;
+  previous_tp_price: number;
+  next_tp_price: number;
+  previous_close_percent: number;
+  next_close_percent: number;
+  previous_note?: string | null;
+  next_note?: string | null;
+}
+
+export interface TelegramTradeUpdateDeletedPayload {
+  pair: string;
+  category: string;
+  direction: string;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  tp_label: string;
+  update_type?: "limit" | "market" | null;
+  tp_price: number;
+  close_percent: number;
   note?: string | null;
 }
 
@@ -317,6 +351,19 @@ export async function sendTelegramTradeUpdate(params: {
   signal: TelegramTradeUpdatePayload;
 }): Promise<TelegramDeliveryResult> {
   const { signal } = params;
+  const updateType =
+    signal.update_type === "market" ? "Market Close" : "Limit Order";
+  const updateTypeLine = `\nType: ${updateType}`;
+  const remainingAfterPercent = Number(signal.remaining_after_percent);
+  const hasRemainingAfterPercent = Number.isFinite(remainingAfterPercent);
+  const remainingAfterExposure = Number(signal.remaining_after_exposure);
+  const hasRemainingAfterExposure = Number.isFinite(remainingAfterExposure);
+  const remainingLine =
+    hasRemainingAfterPercent || hasRemainingAfterExposure
+      ? `\nRemaining Position: ` +
+        `${hasRemainingAfterPercent ? `${remainingAfterPercent.toFixed(2)}%` : "-"}` +
+        `${hasRemainingAfterExposure ? ` ($${Math.max(0, remainingAfterExposure).toFixed(2)})` : ""}`
+      : "";
   const noteLine = signal.note ? `\nNote: ${signal.note}` : "";
   const coreLines = buildCoreTradeLines({
     category: signal.category,
@@ -330,6 +377,63 @@ export async function sendTelegramTradeUpdate(params: {
     `TRADE UPDATE\n\n` +
     `${coreLines}\n\n` +
     `${signal.tp_label}\n` +
+    `Price: ${signal.tp_price}\n` +
+    `${updateTypeLine}\n` +
+    `Close: ${signal.close_percent}%` +
+    `${remainingLine}` +
+    `${noteLine}`;
+
+  return sendTelegramMessageToCategory(signal.category, message);
+}
+
+export async function sendTelegramTradeUpdateEdited(params: {
+  signal: TelegramTradeUpdateEditedPayload;
+}): Promise<TelegramDeliveryResult> {
+  const { signal } = params;
+  const updateType =
+    signal.update_type === "market" ? "Market Close" : "Limit Order";
+  const previousNote = signal.previous_note?.trim() || "-";
+  const nextNote = signal.next_note?.trim() || "-";
+  const coreLines = buildCoreTradeLines({
+    category: signal.category,
+    direction: signal.direction,
+    pair: signal.pair,
+    entry: signal.entry_price,
+    stopLoss: signal.stop_loss,
+    takeProfit: signal.take_profit,
+  });
+  const message =
+    `TRADE UPDATE EDITED\n\n` +
+    `${coreLines}\n\n` +
+    `${signal.tp_label}\n` +
+    `Type: ${updateType}\n` +
+    `Price: ${signal.previous_tp_price} -> ${signal.next_tp_price}\n` +
+    `Close: ${signal.previous_close_percent}% -> ${signal.next_close_percent}%\n` +
+    `Note: ${previousNote} -> ${nextNote}`;
+
+  return sendTelegramMessageToCategory(signal.category, message);
+}
+
+export async function sendTelegramTradeUpdateDeleted(params: {
+  signal: TelegramTradeUpdateDeletedPayload;
+}): Promise<TelegramDeliveryResult> {
+  const { signal } = params;
+  const updateType =
+    signal.update_type === "market" ? "Market Close" : "Limit Order";
+  const noteLine = signal.note ? `\nNote: ${signal.note}` : "";
+  const coreLines = buildCoreTradeLines({
+    category: signal.category,
+    direction: signal.direction,
+    pair: signal.pair,
+    entry: signal.entry_price,
+    stopLoss: signal.stop_loss,
+    takeProfit: signal.take_profit,
+  });
+  const message =
+    `TRADE UPDATE DELETED\n\n` +
+    `${coreLines}\n\n` +
+    `${signal.tp_label}\n` +
+    `Type: ${updateType}\n` +
     `Price: ${signal.tp_price}\n` +
     `Close: ${signal.close_percent}%` +
     `${noteLine}`;
@@ -443,3 +547,4 @@ function formatSignalMessage(
 
   return message;
 }
+

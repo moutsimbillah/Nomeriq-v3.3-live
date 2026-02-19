@@ -32,6 +32,7 @@ import type { MarketPair } from "@/lib/market-api";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
 import { useLivePrices } from "@/hooks/useLivePrices";
+import { useLiveSignalAutoTriggers } from "@/hooks/useLiveSignalAutoTriggers";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 const AdminSignals = () => {
@@ -571,6 +572,11 @@ const AdminSignals = () => {
     [visibleSignals, showLiveColumns]
   );
   const livePrices = useLivePrices(liveModePairs);
+  useLiveSignalAutoTriggers(visibleSignals, livePrices, {
+    enabled: showLiveColumns,
+    enableTelegram: true,
+    onSignalsClosed: refetch,
+  });
 
   // Form extracted into a standalone component to prevent unmount/mount on each keystroke.
 

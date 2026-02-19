@@ -44,6 +44,7 @@ import { searchMarketPairs, fetchLiveQuote, createSignalLive } from "@/lib/marke
 import type { MarketPair } from "@/lib/market-api";
 import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
 import { useLivePrices } from "@/hooks/useLivePrices";
+import { useLiveSignalAutoTriggers } from "@/hooks/useLiveSignalAutoTriggers";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -598,6 +599,11 @@ const MySignals = () => {
     [visibleSignals, showLiveColumns]
   );
   const livePrices = useLivePrices(liveModePairs);
+  useLiveSignalAutoTriggers(visibleSignals, livePrices, {
+    enabled: showLiveColumns,
+    enableTelegram: true,
+    onSignalsClosed: refetch,
+  });
 
   return (
     <DashboardLayout title="Live Trades">

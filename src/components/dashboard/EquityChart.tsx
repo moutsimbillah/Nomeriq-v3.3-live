@@ -36,9 +36,15 @@ const hasSameDayCollisions = (dates: Date[]) => {
 
 interface EquityChartProps {
   adminGlobalView?: boolean;
+  adminGlobalStartingBalance?: number;
+  adminGlobalCurrentBalance?: number;
 }
 
-export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
+export const EquityChart = ({
+  adminGlobalView = false,
+  adminGlobalStartingBalance,
+  adminGlobalCurrentBalance,
+}: EquityChartProps) => {
   const { profile, user } = useAuth();
   const { trades } = useProviderAwareTrades({ fetchAll: true, realtime: true, adminGlobalView });
   const { signals } = useProviderAwareSignals({ realtime: true, fetchAll: true, adminGlobalView });
@@ -50,6 +56,10 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
 
   const getValidStartingBalance = (candidate: number | null | undefined) =>
     typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
+      ? candidate
+      : null;
+  const getValidBalance = (candidate: number | null | undefined) =>
+    typeof candidate === "number" && Number.isFinite(candidate)
       ? candidate
       : null;
 
@@ -96,41 +106,25 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
     };
   }, [user, providerScopedMode, roleLoading, adminGlobalView]);
 
-  // Provider mode: FIXED starting balance (configured capital) + simulated current balance from signals
+  // Provider mode: use actual profile balance + fixed starting balance baseline.
   // Regular users: actual trade history
   const { startingBalance, totalPnL, effectiveCurrentBalance } = useMemo(() => {
     if (providerScopedMode && !roleLoading) {
-      // Use the user's configured capital as the fixed starting point.
-      // (This is what users expect when they set their starting balance.)
+      // Providers should see their real profile equity metrics.
       const fixedStarting =
         getValidStartingBalance(profile?.starting_balance) ??
         getValidStartingBalance(profile?.account_balance) ??
         1000;
-
-      // Providers ALWAYS use the global risk %.
-      const riskPercent = settings?.global_risk_percent;
-      const RISK = typeof riskPercent === "number" ? riskPercent / 100 : 0;
-
-      const closedSignalsChrono = signals
-        .filter((s) => ["tp_hit", "sl_hit", "breakeven"].includes(s.status) && s.closed_at)
-        .sort((a, b) => parseISO(a.closed_at!).getTime() - parseISO(b.closed_at!).getTime());
-
-      let running = fixedStarting;
-      for (const signal of closedSignalsChrono) {
-        if (signal.status === "tp_hit") {
-          running += running * RISK * calculateRR(signal);
-        } else if (signal.status === "sl_hit") {
-          running -= running * RISK;
-        }
-      }
-
-      const simulatedCurrent = running;
-      const pnl = simulatedCurrent - fixedStarting;
+      const liveProfileBalance =
+        getValidBalance(currentBalance) ??
+        getValidBalance(profile?.account_balance) ??
+        fixedStarting;
+      const pnl = liveProfileBalance - fixedStarting;
 
       return {
         startingBalance: fixedStarting,
         totalPnL: Number.isFinite(pnl) ? pnl : 0,
-        effectiveCurrentBalance: Number.isFinite(simulatedCurrent) ? simulatedCurrent : fixedStarting,
+        effectiveCurrentBalance: Number.isFinite(liveProfileBalance) ? liveProfileBalance : fixedStarting,
       };
     }
 
@@ -139,15 +133,17 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
       const closedTrades = trades.filter((t) => t.result === "win" || t.result === "loss" || t.result === "breakeven");
       const tradePnL = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
       const fixedStarting =
-        getValidStartingBalance(profile?.account_balance) ??
-        getValidStartingBalance(profile?.starting_balance) ??
-        1000;
-      const simulatedCurrent = fixedStarting + tradePnL;
+        getValidBalance(adminGlobalStartingBalance) ??
+        0;
+      const aggregatedCurrent =
+        getValidBalance(adminGlobalCurrentBalance) ??
+        (fixedStarting + tradePnL);
+      const pnl = aggregatedCurrent - fixedStarting;
 
       return {
         startingBalance: fixedStarting,
-        totalPnL: Number.isFinite(tradePnL) ? tradePnL : 0,
-        effectiveCurrentBalance: Number.isFinite(simulatedCurrent) ? simulatedCurrent : fixedStarting,
+        totalPnL: Number.isFinite(pnl) ? pnl : 0,
+        effectiveCurrentBalance: Number.isFinite(aggregatedCurrent) ? aggregatedCurrent : fixedStarting,
       };
     }
 
@@ -166,7 +162,19 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
       totalPnL: tradePnL,
       effectiveCurrentBalance: currentBalance,
     };
-  }, [providerScopedMode, roleLoading, signals, trades, currentBalance, settings?.global_risk_percent, profile?.account_balance, profile?.starting_balance, adminGlobalView]);
+  }, [
+    providerScopedMode,
+    roleLoading,
+    signals,
+    trades,
+    currentBalance,
+    settings?.global_risk_percent,
+    profile?.account_balance,
+    profile?.starting_balance,
+    adminGlobalView,
+    adminGlobalStartingBalance,
+    adminGlobalCurrentBalance,
+  ]);
 
   const chartData = useMemo(() => {
     const now = new Date();
@@ -191,57 +199,10 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
     }
 
     if (providerScopedMode && !roleLoading) {
-      // Provider mode: Build chart from signals using FIXED starting balance + global risk %.
-      const riskPercent = settings?.global_risk_percent;
-      const RISK = typeof riskPercent === "number" ? riskPercent / 100 : 0;
-
-      const allClosedSignals = signals
-        .filter((s) => ["tp_hit", "sl_hit", "breakeven"].includes(s.status) && s.closed_at)
-        .sort((a, b) => parseISO(a.closed_at!).getTime() - parseISO(b.closed_at!).getTime());
-
-      if (allClosedSignals.length === 0) {
-        return [
-          { date: "Start", value: startingBalance },
-          { date: "Now", value: effectiveCurrentBalance },
-        ];
-      }
-
-      // Balance at the beginning of the selected period.
-      let balanceAtStart = startingBalance;
-      for (const s of allClosedSignals) {
-        if (parseISO(s.closed_at!) >= startDate) break;
-
-        if (s.status === "tp_hit") {
-          balanceAtStart += balanceAtStart * RISK * calculateRR(s);
-        } else if (s.status === "sl_hit") {
-          balanceAtStart -= balanceAtStart * RISK;
-        }
-      }
-
-      let balance = balanceAtStart;
-
-      // Only apply signals inside the period.
-      const periodSignals = allClosedSignals.filter((s) => parseISO(s.closed_at!) >= startDate);
-      const showTimeOnAxis = hasSameDayCollisions(
-        periodSignals.map((s) => parseISO(s.closed_at!))
-      );
-      const axisFormat = showTimeOnAxis ? "MMM dd HH:mm" : "MMM dd";
-      const data = [{ date: format(startDate, axisFormat), value: Math.round(balance * 100) / 100 }];
-
-      for (const s of periodSignals) {
-        if (s.status === "tp_hit") {
-          balance += balance * RISK * calculateRR(s);
-        } else if (s.status === "sl_hit") {
-          balance -= balance * RISK;
-        }
-
-        data.push({
-          date: format(parseISO(s.closed_at!), axisFormat),
-          value: Math.round(balance * 100) / 100,
-        });
-      }
-
-      return data;
+      return [
+        { date: "Start", value: Math.round(startingBalance * 100) / 100 },
+        { date: "Now", value: Math.round(effectiveCurrentBalance * 100) / 100 },
+      ];
     } else {
       // Regular user mode: Build chart from trades
       const filteredTrades = trades
@@ -282,8 +243,29 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
 
   const growth = startingBalance > 0 ? ((effectiveCurrentBalance - startingBalance) / startingBalance) * 100 : 0;
   const pnlAmount = effectiveCurrentBalance - startingBalance;
-  const hasNoActivity = providerScopedMode ? signals.filter(s => ['tp_hit', 'sl_hit', 'breakeven'].includes(s.status)).length === 0 : trades.length === 0;
+  const hasNoActivity = providerScopedMode ? false : trades.length === 0;
   const isPositive = growth >= 0;
+  const growthSubtitle = adminGlobalView
+    ? "Track global user balance growth over time"
+    : "Track your account growth over time";
+  const startingBalanceLabel = adminGlobalView
+    ? "Global Starting Balance"
+    : "Starting Balance";
+  const currentBalanceLabel = adminGlobalView
+    ? "Global Current Balance"
+    : "Current Balance";
+  const growthLabel = adminGlobalView
+    ? "Global Total Growth"
+    : "Total Growth";
+  const startingBalanceTooltip = adminGlobalView
+    ? "Sum of user starting balances used as the global baseline."
+    : "Balance at the beginning of this equity calculation period.";
+  const currentBalanceTooltip = adminGlobalView
+    ? "Current global balance derived from aggregated user balances."
+    : "Latest account balance including closed and currently reflected PnL.";
+  const growthTooltip = adminGlobalView
+    ? "Percentage return from Global Starting Balance to Global Current Balance."
+    : "Percentage return from Starting Balance to Current Balance.";
 
   // Calculate Account Health Meter
   const accountHealth = useMemo(() => {
@@ -462,7 +444,7 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
           </div>
           <div>
             <h3 className="font-semibold text-lg">Equity Curve</h3>
-            <p className="text-sm text-muted-foreground">Track your account growth over time</p>
+            <p className="text-sm text-muted-foreground">{growthSubtitle}</p>
           </div>
         </div>
         
@@ -493,14 +475,14 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
             <div className="p-4 rounded-xl bg-secondary/30 border border-border/50">
               <div className="flex items-center gap-2 mb-2">
                 <Wallet className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Starting Balance</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{startingBalanceLabel}</span>
               </div>
               <p className="text-2xl font-bold font-mono">
                 ${(startingBalance > 0 ? startingBalance : effectiveCurrentBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
           </TooltipTrigger>
-          <TooltipContent>Balance at the beginning of this equity calculation period.</TooltipContent>
+          <TooltipContent>{startingBalanceTooltip}</TooltipContent>
         </Tooltip>
 
         {/* Current Balance */}
@@ -514,7 +496,7 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
             )}>
               <div className="flex items-center gap-2 mb-2">
                 <Target className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current Balance</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{currentBalanceLabel}</span>
               </div>
               <div className="flex items-baseline gap-2">
                 <p className={cn(
@@ -533,7 +515,7 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
               </div>
             </div>
           </TooltipTrigger>
-          <TooltipContent>Latest account balance including closed and currently reflected PnL.</TooltipContent>
+          <TooltipContent>{currentBalanceTooltip}</TooltipContent>
         </Tooltip>
 
         {/* Total Growth */}
@@ -551,7 +533,7 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
                 ) : (
                   <TrendingDown className="w-4 h-4 text-destructive" />
                 )}
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Growth</span>
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{growthLabel}</span>
               </div>
               <div className="flex items-baseline gap-2">
                 <p className={cn(
@@ -571,7 +553,7 @@ export const EquityChart = ({ adminGlobalView = false }: EquityChartProps) => {
               </div>
             </div>
           </TooltipTrigger>
-          <TooltipContent>Percentage return from Starting Balance to Current Balance.</TooltipContent>
+          <TooltipContent>{growthTooltip}</TooltipContent>
         </Tooltip>
       </div>
 

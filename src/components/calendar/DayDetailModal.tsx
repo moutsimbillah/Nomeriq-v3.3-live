@@ -203,20 +203,43 @@ export const DayDetailModal = ({
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isProvider, setIsProvider] = useState(false);
+  const [adminRole, setAdminRole] = useState<string | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
   const [expandedTradeId, setExpandedTradeId] = useState<string | null>(null);
+  const [dayTpUpdates, setDayTpUpdates] = useState<
+    Array<{ id: string; user_trade_id: string; realized_pnl: number; created_at: string }>
+  >([]);
+  const [closeDeltaByTradeId, setCloseDeltaByTradeId] = useState<Record<string, number>>({});
 
   const signalIds = useMemo(
     () => Array.from(new Set(trades.map((t) => t.signal?.id).filter((id): id is string => !!id))),
     [trades]
   );
   const { updatesBySignal } = useSignalTakeProfitUpdates({ signalIds, realtime: isOpen });
+  const canUseGlobalView = adminGlobalView && adminRole === "super_admin";
+
+  const isTpUpdateInScope = (row: any) => {
+    const tradeRow = Array.isArray(row.trade) ? row.trade[0] : row.trade;
+    if (!tradeRow) return false;
+
+    if (canUseGlobalView) return true;
+
+    if (isProvider) {
+      return tradeRow.signal?.created_by === user?.id;
+    }
+
+    if (!user || tradeRow.user_id !== user.id) return false;
+    return allowedCategories.length > 0
+      ? allowedCategories.includes(tradeRow.signal?.category || "")
+      : true;
+  };
 
   // Fetch admin role to check if user is a signal provider
   useEffect(() => {
     const fetchAdminRole = async () => {
       if (!user || !isAdmin) {
         setIsProvider(false);
+        setAdminRole(null);
         setRoleLoading(false);
         return;
       }
@@ -230,10 +253,12 @@ export const DayDetailModal = ({
           .maybeSingle();
         
         const role = data?.admin_role;
+        setAdminRole((role as string | null) || null);
         setIsProvider(role === 'signal_provider_admin' || role === 'super_admin');
       } catch (err) {
         console.error('Error fetching admin role:', err);
         setIsProvider(false);
+        setAdminRole(null);
       } finally {
         setRoleLoading(false);
       }
@@ -255,7 +280,7 @@ export const DayDetailModal = ({
 
         let data: Trade[] = [];
 
-        if (adminGlobalView && isAdmin) {
+        if (canUseGlobalView) {
           // Super admin global day view: include all closed trades for that day.
           const { data: globalTrades, error } = await supabase
             .from("user_trades")
@@ -314,16 +339,74 @@ export const DayDetailModal = ({
           );
         }
 
+        const { data: tpUpdateRows, error: tpUpdateError } = await supabase
+          .from("user_trade_take_profit_updates")
+          .select(
+            `
+            id,
+            user_trade_id,
+            realized_pnl,
+            created_at,
+            trade:user_trades!inner(
+              id,
+              user_id,
+              signal:signals(created_by, category)
+            )
+          `
+          )
+          .gte("created_at", startOfDay.toISOString())
+          .lte("created_at", endOfDay.toISOString())
+          .order("created_at", { ascending: true });
+
+        if (tpUpdateError) throw tpUpdateError;
+
+        const scopedDayUpdates = (tpUpdateRows || [])
+          .filter(isTpUpdateInScope)
+          .map((row: any) => ({
+            id: row.id as string,
+            user_trade_id: row.user_trade_id as string,
+            realized_pnl: Number(row.realized_pnl || 0),
+            created_at: row.created_at as string,
+          }));
+
+        const closeDeltaMap: Record<string, number> = {};
+        const closedTradeIds = data.map((trade) => trade.id).filter((id): id is string => Boolean(id));
+        if (closedTradeIds.length > 0) {
+          const { data: closedTradeUpdates, error: closedTradeUpdatesError } = await supabase
+            .from("user_trade_take_profit_updates")
+            .select("user_trade_id, realized_pnl")
+            .in("user_trade_id", closedTradeIds);
+
+          if (closedTradeUpdatesError) throw closedTradeUpdatesError;
+
+          const updatesByTrade = new Map<string, number>();
+          (closedTradeUpdates || []).forEach((row: any) => {
+            const tradeId = row.user_trade_id as string | undefined;
+            if (!tradeId) return;
+            const existing = updatesByTrade.get(tradeId) || 0;
+            updatesByTrade.set(tradeId, existing + Number(row.realized_pnl || 0));
+          });
+
+          data.forEach((trade) => {
+            const totalRealizedUpdates = updatesByTrade.get(trade.id) || 0;
+            closeDeltaMap[trade.id] = Number(trade.pnl || 0) - totalRealizedUpdates;
+          });
+        }
+
         setTrades(data);
+        setDayTpUpdates(scopedDayUpdates);
+        setCloseDeltaByTradeId(closeDeltaMap);
       } catch (err) {
         console.error("Error fetching day trades:", err);
+        setDayTpUpdates([]);
+        setCloseDeltaByTradeId({});
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchTrades();
-  }, [user, date, isOpen, isProvider, allowedCategories, adminGlobalView, isAdmin, roleLoading]);
+  }, [user, date, isOpen, isProvider, allowedCategories, canUseGlobalView, roleLoading]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -339,16 +422,26 @@ export const DayDetailModal = ({
     const totalTrades = trades.length;
     const winrate = totalTrades > 0 ? (winners / totalTrades) * 100 : 0;
 
-    const grossPnL = trades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const closeDeltaSum = trades.reduce(
+      (sum, t) => sum + Number(closeDeltaByTradeId[t.id] ?? t.pnl ?? 0),
+      0
+    );
+    const dayTpRealizedSum = dayTpUpdates.reduce((sum, u) => sum + Number(u.realized_pnl || 0), 0);
+    const grossPnL = closeDeltaSum + dayTpRealizedSum;
     const totalVolume = trades.reduce((sum, t) => sum + t.risk_amount, 0);
 
-    const grossProfit = trades
-      .filter((t) => (t.pnl || 0) > 0)
-      .reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const eventDeltas = [
+      ...trades.map((trade) => Number(closeDeltaByTradeId[trade.id] ?? trade.pnl ?? 0)),
+      ...dayTpUpdates.map((update) => Number(update.realized_pnl || 0)),
+    ];
+
+    const grossProfit = eventDeltas
+      .filter((value) => value > 0)
+      .reduce((sum, value) => sum + value, 0);
     const grossLoss = Math.abs(
-      trades
-        .filter((t) => (t.pnl || 0) < 0)
-        .reduce((sum, t) => sum + (t.pnl || 0), 0)
+      eventDeltas
+        .filter((value) => value < 0)
+        .reduce((sum, value) => sum + value, 0)
     );
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
 
@@ -362,29 +455,42 @@ export const DayDetailModal = ({
       totalVolume,
       profitFactor,
     };
-  }, [trades]);
+  }, [trades, closeDeltaByTradeId, dayTpUpdates]);
 
   const resolvedDayPnl = useMemo(() => {
     if (isLoading) return dayPnl;
-    return trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
-  }, [isLoading, dayPnl, trades]);
+    return stats.grossPnL;
+  }, [isLoading, dayPnl, stats.grossPnL]);
 
   const resolvedDayTrades = isLoading ? dayTrades : trades.length;
 
   // Build P&L progression data
   const chartData = useMemo(() => {
+    const closeEvents = trades
+      .filter((trade) => trade.closed_at)
+      .map((trade) => ({
+        delta: Number(closeDeltaByTradeId[trade.id] ?? trade.pnl ?? 0),
+        at: trade.closed_at as string,
+      }));
+    const tpEvents = dayTpUpdates.map((update) => ({
+      delta: Number(update.realized_pnl || 0),
+      at: update.created_at,
+    }));
+
+    const events = [...closeEvents, ...tpEvents]
+      .filter((event) => event.at)
+      .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
     let cumulative = 0;
-    return trades.map((trade, index) => {
-      cumulative += trade.pnl || 0;
+    return events.map((event, index) => {
+      cumulative += event.delta;
       return {
         index: index + 1,
         pnl: cumulative,
-        time: trade.closed_at
-          ? format(new Date(trade.closed_at), "HH:mm")
-          : `Trade ${index + 1}`,
+        time: format(new Date(event.at), "HH:mm"),
       };
     });
-  }, [trades]);
+  }, [trades, closeDeltaByTradeId, dayTpUpdates]);
 
   // Calculate duration between created_at and closed_at
   const formatDuration = (createdAt: string, closedAt: string | null) => {
@@ -465,7 +571,7 @@ export const DayDetailModal = ({
                 </div>
                 <div className="h-56 rounded-xl bg-secondary/30" />
               </div>
-            ) : trades.length === 0 ? (
+            ) : trades.length === 0 && dayTpUpdates.length === 0 ? (
               <div className="flex items-center justify-center h-64">
                 <p className="text-muted-foreground">No trades found for this day</p>
               </div>
@@ -592,6 +698,11 @@ export const DayDetailModal = ({
                     <p className="text-xs uppercase tracking-wider text-muted-foreground">
                       Trades
                     </p>
+                    {trades.length === 0 && dayTpUpdates.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        No trades closed on this day. P&L came from TP realization updates.
+                      </p>
+                    )}
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full table-fixed min-w-[980px]">
@@ -640,6 +751,12 @@ export const DayDetailModal = ({
                               : trade.signal,
                           });
                           const baseRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
+                          const entryPriceValue = Number(signal?.entry_price);
+                          const stopLossValue = Number(signal?.stop_loss);
+                          const hasBreakevenUpdate =
+                            Number.isFinite(entryPriceValue) &&
+                            Number.isFinite(stopLossValue) &&
+                            Math.abs(stopLossValue - entryPriceValue) < 1e-8;
                           let runningRemainingRisk = Math.max(0, baseRisk);
 
                           return (
@@ -785,7 +902,7 @@ export const DayDetailModal = ({
                                       </div>
 
                                       <div className="rounded-lg border border-border/30 p-3 max-w-full overflow-hidden">
-                                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">TP Updates</p>
+                                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Update History</p>
                                         <p className="text-xs text-muted-foreground mb-2">
                                           Remaining Position:{" "}
                                           {(() => {
@@ -801,17 +918,19 @@ export const DayDetailModal = ({
                                             return `${remainingPercent.toFixed(2)}% ($${remainingRisk.toFixed(2)})`;
                                           })()}
                                         </p>
-                                        {updates.length === 0 ? (
-                                          <p className="text-sm text-muted-foreground">No TP updates published.</p>
+                                        {updates.length === 0 && !hasBreakevenUpdate ? (
+                                          <p className="text-sm text-muted-foreground">No trade updates published.</p>
                                         ) : (
                                           <div className="space-y-2">
                                             {updates.map((u) => {
                                               const closePercent = Math.max(0, Math.min(100, Number(u.close_percent || 0)));
-                                              const reducedRisk = runningRemainingRisk * (closePercent / 100);
+                                              const requestedCloseRisk = baseRisk * (closePercent / 100);
+                                              const reducedRisk = Math.min(runningRemainingRisk, requestedCloseRisk);
                                               let remainingAfterRisk = Math.max(0, runningRemainingRisk - reducedRisk);
                                               if (closePercent >= 100) {
                                                 remainingAfterRisk = 0;
                                               }
+                                              const updateType = u.update_type === "market" ? "market" : "limit";
                                               const updateRr = calculateSignedSignalRrForTarget(
                                                 trade.signal,
                                                 Number(u.tp_price)
@@ -822,6 +941,21 @@ export const DayDetailModal = ({
                                               return (
                                                 <div key={u.id} className="rounded-md bg-secondary/30 px-3 py-2 text-sm flex flex-wrap items-center gap-2 break-words">
                                                   <span className="px-2 py-0.5 rounded-full border border-border/50 text-xs">{u.tp_label}</span>
+                                                  <span
+                                                    className={cn(
+                                                      "px-2 py-0.5 rounded-full border text-xs",
+                                                      updateType === "market"
+                                                        ? "border-warning/40 text-warning"
+                                                        : "border-primary/40 text-primary"
+                                                    )}
+                                                  >
+                                                    {updateType === "market" ? "Market Close" : "Limit Order"}
+                                                  </span>
+                                                  {remainingAfterPercent <= 0.0001 && (
+                                                    <span className="px-2 py-0.5 rounded-full border border-success/40 text-success text-xs">
+                                                      Position Closed
+                                                    </span>
+                                                  )}
                                                   <span className="font-mono">Price: {u.tp_price}</span>
                                                   <span className="text-primary">Close: {closePercent.toFixed(2)}%</span>
                                                   <span
@@ -837,6 +971,19 @@ export const DayDetailModal = ({
                                                 </div>
                                               );
                                             })}
+                                            {hasBreakevenUpdate && (
+                                              <div className="rounded-lg border border-warning/30 bg-warning/10 p-3">
+                                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                                  <span className="px-2 py-0.5 rounded-full border border-warning/40 text-warning text-xs">
+                                                    Risk Update
+                                                  </span>
+                                                  <span className="text-sm font-semibold text-warning">SL moved to break-even</span>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground">
+                                                  Stop loss now equals entry price, so downside risk is protected at 0R.
+                                                </p>
+                                              </div>
+                                            )}
                                           </div>
                                         )}
                                       </div>
@@ -861,3 +1008,4 @@ export const DayDetailModal = ({
     </Dialog>
   );
 };
+
