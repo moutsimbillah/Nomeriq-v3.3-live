@@ -71,3 +71,15 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## Live quote fan-out worker
+
+To run live prices from a single backend stream (instead of per-client quote polling), use:
+
+```sh
+npm run quotes:worker
+```
+
+Setup and deployment details:
+
+- `docs/live-price-stream-worker.md`

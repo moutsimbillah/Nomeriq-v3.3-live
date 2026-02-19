@@ -1,4 +1,5 @@
 import { useSignalStats } from "@/hooks/useSignalStats";
+import { useLivePrices } from "@/hooks/useLivePrices";
 import { cn } from "@/lib/utils";
 import { Signal, TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
@@ -10,6 +11,10 @@ export const AdminActiveSignals = () => {
   const activeSignals = signals
     .filter(s => s.status === "active")
     .sort((a, b) => parseISO(b.created_at).getTime() - parseISO(a.created_at).getTime());
+  const liveModePairs = activeSignals
+    .filter((s) => s.market_mode === "live" && !!s.pair)
+    .map((s) => s.pair);
+  const livePrices = useLivePrices(liveModePairs);
 
   if (isLoading) {
     return (
@@ -91,7 +96,10 @@ export const AdminActiveSignals = () => {
                 </div>
 
                 {/* Price Info */}
-                <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className={cn(
+                  "grid gap-2 mb-3",
+                  signal.market_mode === "live" ? "grid-cols-4" : "grid-cols-3"
+                )}>
                   <div className="text-center p-2 rounded-lg bg-primary/10">
                     <p className="text-[10px] text-muted-foreground uppercase">Entry</p>
                     <p className="text-xs font-mono font-semibold text-primary">
@@ -110,6 +118,16 @@ export const AdminActiveSignals = () => {
                       {signal.take_profit ?? '-'}
                     </p>
                   </div>
+                  {signal.market_mode === "live" && (
+                    <div className="text-center p-2 rounded-lg bg-secondary/60">
+                      <p className="text-[10px] text-muted-foreground uppercase">Current</p>
+                      <p className="text-xs font-mono font-semibold text-foreground">
+                        {livePrices[signal.pair] != null
+                          ? Number(livePrices[signal.pair]).toFixed(decimals)
+                          : "--"}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Footer */}

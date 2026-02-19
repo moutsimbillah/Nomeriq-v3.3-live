@@ -5,6 +5,7 @@ import { Clock, ArrowUpRight, ArrowDownRight, AlertCircle, CheckCircle2, XCircle
 import { cn } from "@/lib/utils";
 import { Signal } from "@/types/database";
 import { format, parseISO } from "date-fns";
+import { useLivePrices } from "@/hooks/useLivePrices";
 
 interface ProviderRecentSignalsProps {
   signals: Signal[];
@@ -13,6 +14,10 @@ interface ProviderRecentSignalsProps {
 
 export const ProviderRecentSignals = ({ signals, isLoading }: ProviderRecentSignalsProps) => {
   const recentSignals = signals.slice(0, 10);
+  const liveModePairs = recentSignals
+    .filter((signal) => signal.status === "active" && signal.market_mode === "live" && !!signal.pair)
+    .map((signal) => signal.pair);
+  const livePrices = useLivePrices(liveModePairs);
 
   const getStatusIcon = (signal: Signal) => {
     if (signal.signal_type === 'upcoming') {
@@ -108,7 +113,9 @@ export const ProviderRecentSignals = ({ signals, isLoading }: ProviderRecentSign
           </div>
         ) : (
           <div className="space-y-3">
-            {recentSignals.map((signal) => (
+            {recentSignals.map((signal) => {
+              const decimals = signal.category?.toLowerCase() === "forex" ? 5 : 2;
+              return (
               <div
                 key={signal.id}
                 className={cn(
@@ -133,6 +140,11 @@ export const ProviderRecentSignals = ({ signals, isLoading }: ProviderRecentSign
                       <Badge variant="outline" className="text-[10px]">
                         {signal.category}
                       </Badge>
+                      {signal.status === "active" && signal.market_mode === "live" && (
+                        <Badge variant="outline" className="text-[10px] font-mono">
+                          Current: {livePrices[signal.pair] != null ? Number(livePrices[signal.pair]).toFixed(decimals) : "--"}
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {format(parseISO(signal.created_at), 'MMM dd, HH:mm')}
@@ -144,7 +156,8 @@ export const ProviderRecentSignals = ({ signals, isLoading }: ProviderRecentSign
                   {getStatusLabel(signal)}
                 </Badge>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>

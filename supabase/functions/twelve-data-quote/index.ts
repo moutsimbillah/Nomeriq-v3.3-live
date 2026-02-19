@@ -9,7 +9,153 @@ const corsHeaders = {
   "Access-Control-Max-Age": "86400",
 };
 const QUOTE_PROVIDER = "twelve_data";
-const CACHE_TTL_MS = 15_000;
+const CACHE_TTL_MS = 1_000;
+const FETCH_CHUNK_SIZE = 8;
+const REFRESH_LOCK_RETRY_DELAY_MS = 120;
+const REFRESH_LOCK_RETRY_ATTEMPTS = 4;
+
+type CachedQuote = {
+  price: number;
+  quoted_at: string;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isFreshQuote = (quote: CachedQuote | undefined, nowMs: number): boolean => {
+  if (!quote) return false;
+  const quotedMs = Date.parse(quote.quoted_at);
+  if (!Number.isFinite(quotedMs)) return false;
+  return nowMs - quotedMs <= CACHE_TTL_MS;
+};
+
+async function loadCachedQuotes(
+  supabase: ReturnType<typeof createClient>,
+  symbols: string[],
+): Promise<Map<string, CachedQuote>> {
+  const out = new Map<string, CachedQuote>();
+  if (!symbols.length) return out;
+
+  const { data, error } = await supabase
+    .from("market_quotes")
+    .select("symbol, price, quoted_at")
+    .eq("provider", QUOTE_PROVIDER)
+    .in("symbol", symbols);
+
+  if (error) {
+    console.error("[twelve-data-quote] Failed to read cached quotes:", error);
+    return out;
+  }
+
+  for (const row of (data ?? []) as Array<{ symbol: string; price: number | string; quoted_at: string }>) {
+    const price = Number(row.price);
+    if (!Number.isFinite(price)) continue;
+    out.set(row.symbol, { price, quoted_at: row.quoted_at });
+  }
+
+  return out;
+}
+
+async function fetchQuotesFromTwelveData(
+  symbols: string[],
+  apiKey: string,
+): Promise<Map<string, { price?: number; error?: string }>> {
+  const out = new Map<string, { price?: number; error?: string }>();
+  if (!symbols.length) return out;
+
+  for (let i = 0; i < symbols.length; i += FETCH_CHUNK_SIZE) {
+    const chunk = symbols.slice(i, i + FETCH_CHUNK_SIZE);
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(chunk.join(","))}&apikey=${apiKey}`;
+
+    let data: unknown = null;
+    try {
+      const res = await fetch(url);
+      data = await res.json();
+      if (!res.ok) {
+        const msg = `HTTP ${res.status}`;
+        for (const sym of chunk) {
+          out.set(sym, { error: msg });
+        }
+        continue;
+      }
+    } catch (err) {
+      const msg = String(err);
+      for (const sym of chunk) {
+        out.set(sym, { error: msg });
+      }
+      continue;
+    }
+
+    if (!data || typeof data !== "object") {
+      for (const sym of chunk) {
+        out.set(sym, { error: "Invalid response from quote provider" });
+      }
+      continue;
+    }
+
+    const payload = data as Record<string, unknown>;
+    const rootStatus = payload.status;
+    if (rootStatus === "error") {
+      const msg = String(payload.message || "Twelve Data API error");
+      for (const sym of chunk) {
+        out.set(sym, { error: msg });
+      }
+      continue;
+    }
+
+    for (const sym of chunk) {
+      const exact = payload[sym];
+      const normalizedKey = Object.keys(payload).find((k) => k.toUpperCase() === sym.toUpperCase());
+      const alt = normalizedKey ? payload[normalizedKey] : undefined;
+      const rawNode = exact ?? alt;
+
+      let rawPrice: unknown = null;
+      let errorMsg: string | null = null;
+
+      if (rawNode && typeof rawNode === "object") {
+        const node = rawNode as Record<string, unknown>;
+        if (node.status === "error") {
+          errorMsg = String(node.message || "Twelve Data API error");
+        } else {
+          rawPrice = node.price;
+        }
+      } else if (
+        chunk.length === 1 &&
+        Object.prototype.hasOwnProperty.call(payload, "price")
+      ) {
+        rawPrice = payload.price;
+      }
+
+      const price = Number(rawPrice);
+      if (!errorMsg && Number.isFinite(price)) {
+        out.set(sym, { price });
+      } else {
+        out.set(sym, { error: errorMsg || "Invalid price" });
+      }
+    }
+  }
+
+  return out;
+}
+
+async function tryAcquireRefreshLock(
+  supabase: ReturnType<typeof createClient>,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("try_acquire_market_quote_refresh_lock");
+  if (error) {
+    console.error("[twelve-data-quote] Failed to acquire refresh lock:", error);
+    return false;
+  }
+  return Boolean(data);
+}
+
+async function releaseRefreshLock(
+  supabase: ReturnType<typeof createClient>,
+): Promise<void> {
+  const { error } = await supabase.rpc("release_market_quote_refresh_lock");
+  if (error) {
+    console.error("[twelve-data-quote] Failed to release refresh lock:", error);
+  }
+}
 
 async function fetchQuoteFromTwelveData(
   symbol: string,
@@ -71,82 +217,85 @@ serve(async (req: Request) => {
       );
     }
 
-    const results: Record<string, { price: number; quoted_at: string }> = {};
-    const nowMs = Date.now();
-    const { data: cachedRows } = await supabase
-      .from("market_quotes")
-      .select("symbol, price, quoted_at")
-      .eq("provider", QUOTE_PROVIDER)
-      .in("symbol", toFetch);
-    const cachedBySymbol = new Map<string, { price: number; quoted_at: string }>();
-    for (const row of (cachedRows ?? []) as Array<{ symbol: string; price: number | string; quoted_at: string }>) {
-      const cachedPrice = Number(row.price);
-      if (!Number.isFinite(cachedPrice)) continue;
-      cachedBySymbol.set(row.symbol, { price: cachedPrice, quoted_at: row.quoted_at });
+    let cachedBySymbol = await loadCachedQuotes(supabase, toFetch);
+    let nowMs = Date.now();
+    let staleSymbols = toFetch.filter((sym) => !isFreshQuote(cachedBySymbol.get(sym), nowMs));
+
+    if (staleSymbols.length > 0) {
+      let lockAcquired = false;
+      try {
+        lockAcquired = await tryAcquireRefreshLock(supabase);
+
+        if (lockAcquired) {
+          cachedBySymbol = await loadCachedQuotes(supabase, toFetch);
+          nowMs = Date.now();
+          staleSymbols = toFetch.filter((sym) => !isFreshQuote(cachedBySymbol.get(sym), nowMs));
+
+          if (staleSymbols.length > 0) {
+            const fetchedBySymbol = await fetchQuotesFromTwelveData(staleSymbols, apiKey);
+            const quotedAt = new Date().toISOString();
+
+            const upsertRows = staleSymbols
+              .map((sym) => {
+                const fetched = fetchedBySymbol.get(sym);
+                if (!fetched || !Number.isFinite(Number(fetched.price))) return null;
+                return {
+                  symbol: sym,
+                  price: Number(fetched.price),
+                  provider: QUOTE_PROVIDER,
+                  quoted_at: quotedAt,
+                };
+              })
+              .filter(Boolean) as Array<{ symbol: string; price: number; provider: string; quoted_at: string }>;
+
+            if (upsertRows.length > 0) {
+              const { error: upsertErr } = await supabase
+                .from("market_quotes")
+                .upsert(upsertRows, { onConflict: "symbol,provider" });
+              if (upsertErr) {
+                console.error("[twelve-data-quote] Failed to upsert fresh quotes:", upsertErr);
+              }
+            }
+          }
+        } else {
+          for (let retry = 0; retry < REFRESH_LOCK_RETRY_ATTEMPTS; retry += 1) {
+            await sleep(REFRESH_LOCK_RETRY_DELAY_MS);
+            cachedBySymbol = await loadCachedQuotes(supabase, toFetch);
+            nowMs = Date.now();
+            staleSymbols = toFetch.filter((sym) => !isFreshQuote(cachedBySymbol.get(sym), nowMs));
+            if (!staleSymbols.length) break;
+          }
+        }
+      } finally {
+        if (lockAcquired) {
+          await releaseRefreshLock(supabase);
+        }
+      }
     }
 
-    const symbolsToRefresh: string[] = [];
+    cachedBySymbol = await loadCachedQuotes(supabase, toFetch);
+    const results: Record<string, { price: number; quoted_at: string }> = {};
     for (const sym of toFetch) {
       const cached = cachedBySymbol.get(sym);
-      const cachedQuotedAt = cached ? new Date(cached.quoted_at).getTime() : NaN;
-      const hasFreshCached =
-        !!cached &&
-        Number.isFinite(cachedQuotedAt) &&
-        nowMs - cachedQuotedAt <= CACHE_TTL_MS;
-      if (hasFreshCached) {
-        results[sym] = cached;
-      } else {
-        symbolsToRefresh.push(sym);
-      }
-    }
-
-    if (symbolsToRefresh.length > 0) {
-      let fetchedQuotes: Array<{ symbol: string; price: number; quoted_at: string }> = [];
-      try {
-        fetchedQuotes = await Promise.all(
-          symbolsToRefresh.map(async (sym) => {
-            const { price, error } = await fetchQuoteFromTwelveData(sym, apiKey);
-            if (error) {
-              const fallback = cachedBySymbol.get(sym);
-              if (fallback) return { symbol: sym, ...fallback };
-              throw new Error(`${error} (${sym})`);
-            }
-            return {
-              symbol: sym,
-              price,
-              quoted_at: new Date().toISOString(),
-            };
-          })
-        );
-      } catch (fetchErr) {
-        return new Response(
-          JSON.stringify({ error: String(fetchErr) }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      await supabase
-        .from("market_quotes")
-        .upsert(
-          fetchedQuotes.map((q) => ({
-            symbol: q.symbol,
-            price: q.price,
-            provider: QUOTE_PROVIDER,
-            quoted_at: q.quoted_at,
-          })),
-          { onConflict: "symbol,provider" }
-        );
-
-      for (const quote of fetchedQuotes) {
-        results[quote.symbol] = { price: quote.price, quoted_at: quote.quoted_at };
-      }
+      if (!cached) continue;
+      results[sym] = {
+        price: cached.price,
+        quoted_at: cached.quoted_at,
+      };
     }
 
     if (!symbols?.length && (symbol || twelve_data_symbol)) {
+      const first = results[toFetch[0]];
+      if (!first) {
+        return new Response(
+          JSON.stringify({ error: "Quote unavailable for requested symbol" }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       return new Response(
         JSON.stringify({
-          price: results[toFetch[0]].price,
-          quoted_at: results[toFetch[0]].quoted_at,
+          price: first.price,
+          quoted_at: first.quoted_at,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );

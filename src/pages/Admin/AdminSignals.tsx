@@ -156,12 +156,14 @@ const AdminSignals = () => {
     if (refreshIntervalRef.current) clearInterval(refreshIntervalRef.current);
     refreshIntervalRef.current = setInterval(async () => {
       try {
-        const { price } = await fetchLiveQuote(p.twelve_data_symbol);
+        const { price, quoted_at } = await fetchLiveQuote(p.twelve_data_symbol);
         setFormData((prev) => ({ ...prev, entry: String(price) }));
+        setLiveLockedEntry(price);
+        setLiveLockedQuotedAt(quoted_at);
       } catch {
         // ignore refresh errors
       }
-    }, 30000);
+    }, 1000);
   }, []);
 
   useEffect(() => {
