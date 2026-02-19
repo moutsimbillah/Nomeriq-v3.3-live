@@ -140,9 +140,9 @@ const App = () => (
                     </ProtectedRoute>
                   } />
 
-                  {/* Admin Routes - Dashboard accessible to super_admin and payments_admin only */}
+                  {/* Admin Routes - Global dashboard is super_admin only */}
                   <Route path="/admin" element={
-                    <AdminProtectedRoute allowedRoles={['super_admin', 'payments_admin']}>
+                    <AdminProtectedRoute allowedRoles={['super_admin']}>
                       <AdminDashboard />
                     </AdminProtectedRoute>
                   } />

@@ -10,7 +10,7 @@ import { TradeHistorySection } from "@/components/dashboard/TradeHistorySection"
 import { PerformanceAnalytics } from "@/components/dashboard/PerformanceAnalytics";
 import { CalendarSection } from "@/components/dashboard/CalendarSection";
 import { supabase } from "@/integrations/supabase/client";
-import { useProviderAwareTradeStats } from "@/hooks/useProviderAwareTrades";
+import { useProviderAwareTradeStats, useProviderAwareTrades } from "@/hooks/useProviderAwareTrades";
 import { useGlobalTradeStats } from "@/hooks/useGlobalTradeStats";
 import { ProviderPerformanceTable } from "@/components/admin/platform-analytics/ProviderPerformanceTable";
 import { DashboardCustomizer } from "@/components/dashboard/DashboardCustomizer";
@@ -25,7 +25,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface UserOverviewStats {
   totalUsers: number;
@@ -59,6 +59,12 @@ const AdminDashboard = () => {
   const { stats: tradeStats, isLoading: tradeStatsLoading } = useProviderAwareTradeStats({
     adminGlobalView: true,
   });
+  const { trades: pendingTrades, isLoading: pendingTradesLoading } = useProviderAwareTrades({
+    result: "pending",
+    fetchAll: true,
+    realtime: true,
+    adminGlobalView: true,
+  });
   const { providerStats, isLoading: qualityLoading } = useGlobalTradeStats();
   const { sections, updateOrder, resetLayout, isLoaded } = useDashboardLayout(
     "dashboard-layout-admin-global-v1",
@@ -69,6 +75,21 @@ const AdminDashboard = () => {
   const closedTrades = tradeStats.wins + tradeStats.losses + tradeStats.breakeven;
   const decidedTrades = tradeStats.wins + tradeStats.losses;
   const lossRate = decidedTrades > 0 ? (tradeStats.losses / decidedTrades) * 100 : 0;
+  const globalCurrentBalance =
+    userOverview.totalStartingBalance + userOverview.totalBalanceGrowth - userOverview.totalBalanceLoss;
+  const visibleGlobalActiveTrades = useMemo(() => {
+    const activeTrades = pendingTrades.filter(
+      (trade) =>
+        trade.signal?.status === "active" &&
+        (trade.signal?.signal_type || "signal") === "signal",
+    );
+
+    return new Set(
+      activeTrades
+        .map((trade) => trade.signal?.id)
+        .filter((signalId): signalId is string => Boolean(signalId)),
+    ).size;
+  }, [pendingTrades]);
 
   useEffect(() => {
     const fetchUserOverview = async () => {
@@ -189,7 +210,9 @@ const AdminDashboard = () => {
             />
           }
           value={tradeStatsLoading ? "..." : closedTrades.toString()}
-          change={`${tradeStats.pending} active`}
+          change={
+            tradeStatsLoading || pendingTradesLoading ? "..." : `${visibleGlobalActiveTrades} active`
+          }
           changeType="neutral"
           icon={Activity}
           iconColor="text-primary"
@@ -279,7 +302,11 @@ const AdminDashboard = () => {
     "charts-and-signals": (
       <div className="grid grid-cols-1 xl:grid-cols-3 items-stretch gap-6 mb-8">
         <div className="xl:col-span-2 h-full">
-          <EquityChart adminGlobalView />
+          <EquityChart
+            adminGlobalView
+            adminGlobalStartingBalance={userOverview.totalStartingBalance}
+            adminGlobalCurrentBalance={globalCurrentBalance}
+          />
         </div>
         <div className="h-full">
           <PerformanceBySessionDay adminGlobalView />

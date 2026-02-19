@@ -7,8 +7,16 @@ import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, Target, ShieldAlert, CheckCircle2, XCircle, MinusCircle, X, Bell, Percent, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUserSubscriptionCategories } from "@/hooks/useSubscriptionPackages";
+import { resolveTradeUpdateDisplayType } from "@/lib/trade-update-classification";
 
-type NotificationType = "trade_closed" | "new_signal" | "signal_active" | "trade_update" | "sl_breakeven";
+type NotificationType =
+  | "trade_closed"
+  | "new_signal"
+  | "signal_active"
+  | "trade_update"
+  | "trade_update_edited"
+  | "trade_update_deleted"
+  | "sl_breakeven";
 type TradeClosedStatus = "tp_hit" | "sl_hit" | "breakeven";
 
 interface UserTrade {
@@ -25,6 +33,11 @@ interface UserTradeTakeProfitUpdate {
   realized_pnl: number;
 }
 
+interface RemainingPositionSnapshot {
+  remainingAfterPercent: number;
+  remainingAfterRisk: number;
+}
+
 interface NotificationItem {
   id: string;
   signal: Signal;
@@ -32,16 +45,69 @@ interface NotificationItem {
   status?: TradeClosedStatus;
   userTrade?: UserTrade | null;
   tradeUpdate?: SignalTakeProfitUpdate | null;
+  tradeUpdateAction?: "published" | "edited" | "deleted";
+  previousTradeUpdate?: SignalTakeProfitUpdate | null;
+  historyUpdateType?: "limit" | "market" | null;
   appliedTradeUpdate?: UserTradeTakeProfitUpdate | null;
+  triggeredQuotePrice?: number | null;
+  remainingAfterPercent?: number | null;
+  remainingAfterRisk?: number | null;
   previousStopLoss?: number | null;
+}
+
+interface SignalEventHistoryRow {
+  id: string;
+  signal_id: string;
+  event_type: string;
+  actor_user_id?: string | null;
+  payload?: unknown;
+  created_at: string;
 }
 
 interface TradeClosedNotificationModalProps {
   onClose?: () => void;
 }
 
+const getTpHistoryUpdateType = (
+  payload: unknown,
+  signalUpdateId: string
+): "limit" | "market" | null => {
+  if (!payload || typeof payload !== "object") return null;
+  const raw = payload as Record<string, unknown>;
+  if (raw.update_id !== signalUpdateId) return null;
+  return raw.update_type === "limit" || raw.update_type === "market"
+    ? raw.update_type
+    : null;
+};
+
+const parseTpPayloadRow = (
+  input: unknown,
+  fallback: {
+    id: string;
+    signalId: string;
+    createdAt: string;
+    createdBy?: string | null;
+  }
+): SignalTakeProfitUpdate => {
+  const row = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const note = row.note;
+  const updateType = row.update_type;
+  return {
+    id: fallback.id,
+    signal_id: fallback.signalId,
+    tp_label: typeof row.tp_label === "string" && row.tp_label.trim().length > 0 ? row.tp_label : "TP",
+    tp_price: Number(row.tp_price || 0),
+    close_percent: Number(row.close_percent || 0),
+    update_type: updateType === "market" ? "market" : "limit",
+    note: typeof note === "string" ? note : null,
+    created_by: fallback.createdBy || "",
+    created_at: fallback.createdAt,
+  };
+};
+
 export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificationModalProps) => {
   const { user, subscription, isAdmin, isLoading: authLoading } = useAuth();
+  const userId = user?.id ?? null;
   const { settings } = useBrand();
   const { allowedCategories } = useUserSubscriptionCategories();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -58,6 +124,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   const [reconnectNonce, setReconnectNonce] = useState(0);
 
   const showOfflineWarning = useCallback(() => {
+    if (!canReceiveRef.current) return;
     setIsOffline(true);
     wentOfflineRef.current = true;
   }, []);
@@ -73,7 +140,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
   // Use refs for values that should be checked at callback time
   const canReceiveRef = useRef(canReceiveNotifications);
-  const userIdRef = useRef(user?.id);
+  const userIdRef = useRef(userId);
   const allowedCategoriesRef = useRef<string[]>(allowedCategories as string[]);
 
   useEffect(() => {
@@ -81,8 +148,18 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   }, [canReceiveNotifications]);
 
   useEffect(() => {
-    userIdRef.current = user?.id;
-  }, [user?.id]);
+    if (canReceiveNotifications) return;
+    setIsOffline(false);
+    wentOfflineRef.current = false;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, [canReceiveNotifications]);
+
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   useEffect(() => {
     allowedCategoriesRef.current = allowedCategories as string[];
@@ -105,12 +182,12 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   }, [persistLastSync]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    const saved = localStorage.getItem(`notifications:last-sync:${user.id}`);
+    if (!userId) return;
+    const saved = localStorage.getItem(`notifications:last-sync:${userId}`);
     // Keep lookback window small if no saved state yet.
     const fallback = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     lastSyncAtRef.current = saved || fallback;
-  }, [user?.id]);
+  }, [userId]);
 
   // Use global risk percent for all users
   const riskPercent = settings?.global_risk_percent || 2;
@@ -159,6 +236,118 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
     }
+    return null;
+  }, []);
+
+  const fetchHistoryUpdateType = useCallback(async (
+    signalId: string,
+    signalUpdateId: string
+  ): Promise<"limit" | "market" | null> => {
+    const { data, error } = await supabase
+      .from("signal_event_history" as never)
+      .select("payload")
+      .eq("signal_id", signalId)
+      .eq("event_type", "tp_update_published");
+
+    if (error) {
+      console.error("[NotificationModal] Error fetching TP update history:", error);
+      return null;
+    }
+
+    const rows = (data || []) as Array<{ payload?: unknown }>;
+    for (const row of rows) {
+      const updateType = getTpHistoryUpdateType(row.payload, signalUpdateId);
+      if (updateType) return updateType;
+    }
+
+    return null;
+  }, []);
+
+  const fetchTriggeredQuotePrice = useCallback(async (
+    signalId: string,
+    signalUpdateId: string
+  ): Promise<number | null> => {
+    const { data, error } = await supabase
+      .from("signal_event_history" as never)
+      .select("payload, created_at")
+      .eq("signal_id", signalId)
+      .eq("event_type", "tp_update_triggered")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("[NotificationModal] Error fetching TP trigger quote:", error);
+      return null;
+    }
+
+    for (const row of (data || []) as Array<{ payload?: unknown }>) {
+      if (!row.payload || typeof row.payload !== "object") continue;
+      const payload = row.payload as Record<string, unknown>;
+      if (payload.update_id !== signalUpdateId) continue;
+      const rawQuotePrice = payload.quote_price;
+      const quotePrice =
+        typeof rawQuotePrice === "number"
+          ? rawQuotePrice
+          : Number(rawQuotePrice);
+      if (Number.isFinite(quotePrice)) return quotePrice;
+    }
+
+    return null;
+  }, []);
+
+  const fetchRemainingPositionSnapshot = useCallback(async (
+    userTrade: UserTrade,
+    signalId: string,
+    throughSignalUpdateId: string
+  ): Promise<RemainingPositionSnapshot | null> => {
+    const riskBase = Math.max(0, Number(userTrade.initial_risk_amount ?? userTrade.risk_amount ?? 0));
+    if (riskBase <= 0) return null;
+
+    const [signalUpdatesResult, appliedUpdatesResult] = await Promise.all([
+      supabase
+        .from("signal_take_profit_updates")
+        .select("id, created_at")
+        .eq("signal_id", signalId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("user_trade_take_profit_updates")
+        .select("signal_update_id, close_percent")
+        .eq("user_trade_id", userTrade.id),
+    ]);
+
+    if (signalUpdatesResult.error) {
+      console.error("[NotificationModal] Error fetching signal TP updates for remaining snapshot:", signalUpdatesResult.error);
+      return null;
+    }
+    if (appliedUpdatesResult.error) {
+      console.error("[NotificationModal] Error fetching applied TP updates for remaining snapshot:", appliedUpdatesResult.error);
+      return null;
+    }
+
+    const appliedBySignalUpdateId = new Map<string, number>();
+    for (const row of (appliedUpdatesResult.data || []) as { signal_update_id: string; close_percent: number }[]) {
+      appliedBySignalUpdateId.set(row.signal_update_id, Number(row.close_percent || 0));
+    }
+
+    let runningRemainingRisk = riskBase;
+    for (const row of (signalUpdatesResult.data || []) as { id: string }[]) {
+      if (!appliedBySignalUpdateId.has(row.id)) continue;
+
+      const closePercent = Math.max(0, Math.min(100, Number(appliedBySignalUpdateId.get(row.id) || 0)));
+      const requestedCloseRisk = riskBase * (closePercent / 100);
+      const reducedRisk = Math.min(runningRemainingRisk, requestedCloseRisk);
+      runningRemainingRisk = Math.max(0, runningRemainingRisk - reducedRisk);
+      if (closePercent >= 100) {
+        runningRemainingRisk = 0;
+      }
+
+      if (row.id === throughSignalUpdateId) {
+        return {
+          remainingAfterRisk: runningRemainingRisk,
+          remainingAfterPercent: (runningRemainingRisk / riskBase) * 100,
+        };
+      }
+    }
+
     return null;
   }, []);
 
@@ -435,16 +624,129 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     // (prevents misleading values after trade is already fully closed).
     if (!applied) return;
 
+    const refreshedTrade = await fetchUserTrade(signal.id);
+    const tradeForDisplay = refreshedTrade || trade;
+    const historyUpdateType = await fetchHistoryUpdateType(signal.id, updateRow.id);
+    const triggeredQuotePrice = await fetchTriggeredQuotePrice(signal.id, updateRow.id);
+    const remainingSnapshot = await fetchRemainingPositionSnapshot(
+      tradeForDisplay,
+      signal.id,
+      updateRow.id
+    );
+
     shownNotificationsRef.current.add(notificationKey);
     addNotification({
       id: notificationKey,
       signal,
       type: "trade_update",
-      userTrade: trade,
+      tradeUpdateAction: "published",
+      userTrade: tradeForDisplay,
       tradeUpdate: updateRow,
+      historyUpdateType,
       appliedTradeUpdate: applied,
+      triggeredQuotePrice,
+      remainingAfterPercent: remainingSnapshot?.remainingAfterPercent ?? null,
+      remainingAfterRisk: remainingSnapshot?.remainingAfterRisk ?? null,
     });
-  }, [addNotification, bumpLastSync, fetchAppliedTradeUpdate, fetchUserTrade]);
+  }, [
+    addNotification,
+    bumpLastSync,
+    fetchAppliedTradeUpdate,
+    fetchHistoryUpdateType,
+    fetchTriggeredQuotePrice,
+    fetchRemainingPositionSnapshot,
+    fetchSignalById,
+    fetchUserTrade,
+  ]);
+
+  const processTradeUpdateChangeEventInsert = useCallback(async (
+    eventRow: SignalEventHistoryRow,
+    source: "realtime" | "catchup" = "realtime"
+  ) => {
+    if (!canReceiveRef.current) return;
+    if (eventRow.event_type !== "tp_update_edited" && eventRow.event_type !== "tp_update_deleted") {
+      return;
+    }
+
+    bumpLastSync(eventRow.created_at);
+    const notificationKey = `${eventRow.event_type}-${eventRow.id}`;
+    if (shownNotificationsRef.current.has(notificationKey)) return;
+
+    if (source === "realtime") {
+      const eventTimeMs = new Date(eventRow.created_at).getTime();
+      if (Number.isFinite(eventTimeMs) && Date.now() - eventTimeMs > 300000) {
+        return;
+      }
+    }
+
+    const payload =
+      eventRow.payload && typeof eventRow.payload === "object"
+        ? (eventRow.payload as Record<string, unknown>)
+        : null;
+    if (!payload) return;
+    const updateId = typeof payload.update_id === "string" ? payload.update_id : null;
+    if (!updateId) return;
+
+    const signal = await fetchSignalById(eventRow.signal_id);
+    if (!signal) return;
+    if (
+      allowedCategoriesRef.current.length > 0 &&
+      !allowedCategoriesRef.current.includes(signal.category)
+    ) {
+      return;
+    }
+
+    const trade = await fetchUserTrade(signal.id);
+    if (!trade) return;
+
+    if (eventRow.event_type === "tp_update_edited") {
+      const nextUpdate = parseTpPayloadRow(payload.new, {
+        id: updateId,
+        signalId: signal.id,
+        createdAt: eventRow.created_at,
+        createdBy: eventRow.actor_user_id || null,
+      });
+      if (nextUpdate.update_type !== "limit") return;
+      const previousUpdate = parseTpPayloadRow(payload.old, {
+        id: updateId,
+        signalId: signal.id,
+        createdAt: eventRow.created_at,
+        createdBy: eventRow.actor_user_id || null,
+      });
+
+      shownNotificationsRef.current.add(notificationKey);
+      addNotification({
+        id: notificationKey,
+        signal,
+        type: "trade_update_edited",
+        tradeUpdateAction: "edited",
+        userTrade: trade,
+        tradeUpdate: nextUpdate,
+        previousTradeUpdate: previousUpdate,
+        historyUpdateType: "limit",
+      });
+      return;
+    }
+
+    const deletedUpdate = parseTpPayloadRow(payload, {
+      id: updateId,
+      signalId: signal.id,
+      createdAt: eventRow.created_at,
+      createdBy: eventRow.actor_user_id || null,
+    });
+    if (deletedUpdate.update_type !== "limit") return;
+
+    shownNotificationsRef.current.add(notificationKey);
+    addNotification({
+      id: notificationKey,
+      signal,
+      type: "trade_update_deleted",
+      tradeUpdateAction: "deleted",
+      userTrade: trade,
+      tradeUpdate: deletedUpdate,
+      historyUpdateType: "limit",
+    });
+  }, [addNotification, bumpLastSync, fetchSignalById, fetchUserTrade]);
 
   const fetchMissedNotifications = useCallback(async (emitNotifications = false) => {
     if (!userIdRef.current || !canReceiveRef.current) return;
@@ -502,10 +804,37 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
           bumpLastSync(update.created_at);
         }
       }
+
+      const { data: missedTpEvents, error: tpEventsError } = await supabase
+        .from("signal_event_history" as never)
+        .select("id, signal_id, event_type, actor_user_id, payload, created_at")
+        .gt("created_at", since)
+        .in("event_type", ["tp_update_edited", "tp_update_deleted"])
+        .order("created_at", { ascending: true })
+        .limit(200);
+
+      if (tpEventsError) {
+        console.error("[NotificationModal] Error fetching missed TP change events:", tpEventsError);
+        return;
+      }
+
+      for (const eventRow of (missedTpEvents || []) as SignalEventHistoryRow[]) {
+        if (emitNotifications) {
+          await processTradeUpdateChangeEventInsert(eventRow, "catchup");
+        } else {
+          bumpLastSync(eventRow.created_at);
+        }
+      }
     } catch (err) {
       console.error("[NotificationModal] Error during missed notifications fetch:", err);
     }
-  }, [processSignalInsert, processSignalUpdate, processTradeUpdateInsert, bumpLastSync]);
+  }, [
+    processSignalInsert,
+    processSignalUpdate,
+    processTradeUpdateInsert,
+    processTradeUpdateChangeEventInsert,
+    bumpLastSync,
+  ]);
 
   // Remove single notification
   const removeNotification = useCallback((id: string) => {
@@ -528,9 +857,9 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   }, [onClose]);
 
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !userId || !canReceiveNotifications) return;
 
-    const channelName = `unified-notification-modal-${user.id}-${reconnectNonce}`;
+    const channelName = `unified-notification-modal-${userId}-${reconnectNonce}`;
     const channel = supabase
       .channel(channelName)
       .on(
@@ -566,8 +895,21 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
           await processTradeUpdateInsert(payload.new as SignalTakeProfitUpdate, "realtime");
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "signal_event_history",
+        },
+        async (payload) => {
+          const row = payload.new as SignalEventHistoryRow;
+          if (row.event_type === "tp_update_edited" || row.event_type === "tp_update_deleted") {
+            await processTradeUpdateChangeEventInsert(row, "realtime");
+          }
+        }
+      )
       .subscribe(async (status) => {
-        console.log("[NotificationModal] Realtime subscription status:", status);
         if (status === "SUBSCRIBED") {
           if (wentOfflineRef.current && !reloadingRef.current) {
             reloadingRef.current = true;
@@ -579,24 +921,38 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
         }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           showOfflineWarning();
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current);
+          if (!reconnectTimeoutRef.current) {
+            reconnectTimeoutRef.current = setTimeout(() => {
+              reconnectTimeoutRef.current = null;
+              setReconnectNonce((n) => n + 1);
+            }, 1200);
           }
-          reconnectTimeoutRef.current = setTimeout(() => {
-            setReconnectNonce((n) => n + 1);
-          }, 1200);
         }
       });
 
     return () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       supabase.removeChannel(channel);
     };
-  }, [user?.id, authLoading, reconnectNonce, processSignalInsert, processSignalUpdate, processTradeUpdateInsert, fetchMissedNotifications, showOfflineWarning]);
+  }, [
+    userId,
+    authLoading,
+    canReceiveNotifications,
+    reconnectNonce,
+    processSignalInsert,
+    processSignalUpdate,
+    processTradeUpdateInsert,
+    processTradeUpdateChangeEventInsert,
+    fetchMissedNotifications,
+    showOfflineWarning,
+  ]);
 
   useEffect(() => {
+    if (!canReceiveNotifications) return;
+
     const handleOnline = () => {
       setIsOffline(false);
       if (wentOfflineRef.current && !reloadingRef.current) {
@@ -624,21 +980,23 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       window.removeEventListener("offline", handleOffline);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [fetchMissedNotifications, showOfflineWarning]);
+  }, [canReceiveNotifications, fetchMissedNotifications, showOfflineWarning]);
 
   // Fallback polling so users still receive popups even if realtime events are delayed/missing.
   useEffect(() => {
-    if (authLoading || !user || !canReceiveNotifications) return;
+    if (authLoading || !userId || !canReceiveNotifications) return;
 
     const interval = setInterval(() => {
       void fetchMissedNotifications(true);
     }, 12000);
 
     return () => clearInterval(interval);
-  }, [authLoading, user?.id, canReceiveNotifications, fetchMissedNotifications]);
+  }, [authLoading, userId, canReceiveNotifications, fetchMissedNotifications]);
 
   // Dedicated instant listener so warning appears immediately on browser disconnect.
   useEffect(() => {
+    if (!canReceiveNotifications) return;
+
     const onImmediateOffline = () => {
       showOfflineWarning();
     };
@@ -647,7 +1005,7 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     return () => {
       window.removeEventListener("offline", onImmediateOffline);
     };
-  }, [showOfflineWarning]);
+  }, [canReceiveNotifications, showOfflineWarning]);
 
   const getStatusConfig = (status: TradeClosedStatus) => {
     switch (status) {
@@ -706,6 +1064,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       if (type === 'new_signal') return `${count} New Signal${count > 1 ? 's' : ''}`;
       if (type === 'signal_active') return `${count} Signal${count > 1 ? 's' : ''} Now Active`;
       if (type === 'trade_update') return `${count} Trade Update${count > 1 ? 's' : ''}`;
+      if (type === 'trade_update_edited') return `${count} Trade Update Edit${count > 1 ? 's' : ''}`;
+      if (type === 'trade_update_deleted') return `${count} Trade Update Deletion${count > 1 ? 's' : ''}`;
       if (type === 'sl_breakeven') return `${count} Risk Update${count > 1 ? 's' : ''}`;
     }
     return `${count} Notification${count > 1 ? 's' : ''}`;
@@ -997,23 +1357,163 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
   };
 
   const renderTradeUpdateNotification = (notification: NotificationItem) => {
-    const { signal, tradeUpdate, userTrade, appliedTradeUpdate } = notification;
-    if (!tradeUpdate || !userTrade || !appliedTradeUpdate) return null;
+    const { signal, tradeUpdate, userTrade, appliedTradeUpdate, previousTradeUpdate } = notification;
+    if (!tradeUpdate) return null;
+
+    const action: "published" | "edited" | "deleted" =
+      notification.tradeUpdateAction ||
+      (notification.type === "trade_update_edited"
+        ? "edited"
+        : notification.type === "trade_update_deleted"
+          ? "deleted"
+          : "published");
+
+    const resolvedType = resolveTradeUpdateDisplayType({
+      rawUpdateType: tradeUpdate.update_type,
+      historyUpdateType: notification.historyUpdateType || null,
+    });
+    const updateType = resolvedType.type;
+    const riskBase = Math.max(0, Number(userTrade?.initial_risk_amount ?? userTrade?.risk_amount ?? 0));
+    const fallbackRemainingRisk = Math.max(
+      0,
+      Number(userTrade?.remaining_risk_amount ?? (riskBase > 0 ? riskBase : 0))
+    );
+    const fallbackRemainingPercent = riskBase > 0 ? (fallbackRemainingRisk / riskBase) * 100 : 0;
+
+    if (action !== "published") {
+      const previousPrice = Number(previousTradeUpdate?.tp_price ?? tradeUpdate.tp_price);
+      const previousClose = Number(previousTradeUpdate?.close_percent ?? tradeUpdate.close_percent);
+      const nextPrice = Number(tradeUpdate.tp_price);
+      const nextClose = Number(tradeUpdate.close_percent);
+      const previousNote = (previousTradeUpdate?.note || "-").trim() || "-";
+      const nextNote = (tradeUpdate.note || "-").trim() || "-";
+
+      return (
+        <div
+          key={notification.id}
+          className="rounded-2xl border border-[#1e293b] bg-[#0b1121] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+        >
+          <div className="px-5 py-4 border-b border-[#1e293b] relative">
+            <button
+              onClick={() => removeNotification(notification.id)}
+              className="absolute top-4 right-4 p-1 rounded-full hover:bg-white/10 transition-colors"
+            >
+              <X className="w-4 h-4 text-slate-400" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "p-2.5 rounded-full",
+                action === "edited" ? "bg-primary/20" : "bg-warning/20"
+              )}>
+                <Bell className={cn("w-5 h-5", action === "edited" ? "text-primary" : "text-warning")} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  {action === "edited" ? "Trade Update Edited" : "Trade Update Deleted"}
+                </h3>
+                <p className="text-xs font-medium text-slate-400">
+                  {action === "edited"
+                    ? "Provider/Admin edited a pending limit TP"
+                    : "Provider/Admin deleted a pending limit TP"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-5 py-3 flex flex-wrap items-center gap-2 bg-black/20">
+            <span className="px-2.5 py-1 rounded text-xs font-black uppercase tracking-wider text-white bg-primary/20">
+              Pair: {signal.pair}
+            </span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">Entry: {signal.entry_price ?? "-"}</span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">SL: {signal.stop_loss ?? "-"}</span>
+            <span className="px-2.5 py-1 rounded text-xs font-mono text-white bg-white/5">TP: {signal.take_profit ?? "-"}</span>
+          </div>
+
+          <div className="p-4">
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <span className="px-2 py-0.5 rounded text-xs font-semibold border border-primary/40 text-primary">
+                  {tradeUpdate.tp_label}
+                </span>
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-xs font-semibold border",
+                  updateType === "market"
+                    ? "border-warning/40 text-warning"
+                    : "border-primary/40 text-primary"
+                )}>
+                  {updateType === "market" ? "Market Close" : "Limit Order"}
+                </span>
+                {action === "edited" ? (
+                  <>
+                    <span className="text-sm font-mono text-white">
+                      Price: {previousPrice} -&gt; {nextPrice}
+                    </span>
+                    <span className="text-sm text-primary font-semibold">
+                      Close: {previousClose.toFixed(2)}% -&gt; {nextClose.toFixed(2)}%
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-mono text-white">Deleted Price: {nextPrice}</span>
+                    <span className="text-sm text-primary font-semibold">Deleted Close: {nextClose.toFixed(2)}%</span>
+                  </>
+                )}
+              </div>
+              {action === "edited" && (
+                <p className="mt-1 text-xs text-slate-400">
+                  Note: {previousNote} -&gt; {nextNote}
+                </p>
+              )}
+              {action === "deleted" && tradeUpdate.note && (
+                <p className="mt-1 text-xs text-slate-400">Deleted note: {tradeUpdate.note}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-400">
+                Remaining Position:{" "}
+                <span className="font-semibold text-foreground">
+                  {fallbackRemainingPercent.toFixed(2)}% (${fallbackRemainingRisk.toFixed(2)})
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="px-5 pb-5">
+            <Button
+              onClick={() => removeNotification(notification.id)}
+              className="w-full h-12 font-bold text-white shadow-lg transition-all border-0 bg-primary hover:bg-primary/90"
+            >
+              Got it
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (!userTrade || !appliedTradeUpdate) return null;
 
     const closePercent = Math.max(0, Math.min(100, Number(appliedTradeUpdate.close_percent || 0)));
     const realizedAmount = Number(appliedTradeUpdate.realized_pnl || 0);
-    const riskBase = Math.max(0, Number(userTrade.initial_risk_amount ?? userTrade.risk_amount ?? 0));
     const realizedPercent = riskBase > 0
       ? (realizedAmount / riskBase) * Number(userTrade.risk_percent || 0)
       : 0;
-    const remainingRisk = Math.max(
+    const snapshotRemainingRisk =
+      notification.remainingAfterRisk != null && Number.isFinite(Number(notification.remainingAfterRisk))
+        ? Math.max(0, Number(notification.remainingAfterRisk))
+        : null;
+    const snapshotRemainingPercent =
+      notification.remainingAfterPercent != null && Number.isFinite(Number(notification.remainingAfterPercent))
+        ? Math.max(0, Number(notification.remainingAfterPercent))
+        : null;
+
+    const remainingRisk = snapshotRemainingRisk ?? Math.max(
       0,
       Number(
         userTrade.remaining_risk_amount ??
           (riskBase > 0 ? riskBase * (1 - closePercent / 100) : 0)
       )
     );
-    const remainingPercent = riskBase > 0 ? (remainingRisk / riskBase) * 100 : 0;
+    const remainingPercent =
+      snapshotRemainingPercent ?? (riskBase > 0 ? (remainingRisk / riskBase) * 100 : 0);
 
     return (
       <div
@@ -1054,7 +1554,30 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
               <span className="px-2 py-0.5 rounded text-xs font-semibold border border-primary/40 text-primary">
                 {tradeUpdate.tp_label}
               </span>
+              <span
+                className={cn(
+                  "px-2 py-0.5 rounded text-xs font-semibold border",
+                  updateType === "market"
+                    ? "border-warning/40 text-warning"
+                    : "border-primary/40 text-primary"
+                )}
+              >
+                {updateType === "market" ? "Market Close" : "Limit Order"}
+              </span>
+              {remainingPercent <= 0.0001 && (
+                <span className="px-2 py-0.5 rounded text-xs font-semibold border border-success/40 text-success">
+                  Position Closed
+                </span>
+              )}
               <span className="text-sm font-mono text-white">TP: {tradeUpdate.tp_price}</span>
+              {updateType === "limit" &&
+                typeof notification.triggeredQuotePrice === "number" &&
+                Number.isFinite(notification.triggeredQuotePrice) &&
+                Math.abs(Number(notification.triggeredQuotePrice) - Number(tradeUpdate.tp_price)) > 1e-8 && (
+                  <span className="text-xs font-mono text-slate-400">
+                    Fill: {Number(notification.triggeredQuotePrice).toFixed(5)}
+                  </span>
+                )}
               <span className="text-sm text-primary font-semibold">Close: {closePercent.toFixed(2)}%</span>
               <span className={cn("text-sm font-semibold", realizedAmount >= 0 ? "text-success" : "text-destructive")}>
                 {formatPnL(realizedAmount)}
@@ -1165,6 +1688,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
       case 'trade_closed':
         return renderTradeClosedNotification(notification);
       case 'trade_update':
+      case 'trade_update_edited':
+      case 'trade_update_deleted':
         return renderTradeUpdateNotification(notification);
       case 'sl_breakeven':
         return renderStopMovedToBreakevenNotification(notification);
@@ -1190,8 +1715,8 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
 
   return (
     <>
-      {isOffline && (
-        <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      {canReceiveNotifications && isOffline && (
+        <div className="fixed inset-0 z-[120] pointer-events-none bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-2xl border border-destructive/40 bg-[#0b1121] p-6 shadow-2xl">
             <h3 className="text-xl font-bold text-destructive mb-2">Realtime Connection Lost</h3>
             <p className="text-sm text-slate-200 leading-relaxed">
@@ -1273,3 +1798,4 @@ export const TradeClosedNotificationModal = ({ onClose }: TradeClosedNotificatio
     </>
   );
 };
+

@@ -33,8 +33,9 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
   const [error, setError] = useState<Error | null>(null);
   const { user } = useAuth();
   const userId = user?.id ?? null;
-  const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { isProvider, adminRole, isLoading: roleLoading } = useAdminRole();
   const { allowedCategories } = useUserSubscriptionCategories();
+  const canUseGlobalView = adminGlobalView && adminRole === 'super_admin';
 
   const channelNameRef = useRef(
     `provider_aware_trades_${Math.random().toString(36).substring(7)}`
@@ -72,7 +73,7 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
           }
         }
 
-        if (adminGlobalView) {
+        if (canUseGlobalView) {
         // Global admin scope.
         } else if (isProvider) {
           q = q.eq('signal.created_by', userId);
@@ -137,7 +138,7 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
         setIsLoading(false);
       }
     }
-  }, [userId, result, limit, page, isProvider, roleLoading, adminGlobalView, allowedCategories, fetchAll]);
+  }, [userId, result, limit, page, isProvider, roleLoading, canUseGlobalView, allowedCategories, fetchAll]);
 
   useEffect(() => {
     if (!roleLoading) {
@@ -215,8 +216,9 @@ export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOp
   const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
   const userId = user?.id ?? null;
-  const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { isProvider, adminRole, isLoading: roleLoading } = useAdminRole();
   const { allowedCategories } = useUserSubscriptionCategories();
+  const canUseGlobalView = adminGlobalView && adminRole === 'super_admin';
 
   const channelNameRef = useRef(`provider_aware_stats_${Math.random().toString(36).substring(7)}`);
   const requestSeqRef = useRef(0);
@@ -233,7 +235,7 @@ export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOp
   const fetchStatsFallback = useCallback(async () => {
     let trades: any[] = [];
 
-    if (adminGlobalView) {
+    if (canUseGlobalView) {
       const { data, error } = await supabase
         .from('user_trades')
         .select(`
@@ -289,7 +291,7 @@ export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOp
       winRate,
       totalPnL,
     };
-  }, [adminGlobalView, isProvider, userId, allowedCategories]);
+  }, [canUseGlobalView, isProvider, userId, allowedCategories]);
 
   const fetchStats = useCallback(async () => {
     if (!userId || roleLoading) {
@@ -309,12 +311,12 @@ export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOp
         p_user_id: null,
         p_provider_id: null,
         p_categories:
-          !adminGlobalView && !isProvider && allowedCategories.length > 0
+          !canUseGlobalView && !isProvider && allowedCategories.length > 0
             ? allowedCategories
             : null,
       };
 
-      if (adminGlobalView) {
+      if (canUseGlobalView) {
         // Global admin scope.
       } else if (isProvider) {
         rpcArgs.p_provider_id = userId;
@@ -364,7 +366,7 @@ export const useProviderAwareTradeStats = (options: UseProviderAwareTradeStatsOp
         setIsLoading(false);
       }
     }
-  }, [userId, isProvider, roleLoading, adminGlobalView, allowedCategories, fetchStatsFallback]);
+  }, [userId, isProvider, roleLoading, canUseGlobalView, allowedCategories, fetchStatsFallback]);
 
   useEffect(() => {
     if (!roleLoading) {

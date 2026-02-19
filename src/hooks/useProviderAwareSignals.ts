@@ -29,8 +29,9 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
   const [error, setError] = useState<Error | null>(null);
   const { user, hasActiveSubscription, isAdmin } = useAuth();
   const userId = user?.id ?? null;
-  const { isProvider, isLoading: roleLoading } = useAdminRole();
+  const { isProvider, adminRole, isLoading: roleLoading } = useAdminRole();
   const { allowedCategories } = useUserSubscriptionCategories();
+  const canUseGlobalView = adminGlobalView && adminRole === 'super_admin';
 
   const channelNameRef = useRef(
     `provider_aware_signals_${Math.random().toString(36).slice(2)}`
@@ -52,7 +53,7 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
         userId ?? 'anon',
         isProvider ? 'provider' : 'user',
         isAdmin ? 'admin' : 'member',
-        adminGlobalView ? 'admin_global' : 'scoped',
+        canUseGlobalView ? 'admin_global' : 'scoped',
         signalType,
         Array.isArray(status) ? status.join(',') : status ?? 'all',
         limit,
@@ -91,7 +92,7 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
           .order('created_at', { ascending: false });
 
           // Explicit global mode for admin analytics only.
-          if (adminGlobalView && isAdmin) {
+          if (canUseGlobalView) {
             // No created_by/category filters.
           } else if ((isProvider || isAdmin) && userId) {
             // Provider-aware default: admins/providers see only their own issued signals.
@@ -172,7 +173,7 @@ export const useProviderAwareSignals = (options: UseProviderAwareSignalsOptions 
         setIsLoading(false);
       }
     }
-  }, [status, signalType, limit, isProvider, isAdmin, adminGlobalView, allowedCategories, userId, roleLoading, fetchAll]);
+  }, [status, signalType, limit, isProvider, isAdmin, canUseGlobalView, allowedCategories, userId, roleLoading, fetchAll]);
 
   useEffect(() => {
     if (!hasActiveSubscription && !isAdmin) {

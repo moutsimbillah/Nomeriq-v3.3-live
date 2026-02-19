@@ -111,6 +111,7 @@ export interface CreateTakeProfitUpdateInput {
   tpLabel: string;
   tpPrice: number;
   closePercent: number;
+  updateType?: "limit" | "market";
   note?: string;
 }
 
@@ -135,6 +136,7 @@ export const createSignalTakeProfitUpdates = async (
     tp_label: u.tpLabel,
     tp_price: u.tpPrice,
     close_percent: u.closePercent,
+    update_type: u.updateType || "limit",
     note: u.note?.trim() || null,
   }));
 

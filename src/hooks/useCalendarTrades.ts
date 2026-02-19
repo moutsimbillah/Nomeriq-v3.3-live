@@ -53,13 +53,16 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
   const [stats, setStats] = useState<CalendarStats>(initialStats);
   const [isLoading, setIsLoading] = useState(true);
   const [isProvider, setIsProvider] = useState(false);
+  const [adminRole, setAdminRole] = useState<string | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
+  const canUseGlobalView = adminGlobalView && adminRole === 'super_admin';
 
   // Fetch admin role inline to avoid hook ordering issues
   useEffect(() => {
     const fetchAdminRole = async () => {
       if (!userId || !isAdmin) {
         setIsProvider(false);
+        setAdminRole(null);
         setRoleLoading(false);
         return;
       }
@@ -73,12 +76,14 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
           .maybeSingle();
         
         const role = data?.admin_role;
+        setAdminRole((role as string | null) || null);
         setIsProvider(role === 'signal_provider_admin' || role === 'super_admin');
       } catch (err) {
         if (!shouldSuppressQueryErrorLog(err)) {
           console.error('Error fetching admin role:', err);
         }
         setIsProvider(false);
+        setAdminRole(null);
       } finally {
         setRoleLoading(false);
       }
@@ -100,8 +105,9 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
       const monthEnd = endOfMonth(currentMonth);
 
       let trades: any[] = [];
+      let monthTpUpdates: any[] = [];
 
-      if (adminGlobalView && isAdmin) {
+      if (canUseGlobalView) {
         const { data, error } = await supabase
           .from('user_trades')
           .select(`
@@ -149,16 +155,75 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
             : true
         );
       }
+
+      const { data: tpUpdateRows, error: tpUpdateError } = await supabase
+        .from('user_trade_take_profit_updates')
+        .select(`
+          id,
+          user_trade_id,
+          realized_pnl,
+          created_at,
+          trade:user_trades!inner(
+            id,
+            user_id,
+            signal:signals(created_by, category)
+          )
+        `)
+        .gte('created_at', monthStart.toISOString())
+        .lte('created_at', monthEnd.toISOString())
+        .order('created_at', { ascending: true });
+
+      if (tpUpdateError) throw tpUpdateError;
+
+      const isUpdateInScope = (row: any) => {
+        const tradeRow = Array.isArray(row.trade) ? row.trade[0] : row.trade;
+        if (!tradeRow) return false;
+
+        if (canUseGlobalView) return true;
+
+        if (isProvider) {
+          return tradeRow.signal?.created_by === userId;
+        }
+
+        if (tradeRow.user_id !== userId) return false;
+        return allowedCategories.length > 0
+          ? allowedCategories.includes(tradeRow.signal?.category || '')
+          : true;
+      };
+
+      monthTpUpdates = (tpUpdateRows || []).filter(isUpdateInScope);
+
+      const closedTradeIds = trades.map((trade) => trade.id).filter((id): id is string => Boolean(id));
+      const updateTotalsByTrade = new Map<string, number>();
+
+      if (closedTradeIds.length > 0) {
+        const { data: closedTradeUpdates, error: closedTradeUpdatesError } = await supabase
+          .from('user_trade_take_profit_updates')
+          .select('user_trade_id, realized_pnl')
+          .in('user_trade_id', closedTradeIds);
+
+        if (closedTradeUpdatesError) throw closedTradeUpdatesError;
+
+        (closedTradeUpdates || []).forEach((updateRow: any) => {
+          const tradeId = updateRow.user_trade_id as string | undefined;
+          if (!tradeId) return;
+          const existing = updateTotalsByTrade.get(tradeId) || 0;
+          updateTotalsByTrade.set(tradeId, existing + Number(updateRow.realized_pnl || 0));
+        });
+      }
       const dayMap = new Map<string, DayData>();
       const weekMap = new Map<number, WeekData>();
 
-      // Process trades by day
+      // Closed-trade settlement contribution by day:
+      // close delta = final trade pnl - all previously realized TP update amounts.
       trades.forEach((trade) => {
         if (!trade.closed_at) return;
         
         const tradeDate = parseISO(trade.closed_at);
         const dateKey = format(tradeDate, 'yyyy-MM-dd');
         const weekNum = getWeek(tradeDate, { weekStartsOn: 0 });
+        const totalRealizedUpdates = updateTotalsByTrade.get(trade.id) || 0;
+        const closeDelta = Number(trade.pnl || 0) - totalRealizedUpdates;
 
         // Update day data
         const existing = dayMap.get(dateKey) || {
@@ -168,7 +233,7 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
           isCurrentMonth: isSameMonth(tradeDate, currentMonth),
         };
         existing.trades += 1;
-        existing.pnl += trade.pnl || 0;
+        existing.pnl += closeDelta;
         dayMap.set(dateKey, existing);
 
         // Update week data
@@ -178,7 +243,34 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
           pnl: 0,
         };
         existingWeek.trades += 1;
-        existingWeek.pnl += trade.pnl || 0;
+        existingWeek.pnl += closeDelta;
+        weekMap.set(weekNum, existingWeek);
+      });
+
+      // Add realized TP updates for the month to reflect real balance-impact timeline
+      // (including updates on still-open trades).
+      monthTpUpdates.forEach((updateRow: any) => {
+        if (!updateRow.created_at) return;
+        const updateDate = parseISO(updateRow.created_at);
+        const dateKey = format(updateDate, 'yyyy-MM-dd');
+        const weekNum = getWeek(updateDate, { weekStartsOn: 0 });
+        const realizedAmount = Number(updateRow.realized_pnl || 0);
+
+        const existing = dayMap.get(dateKey) || {
+          date: updateDate,
+          trades: 0,
+          pnl: 0,
+          isCurrentMonth: isSameMonth(updateDate, currentMonth),
+        };
+        existing.pnl += realizedAmount;
+        dayMap.set(dateKey, existing);
+
+        const existingWeek = weekMap.get(weekNum) || {
+          weekNumber: weekNum,
+          trades: 0,
+          pnl: 0,
+        };
+        existingWeek.pnl += realizedAmount;
         weekMap.set(weekNum, existingWeek);
       });
 
@@ -231,7 +323,7 @@ export const useCalendarTrades = (currentMonth: Date, options?: { adminGlobalVie
     } finally {
       setIsLoading(false);
     }
-  }, [userId, currentMonth, isProvider, roleLoading, allowedCategories, adminGlobalView, isAdmin]);
+  }, [userId, currentMonth, isProvider, roleLoading, allowedCategories, canUseGlobalView]);
 
   useEffect(() => {
     if (!roleLoading) {
