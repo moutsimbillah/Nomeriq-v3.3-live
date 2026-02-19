@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+﻿import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -79,7 +79,7 @@ export const SubscriptionReminderPopup = () => {
 
 
   return <Dialog open={isOpen} onOpenChange={setIsOpen}>
-    <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto border-border bg-background p-0">
+    <DialogContent aria-describedby={undefined} className="max-w-md max-h-[90vh] overflow-y-auto border-border bg-background p-0">
       {/* Close button */}
       <button onClick={() => setIsOpen(false)} className="absolute right-4 top-4 z-10 h-8 w-8 flex items-center justify-center rounded-lg bg-secondary hover:bg-accent border border-border transition-colors">
         <X className="h-4 w-4 text-muted-foreground" />

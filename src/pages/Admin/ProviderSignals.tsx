@@ -21,6 +21,8 @@ import type { MarketPair } from "@/lib/market-api";
 import { deriveLiveCloseOutcome, getLiveCloseSnapshot } from "@/lib/live-signal-close";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { useLiveSignalAutoTriggers } from "@/hooks/useLiveSignalAutoTriggers";
+import { useOpenExposureSignalIds } from "@/hooks/useOpenExposureSignalIds";
+import { calculateSignedSignalRrForTarget } from "@/lib/trade-math";
 
 const categories = ["Forex", "Metals", "Crypto", "Indices", "Commodities"];
 
@@ -426,11 +428,23 @@ const ProviderSignals = () => {
       }
 
       const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+      const entryPriceValue = Number(signal.entry_price);
+      const stopLossValue = Number(signal.stop_loss);
+      const isManualBreakevenArmed =
+        !isLiveCloseOnlySignal &&
+        Number.isFinite(entryPriceValue) &&
+        Number.isFinite(stopLossValue) &&
+        Math.abs(stopLossValue - entryPriceValue) <= 1e-8;
       let resolvedStatus = requestedStatus;
       let closePrice: number | null = null;
       let closeQuotedAt: string | null = null;
       let closeSource: string | null = null;
       let closeRr: number | null = null;
+
+      if (!isLiveCloseOnlySignal && requestedStatus === "breakeven" && !isManualBreakevenArmed) {
+        toast.error("Move SL to break-even first (SL must equal entry) before closing as breakeven.");
+        return;
+      }
 
       if (isLiveCloseOnlySignal) {
         if (requestedStatus !== "sl_hit") {
@@ -443,12 +457,36 @@ const ProviderSignals = () => {
         closeQuotedAt = snapshot.closeQuotedAt;
         closeSource = snapshot.symbol;
         closeRr = snapshot.rr;
+      } else if (requestedStatus === "sl_hit") {
+        if (isManualBreakevenArmed) {
+          resolvedStatus = "breakeven";
+          closePrice = entryPriceValue;
+          closeRr = 0;
+        } else {
+          resolvedStatus = "sl_hit";
+          if (Number.isFinite(stopLossValue)) {
+            closePrice = stopLossValue;
+            closeRr = -1;
+          }
+        }
+      } else if (!isLiveCloseOnlySignal && requestedStatus === "tp_hit") {
+        const tpPrice = Number(signal.take_profit);
+        if (Number.isFinite(tpPrice)) {
+          closePrice = tpPrice;
+          closeRr = calculateSignedSignalRrForTarget(signal, tpPrice);
+        }
+      } else if (!isLiveCloseOnlySignal && requestedStatus === "breakeven" && isManualBreakevenArmed) {
+        closePrice = entryPriceValue;
+        closeRr = 0;
       }
 
       const updatePayload: Record<string, unknown> = {
         status: resolvedStatus,
         closed_at: new Date().toISOString(),
       };
+      if (!isLiveCloseOnlySignal && closePrice !== null) {
+        updatePayload.close_price = closePrice;
+      }
       if (isLiveCloseOnlySignal) {
         updatePayload.close_price = closePrice;
         updatePayload.close_quoted_at = closeQuotedAt;
@@ -541,8 +579,23 @@ const ProviderSignals = () => {
   };
 
   const providerName = profile?.first_name || 'Provider';
-  const visibleSignals = signals.filter(
-    (s) => s.signal_type === "upcoming" || s.status === "active"
+  const { openSignalIds, signalIdsWithTrades, isLoading: isOpenExposureLoading } = useOpenExposureSignalIds(
+    signals.map((s) => s.id),
+    { realtime: true }
+  );
+  const visibleSignals = Array.from(
+    new Map(
+      signals
+        .filter((s) => {
+          if (s.signal_type === "upcoming" || s.status === "upcoming") return true;
+          if (s.signal_type === "signal" && s.status === "active") {
+            if (openSignalIds.has(s.id)) return true;
+            return !signalIdsWithTrades.has(s.id);
+          }
+          return false;
+        })
+        .map((s) => [s.id, s])
+    ).values()
   );
   const showLiveColumns = marketMode === "live";
   const liveModePairs = useMemo(
@@ -581,8 +634,8 @@ const ProviderSignals = () => {
       {/* Header Actions */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4 text-muted-foreground">
-          <span>{signals.filter(s => s.status === "active" && s.signal_type === "signal").length} active signals</span>
-          <span className="text-warning">{signals.filter(s => s.signal_type === "upcoming").length} upcoming</span>
+          <span>{visibleSignals.filter(s => s.status === "active" && s.signal_type === "signal").length} active signals</span>
+          <span className="text-warning">{visibleSignals.filter(s => s.signal_type === "upcoming").length} upcoming</span>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
@@ -624,7 +677,7 @@ const ProviderSignals = () => {
 
       {/* Signals Table */}
       <div className="glass-card overflow-hidden shadow-none">
-        {isLoading ? (
+        {isLoading || isOpenExposureLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
@@ -657,6 +710,13 @@ const ProviderSignals = () => {
               <tbody className="divide-y divide-border/30">
                 {visibleSignals.map(signal => {
                   const isLiveCloseOnlySignal = marketMode === "live" && signal.market_mode === "live";
+                  const entryPriceValue = Number(signal.entry_price);
+                  const stopLossValue = Number(signal.stop_loss);
+                  const isManualBreakevenArmed =
+                    !isLiveCloseOnlySignal &&
+                    Number.isFinite(entryPriceValue) &&
+                    Number.isFinite(stopLossValue) &&
+                    Math.abs(stopLossValue - entryPriceValue) <= 1e-8;
                   const currentPrice =
                     showLiveColumns && isLiveCloseOnlySignal ? livePrices[signal.pair] : undefined;
                   const liveRr =
@@ -778,8 +838,14 @@ const ProviderSignals = () => {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={isLiveCloseOnlySignal}
-                              title={isLiveCloseOnlySignal ? "Disabled in live mode. Use red button to close at market price." : undefined}
+                              disabled={isLiveCloseOnlySignal || !isManualBreakevenArmed}
+                              title={
+                                isLiveCloseOnlySignal
+                                  ? "Disabled in live mode. Use red button to close at market price."
+                                  : !isManualBreakevenArmed
+                                    ? "Available after SL is moved to entry (break-even)."
+                                    : undefined
+                              }
                               className="border-warning/30 text-warning hover:bg-warning/10 disabled:opacity-40 disabled:cursor-not-allowed"
                               onClick={() => updateStatus(signal.id, "breakeven")}
                             >
@@ -788,7 +854,13 @@ const ProviderSignals = () => {
                             <Button
                               size="sm"
                               variant="outline"
-                              title={isLiveCloseOnlySignal ? "Close trade at current live market price." : undefined}
+                              title={
+                                isLiveCloseOnlySignal
+                                  ? "Close trade at current live market price."
+                                  : isManualBreakevenArmed
+                                    ? "Close at break-even entry price."
+                                    : "Close at SL hit for remaining position."
+                              }
                               className="border-destructive/30 text-destructive hover:bg-destructive/10"
                               onClick={() => updateStatus(signal.id, "sl_hit")}
                             >

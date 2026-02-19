@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -410,7 +410,7 @@ export const SignalTakeProfitUpdatesDialog = ({
     typeof accountBalance === "number" && accountBalance > 0
       ? (accountBalance * riskPercent) / 100
       : null;
-  const displayRemainingExposure =
+  const displayRemainingExposureBase =
     riskAmountUsd !== null
       ? Math.max(0, (riskAmountUsd * remainingCapacityPercent) / 100)
       : null;
@@ -425,6 +425,13 @@ export const SignalTakeProfitUpdatesDialog = ({
     Number.isFinite(entryPriceValue) &&
     Number.isFinite(stopLossValue) &&
     Math.abs(stopLossValue - entryPriceValue) <= EPSILON;
+  const displayRemainingExposure =
+    hasBreakevenUpdate && displayRemainingExposureBase !== null
+      ? 0
+      : displayRemainingExposureBase;
+  const stopLossBadgeValue = Number.isFinite(stopLossValue)
+    ? stopLossValue
+    : (signal.stop_loss ?? "-");
   const publishedHistoryCount = existingUpdates.length + (hasBreakevenUpdate ? 1 : 0);
   const canMoveSlBase =
     Number.isFinite(entryPriceValue) &&
@@ -1122,6 +1129,9 @@ export const SignalTakeProfitUpdatesDialog = ({
 
     setIsMovingSlToBreakeven(true);
     try {
+      const previousStopLossValue = Number.isFinite(rawStopLossValue)
+        ? rawStopLossValue
+        : signal.stop_loss;
       const { error } = await supabase
         .from("signals")
         .update({
@@ -1139,9 +1149,9 @@ export const SignalTakeProfitUpdatesDialog = ({
             category: signal.category,
             direction: signal.direction,
             entry_price: signal.entry_price,
-            stop_loss: signal.stop_loss,
+            stop_loss: entryPriceValue,
             take_profit: signal.take_profit,
-            previous_stop_loss: signal.stop_loss,
+            previous_stop_loss: previousStopLossValue,
           },
         });
         if (telegramResult.ok === false) {
@@ -1209,14 +1219,14 @@ export const SignalTakeProfitUpdatesDialog = ({
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl">
+      <DialogContent aria-describedby={undefined} className="max-w-3xl">
         <DialogHeader className="pr-10">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <DialogTitle>Trade Update</DialogTitle>
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge variant="outline" className="font-mono">Pair: {signal.pair}</Badge>
               <Badge variant="outline" className="font-mono">Entry: {signal.entry_price ?? "-"}</Badge>
-              <Badge variant="outline" className="font-mono">SL: {signal.stop_loss ?? "-"}</Badge>
+              <Badge variant="outline" className="font-mono">SL: {stopLossBadgeValue}</Badge>
               <Badge variant="outline" className="font-mono">TP: {signal.take_profit ?? "-"}</Badge>
             </div>
           </div>

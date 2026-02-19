@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+﻿import { useState, useMemo, useEffect } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
@@ -162,7 +162,7 @@ const Subscription = () => {
 
   const effectiveSelectedPackage = selectedPackage;
 
-  // Displayed price in the UI – prefer the selected package, fall back to legacy global setting
+  // Displayed price in the UI â€“ prefer the selected package, fall back to legacy global setting
   const subscriptionPrice = useMemo(() => {
     if (effectiveSelectedPackage) {
       return Number(effectiveSelectedPackage.price);
@@ -719,7 +719,7 @@ const Subscription = () => {
                           </td>
                           <td className="px-6 py-4">
                             <span className="text-sm">
-                              {payment.package?.name ?? '—'}
+                              {payment.package?.name ?? 'â€”'}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -783,7 +783,7 @@ const Subscription = () => {
 
         {/* Payment Details Dialog */}
         <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto shadow-none">
+          <DialogContent aria-describedby={undefined} className="max-w-3xl max-h-[90vh] overflow-y-auto shadow-none">
             <DialogHeader>
               <DialogTitle className="text-2xl font-bold">Payment Details</DialogTitle>
             </DialogHeader>
@@ -833,7 +833,7 @@ const Subscription = () => {
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Package</p>
                     <p className="text-sm font-semibold">
-                      {selectedPayment.package?.name ?? '—'}
+                      {selectedPayment.package?.name ?? 'â€”'}
                     </p>
                   </div>
                   <div>

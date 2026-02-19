@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -615,11 +615,11 @@ export const TradeUpdatesDialog = ({
 
   const initialRisk = Number(trade.initial_risk_amount ?? trade.risk_amount ?? 0);
   const backendRemainingRisk = Math.max(0, Number(trade.remaining_risk_amount ?? fallbackRemainingRisk));
-  const remainingRisk = isLiveSignal
+  const remainingRiskForPercent = isLiveSignal
     ? Math.min(backendRemainingRisk, fallbackRemainingRisk)
     : backendRemainingRisk;
   const remainingPercent =
-    initialRisk > 0 ? (remainingRisk / initialRisk) * 100 : fallbackRemainingPercent;
+    initialRisk > 0 ? (remainingRiskForPercent / initialRisk) * 100 : fallbackRemainingPercent;
   const rawAccountBalance = profile?.account_balance;
   const hasAccountBalance = rawAccountBalance !== null && rawAccountBalance !== undefined;
   const accountBalanceText = hasAccountBalance
@@ -632,6 +632,7 @@ export const TradeUpdatesDialog = ({
     Number.isFinite(entryPrice) &&
     Number.isFinite(stopLossPrice) &&
     Math.abs(stopLossPrice - entryPrice) < 1e-8;
+  const displayRemainingRisk = hasBreakevenUpdate ? 0 : remainingRiskForPercent;
   const timelineItems = useMemo(() => {
     const items: Array<
       | { kind: "tp"; sortTime: number | null; index: number; row: (typeof rows)[number] }
@@ -711,7 +712,7 @@ export const TradeUpdatesDialog = ({
           </Badge>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      <DialogContent aria-describedby={undefined} className="max-w-2xl">
         <DialogHeader className="pr-10">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <DialogTitle>Trade Update</DialogTitle>
@@ -729,7 +730,7 @@ export const TradeUpdatesDialog = ({
               <span className="text-muted-foreground">Remaining Position: </span>
               <span className="font-semibold text-foreground">{remainingPercent.toFixed(2)}%</span>
               <span className="text-muted-foreground"> (</span>
-              <span className="font-semibold text-foreground">${remainingRisk.toFixed(2)}</span>
+              <span className="font-semibold text-foreground">${displayRemainingRisk.toFixed(2)}</span>
               <span className="text-muted-foreground">)</span>
             </div>
             <Tooltip>
@@ -815,7 +816,7 @@ export const TradeUpdatesDialog = ({
                   <div className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-2">
                     <p className="text-[10px] uppercase tracking-wide text-primary">Now Remaining</p>
                     <p className="font-bold text-foreground mt-0.5">
-                      {remainingPercent.toFixed(2)}% (${remainingRisk.toFixed(2)})
+                      {remainingPercent.toFixed(2)}% (${displayRemainingRisk.toFixed(2)})
                     </p>
                   </div>
                 </div>

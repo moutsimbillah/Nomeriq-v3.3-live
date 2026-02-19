@@ -70,6 +70,10 @@ export const useProviderAwareTrades = (options: UseProviderAwareTradesOptions = 
             q = q.in('result', result);
           } else {
             q = q.eq('result', result);
+            // Pending-active views must ignore zero/near-zero exposure rows that are effectively closed.
+            if (result === 'pending') {
+              q = q.gt('remaining_risk_amount', 0.01);
+            }
           }
         }
 

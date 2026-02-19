@@ -57,7 +57,12 @@ const ActiveTrades = () => {
     let result = [...trades];
 
     // Keep Active Trades aligned with Live Trades: only currently live signals
-    result = result.filter((t) => t.signal?.status === 'active' && (t.signal?.signal_type || 'signal') === 'signal');
+    result = result.filter(
+      (t) =>
+        t.signal?.status === 'active' &&
+        (t.signal?.signal_type || 'signal') === 'signal' &&
+        Number(t.remaining_risk_amount ?? 0) > 0.01
+    );
 
     // Time filter
     result = filterByTime(result, timeFilter, dateRange);
@@ -419,72 +424,70 @@ const ActiveTrades = () => {
           </div>
 
           {/* Desktop Layout (lg+) */}
-          <div className="hidden lg:grid grid-cols-[repeat(13,minmax(0,1fr))] gap-4 items-center">
-            {/* Direction Badge - col-span-1 */}
-            <div className={cn("col-span-1 inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium w-full", signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
+          <div className="hidden lg:grid trade-metric-grid">
+            <div
+              className={cn(
+                "trade-metric-cell inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium",
+                signal?.direction === "BUY" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
+              )}
+            >
               {signal?.direction}
             </div>
 
-            {/* Pair Info - col-span-2 */}
-            <div className="col-span-2 flex items-center gap-2">
-              <h3 className="font-bold">{signal?.pair}</h3>
-              <Badge variant="outline" className="text-xs">
-                {signal?.category}
-              </Badge>
+            <div className="trade-metric-cell py-2 px-2 rounded-lg border border-border/50 bg-secondary/20">
+              <div className="flex flex-col items-center justify-center gap-1 text-center min-w-0">
+                <h3 className="font-bold truncate max-w-full">{signal?.pair}</h3>
+                <Badge variant="outline" className="text-xs shrink-0">
+                  {signal?.category}
+                </Badge>
+              </div>
             </div>
 
-            {/* Entry Price - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-primary/10 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-primary/10 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Entry</p>
               <p className="text-primary font-mono text-sm font-medium truncate">{signal?.entry_price}</p>
             </div>
 
-            {/* Stop Loss - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-destructive/10 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-destructive/10 text-center">
               <p className="text-muted-foreground mb-1 text-xs">SL</p>
               <p className="text-destructive font-mono text-sm font-medium truncate">{signal?.stop_loss}</p>
             </div>
 
-            {/* Take Profit - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-success/10 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-success/10 text-center">
               <p className="text-muted-foreground mb-1 text-xs">TP</p>
               <p className="text-success font-mono text-sm font-medium truncate">{signal?.take_profit}</p>
             </div>
 
-            {/* Current Price - col-span-1 (Live Mode only) */}
             {isLiveMode && currentPrice != null && (
-              <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary text-center w-full">
+              <div className="trade-metric-cell py-2 px-2 rounded-lg bg-secondary text-center">
                 <p className="text-muted-foreground mb-1 text-xs">Current</p>
                 <p className="font-mono text-sm font-medium truncate">{currentPrice}</p>
               </div>
             )}
 
-            {/* Started Time - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg border border-border/50 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg border border-border/50 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Started</p>
               <p className="font-mono text-sm font-medium truncate">{getTimeAgo(trade.created_at)}</p>
             </div>
 
-            {/* Risk Info - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-muted/50 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-muted/50 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Risk {liveRiskPercent.toFixed(2)}%</p>
               <p className="font-mono text-sm font-bold text-destructive truncate">${getOpenRisk(trade).toFixed(0)}</p>
             </div>
 
-            {/* Potential Profit - col-span-1 */}
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-success/10 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-success/10 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Potential Profit</p>
               <p className="text-success font-mono text-sm font-bold truncate">+${potentialProfit.toFixed(0)}</p>
             </div>
 
             {isLiveMode && (
-              <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary text-center w-full">
-                <p className="text-muted-foreground mb-1 text-xs">Live P&L</p>
+              <div className="trade-metric-cell py-2 px-2 rounded-lg bg-secondary text-center">
+                <p className="text-muted-foreground mb-1 text-xs">Live P&amp;L</p>
                 <p className={cn("font-mono text-sm font-bold truncate", livePnlClass)}>{livePnlLabel}</p>
               </div>
             )}
 
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary/20 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-secondary/20 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Updates</p>
               <div className="flex justify-center">
                 <TradeUpdatesDialog
@@ -497,7 +500,7 @@ const ActiveTrades = () => {
               </div>
             </div>
 
-            <div className="col-span-1 py-2 px-2 rounded-lg bg-secondary/20 text-center w-full">
+            <div className="trade-metric-cell py-2 px-2 rounded-lg bg-secondary/20 text-center">
               <p className="text-muted-foreground mb-1 text-xs">Analysis</p>
               <div className="flex justify-center">
                 <Button

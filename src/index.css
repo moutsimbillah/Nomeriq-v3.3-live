@@ -219,6 +219,18 @@
       linear-gradient(to bottom, hsl(var(--border) / 0.3) 1px, transparent 1px);
     background-size: 40px 40px;
   }
+
+  .trade-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .trade-metric-cell {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 @layer utilities {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -270,7 +270,7 @@ const AdminTelegramIntegrations = () => {
         throw new Error(getMeJson?.description || "Invalid bot token");
       }
 
-      const testMessage = `✅ Test connection successful\nIntegration: ${formState.name || "Nomeriq Integration"}`;
+      const testMessage = `âœ… Test connection successful\nIntegration: ${formState.name || "Nomeriq Integration"}`;
       const sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -468,7 +468,7 @@ const AdminTelegramIntegrations = () => {
         </div>
 
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogContent className="max-w-lg">
+          <DialogContent aria-describedby={undefined} className="max-w-lg">
             <DialogHeader>
               <DialogTitle>
                 {editingIntegration ? "Edit Integration" : "New Integration"}
